@@ -1,0 +1,5 @@
+check: field-exists
+message: "Missing required field: {{.Field}}"
+severity: error
+on: "wiki/**"
+frontmatter: [tags, created]

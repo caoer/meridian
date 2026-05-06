@@ -1,0 +1,6 @@
+check: pattern
+message: "Filename '{{.Filename}}' must be lowercase-dash or UPPERCASE entry point"
+severity: warn
+on: ["wiki/**", "!wiki/**/SCHEMA.md", "!wiki/**/SYSTEM_CARD.md"]
+target: filename
+match: "^[A-Z][A-Z0-9_-]*\\.md$|^[a-z0-9][a-z0-9-]*\\.md$"

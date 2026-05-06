@@ -1,0 +1,22 @@
+check: tag-format
+message: "Tag '{{.Tag}}' — unknown prefix '{{.Prefix}}'"
+severity: error
+on: "wiki/**"
+prefixes:
+  - domain
+  - type
+  - status
+  - topic
+  - meta
+  - project
+  - harvest-source
+  - use
+  - do
+  - role
+  - session
+  - agent
+  - convention
+  - has
+  - plugin
+  - round
+  - priority
