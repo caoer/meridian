@@ -1,24 +1,21 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"runtime"
 	"testing"
 )
 
 func TestVersion_Output(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
-	r.Handle("version", newVersionHandler())
+	r, buf := newTestRouter()
+	r.Handle("version", NewVersionHandler())
 
 	exit := r.Run([]string{"version"}, nil)
 	if exit != 0 {
 		t.Fatalf("exit = %d, want 0", exit)
 	}
 
-	resp := decodeResponse(t, &buf)
+	resp := decodeResponse(t, buf)
 	if resp.Version != ResponseVersion {
 		t.Fatalf("version = %q, want %q", resp.Version, ResponseVersion)
 	}
@@ -53,10 +50,8 @@ func TestVersion_Output(t *testing.T) {
 }
 
 func TestHelp_CommandInfo(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
-	r.Handle("help", newHelpHandler(r.Commands))
+	r, buf := newTestRouter()
+	r.Handle("help", NewHelpHandler(r.Commands, nil))
 	r.Handle("check", func(req *Request) *Response { return &Response{Version: ResponseVersion} })
 
 	exit := r.Run([]string{"help", `{"command":"check"}`}, nil)
@@ -64,7 +59,7 @@ func TestHelp_CommandInfo(t *testing.T) {
 		t.Fatalf("exit = %d, want 0", exit)
 	}
 
-	resp := decodeResponse(t, &buf)
+	resp := decodeResponse(t, buf)
 	data, ok := resp.Data.(map[string]any)
 	if !ok {
 		t.Fatalf("Data type = %T, want map[string]any", resp.Data)
@@ -97,17 +92,15 @@ func TestHelp_CommandInfo(t *testing.T) {
 }
 
 func TestHelp_UnknownCommand(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
-	r.Handle("help", newHelpHandler(r.Commands))
+	r, buf := newTestRouter()
+	r.Handle("help", NewHelpHandler(r.Commands, nil))
 
 	exit := r.Run([]string{"help", `{"command":"nonexistent"}`}, nil)
 	if exit != 2 {
 		t.Fatalf("exit = %d, want 2", exit)
 	}
 
-	resp := decodeResponse(t, &buf)
+	resp := decodeResponse(t, buf)
 	if resp.Error == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -117,19 +110,17 @@ func TestHelp_UnknownCommand(t *testing.T) {
 }
 
 func TestHelp_ListCommands(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
-	r.Handle("help", newHelpHandler(r.Commands))
+	r, buf := newTestRouter()
+	r.Handle("help", NewHelpHandler(r.Commands, nil))
 	r.Handle("check", func(req *Request) *Response { return &Response{Version: ResponseVersion} })
-	r.Handle("version", newVersionHandler())
+	r.Handle("version", NewVersionHandler())
 
 	exit := r.Run([]string{"help"}, nil)
 	if exit != 0 {
 		t.Fatalf("exit = %d, want 0", exit)
 	}
 
-	resp := decodeResponse(t, &buf)
+	resp := decodeResponse(t, buf)
 	data, ok := resp.Data.(map[string]any)
 	if !ok {
 		t.Fatalf("Data type = %T, want map[string]any", resp.Data)
@@ -164,17 +155,15 @@ func TestHelp_ListCommands(t *testing.T) {
 }
 
 func TestHelp_SearchStub(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
-	r.Handle("help", newHelpHandler(r.Commands))
+	r, buf := newTestRouter()
+	r.Handle("help", NewHelpHandler(r.Commands, nil))
 
 	exit := r.Run([]string{"help", `{"search":"wiki"}`}, nil)
 	if exit != 0 {
 		t.Fatalf("exit = %d, want 0", exit)
 	}
 
-	resp := decodeResponse(t, &buf)
+	resp := decodeResponse(t, buf)
 	data, ok := resp.Data.(map[string]any)
 	if !ok {
 		t.Fatalf("Data type = %T, want map[string]any", resp.Data)
@@ -196,17 +185,15 @@ func TestHelp_SearchStub(t *testing.T) {
 }
 
 func TestHelp_InvalidParams(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
-	r.Handle("help", newHelpHandler(r.Commands))
+	r, buf := newTestRouter()
+	r.Handle("help", NewHelpHandler(r.Commands, nil))
 
 	exit := r.Run([]string{"help", `{"command": 123}`}, nil)
 	if exit != 2 {
 		t.Fatalf("exit = %d, want 2", exit)
 	}
 
-	resp := decodeResponse(t, &buf)
+	resp := decodeResponse(t, buf)
 	if resp.Error == nil {
 		t.Fatal("expected error, got nil")
 	}

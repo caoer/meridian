@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"sort"
+	"strings"
 
 	"github.com/caoer/meridian/internal/rules"
 )
@@ -138,88 +139,43 @@ type HelpSearchData struct {
 	Results []SearchResult `json:"results"`
 }
 
-// HelpSearchHandler creates a handler for `md help` with search.
-func HelpSearchHandler(loadedRules []rules.Rule, registeredChecks map[string]bool) Handler {
-	return func(req *Request) *Response {
-		var params struct {
-			Search string `json:"search"`
-		}
-		if req.Params != nil {
-			json.Unmarshal(req.Params, &params)
-		}
-		if params.Search == "" {
-			return ErrorResponse(ErrInvalidParams, "help search requires 'search' parameter")
-		}
+// SearchRulesAndChecks searches rules and registered checks by query string.
+// Called directly from main.go's searchFn closure.
+func SearchRulesAndChecks(loadedRules []rules.Rule, registeredChecks map[string]bool, query string) HelpSearchData {
+	var results []SearchResult
 
-		var results []SearchResult
-		query := params.Search
+	for _, r := range loadedRules {
+		if containsCI(r.ID, query) || containsCI(r.Check, query) || containsCI(r.Message, query) {
+			results = append(results, SearchResult{
+				Type:        "rule",
+				ID:          r.ID,
+				Description: r.Message,
+			})
+		}
+	}
 
-		// Search rules
-		for _, r := range loadedRules {
-			if contains(r.ID, query) || contains(r.Check, query) || contains(r.Message, query) {
+	for name := range registeredChecks {
+		if containsCI(name, query) {
+			dup := false
+			for _, r := range results {
+				if r.Type == "check" && r.ID == name {
+					dup = true
+					break
+				}
+			}
+			if !dup {
 				results = append(results, SearchResult{
-					Type:        "rule",
-					ID:          r.ID,
-					Description: r.Message,
+					Type: "check",
+					ID:   name,
 				})
 			}
 		}
-
-		// Search checks
-		for name := range registeredChecks {
-			if contains(name, query) {
-				// Avoid duplicating if already found via rule
-				dup := false
-				for _, r := range results {
-					if r.Type == "check" && r.ID == name {
-						dup = true
-						break
-					}
-				}
-				if !dup {
-					results = append(results, SearchResult{
-						Type: "check",
-						ID:   name,
-					})
-				}
-			}
-		}
-
-		return &Response{
-			Version: ResponseVersion,
-			Data:    HelpSearchData{Results: results},
-		}
 	}
+
+	return HelpSearchData{Results: results}
 }
 
-// contains does case-insensitive substring check.
-func contains(s, substr string) bool {
-	// Simple case-insensitive via lowercase
-	sl := toLower(s)
-	ql := toLower(substr)
-	return len(ql) > 0 && indexOf(sl, ql) >= 0
-}
-
-func toLower(s string) string {
-	b := make([]byte, len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c >= 'A' && c <= 'Z' {
-			c += 'a' - 'A'
-		}
-		b[i] = c
-	}
-	return string(b)
-}
-
-func indexOf(s, sub string) int {
-	if len(sub) > len(s) {
-		return -1
-	}
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
+// containsCI does case-insensitive substring check.
+func containsCI(s, substr string) bool {
+	return len(substr) > 0 && strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }

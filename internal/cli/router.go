@@ -14,10 +14,19 @@ const MaxInputSize = 10 * 1024 * 1024
 // Handler processes a CLI request and returns a response.
 type Handler func(req *Request) *Response
 
+// OutputFormat controls response rendering.
+type OutputFormat int
+
+const (
+	FormatText OutputFormat = iota
+	FormatJSON
+)
+
 // Router dispatches subcommands to registered handlers.
 type Router struct {
 	handlers map[string]Handler
 	stdout   io.Writer
+	format   OutputFormat
 }
 
 // NewRouter creates a router that writes to os.Stdout.
@@ -88,18 +97,43 @@ func (r *Router) Run(args []string, stdin io.Reader) int {
 		}
 	}
 
+	// Determine per-request format (default from router, override from params)
+	format := r.format
+	if params != nil {
+		var formatCheck struct {
+			Format string `json:"format"`
+		}
+		json.Unmarshal(params, &formatCheck)
+		if formatCheck.Format == "json" {
+			format = FormatJSON
+		}
+	}
+
 	req := &Request{Command: command, Params: params}
 	resp := handler(req)
 	if resp.Version == "" {
 		resp.Version = ResponseVersion
 	}
-	return r.respond(resp)
+	return r.respondWith(resp, format)
 }
 
 func (r *Router) respond(resp *Response) int {
-	enc := json.NewEncoder(r.stdout)
-	enc.Encode(resp)
+	return r.respondWith(resp, r.format)
+}
+
+func (r *Router) respondWith(resp *Response, format OutputFormat) int {
+	if format == FormatJSON {
+		enc := json.NewEncoder(r.stdout)
+		enc.Encode(resp)
+	} else {
+		RenderText(r.stdout, resp)
+	}
 	return resp.ExitCode()
+}
+
+// SetFormat sets the output format.
+func (r *Router) SetFormat(f OutputFormat) {
+	r.format = f
 }
 
 // Commands returns registered command names sorted alphabetically.

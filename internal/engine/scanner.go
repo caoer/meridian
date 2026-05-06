@@ -43,6 +43,7 @@ func scan(fsys fs.FS) ([]*Document, error) {
 			doc.Tags = parsed.Tags()
 			doc.Body = parsed.Body
 			doc.BodyOffset = parsed.BodyOffset
+			doc.LintIgnore = parsed.StringListField("lint-ignore")
 		}
 
 		docs = append(docs, doc)

@@ -40,9 +40,10 @@ Bug fixes: reproduction test -> fails -> fix -> passes -> full suite.
 | `internal/rules` | nothing | yes |
 | `pkg/testkit` | vfs, rules | no |
 | `internal/engine` | rules, frontmatter, vfs | no |
+| `internal/checks` | engine | no |
 | `internal/config` | rules | no |
-| `internal/cli` | engine, rules, config | no |
-| `cmd/md` | cli, engine | no |
+| `internal/cli` | types, rules | no |
+| `cmd/md` | checks, cli, config, engine, rules | no |
 
 Leaf packages import nothing from meridian. No circular deps.
 
@@ -52,7 +53,7 @@ Leaf packages import nothing from meridian. No circular deps.
 - **`on` required.** Missing `on` = loader error
 - **Duplicate rule ID = crash.** Hard fail on data integrity
 - **VFS for tests.** MemFS wraps `fstest.MapFS`. No mocks of engine/scanner/frontmatter
-- **JSON in, JSON out.** No flags. No TTY formatting
+- **Text default, JSON via format param.** No flags
 - **Exit codes:** 0 = clean, 1 = error-severity findings, 2 = tool failure
 
 ## Session Specs

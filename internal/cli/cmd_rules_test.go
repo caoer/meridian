@@ -113,7 +113,7 @@ func TestDebug_UnknownRule(t *testing.T) {
 	}
 }
 
-func TestHelpSearch_ReturnsMatches(t *testing.T) {
+func TestSearchRulesAndChecks_ReturnsMatches(t *testing.T) {
 	loadedRules := []rules.Rule{
 		{ID: "backticked-wikilink", Check: "backticked-wikilink", Message: "Wikilink in backticks"},
 		{ID: "required-fields", Check: "field-exists", Message: "Missing field"},
@@ -123,24 +123,8 @@ func TestHelpSearch_ReturnsMatches(t *testing.T) {
 		"field-exists":        true,
 	}
 
-	handler := HelpSearchHandler(loadedRules, registeredChecks)
-	params := `{"search": "wikilink"}`
-	resp := handler(&Request{Command: "help", Params: json.RawMessage(params)})
+	data := SearchRulesAndChecks(loadedRules, registeredChecks, "wikilink")
 
-	if resp.Error != nil {
-		t.Fatalf("unexpected error: %v", resp.Error)
-	}
-
-	raw, _ := json.Marshal(resp.Data)
-	var data struct {
-		Results []struct {
-			Type string `json:"type"`
-			ID   string `json:"id"`
-		} `json:"results"`
-	}
-	if err := json.Unmarshal(raw, &data); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
 	if len(data.Results) == 0 {
 		t.Fatal("expected search results for 'wikilink'")
 	}
@@ -165,6 +149,7 @@ func TestRulesLs_Integration(t *testing.T) {
 
 	router := NewRouter()
 	router.Handle("rules ls", RulesLsHandler(loadedRules))
+	router.SetFormat(FormatJSON)
 
 	var buf bytes.Buffer
 	router.SetOutput(&buf)

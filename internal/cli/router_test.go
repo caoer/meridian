@@ -7,6 +7,15 @@ import (
 	"testing"
 )
 
+// helper: create a router with JSON output for tests.
+func newTestRouter() (*Router, *bytes.Buffer) {
+	var buf bytes.Buffer
+	r := NewRouter()
+	r.SetOutput(&buf)
+	r.SetFormat(FormatJSON)
+	return r, &buf
+}
+
 // helper: decode the JSON written to buf into a Response.
 func decodeResponse(t *testing.T, buf *bytes.Buffer) *Response {
 	t.Helper()
@@ -18,16 +27,14 @@ func decodeResponse(t *testing.T, buf *bytes.Buffer) *Response {
 }
 
 func TestRouter_NoSubcommand(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
+	r, buf := newTestRouter()
 
 	code := r.Run([]string{}, nil)
 
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
-	resp := decodeResponse(t, &buf)
+	resp := decodeResponse(t, buf)
 	if resp.Error == nil {
 		t.Fatal("expected error in response, got nil")
 	}
@@ -37,16 +44,14 @@ func TestRouter_NoSubcommand(t *testing.T) {
 }
 
 func TestRouter_UnknownCommand(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
+	r, buf := newTestRouter()
 
 	code := r.Run([]string{"bogus"}, nil)
 
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
-	resp := decodeResponse(t, &buf)
+	resp := decodeResponse(t, buf)
 	if resp.Error == nil {
 		t.Fatal("expected error in response, got nil")
 	}
@@ -59,9 +64,7 @@ func TestRouter_UnknownCommand(t *testing.T) {
 }
 
 func TestRouter_ValidDispatch(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
+	r, buf := newTestRouter()
 
 	called := false
 	r.Handle("test", func(req *Request) *Response {
@@ -83,7 +86,7 @@ func TestRouter_ValidDispatch(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	resp := decodeResponse(t, &buf)
+	resp := decodeResponse(t, buf)
 	if resp.Version != ResponseVersion {
 		t.Fatalf("version = %q, want %q", resp.Version, ResponseVersion)
 	}
@@ -93,9 +96,7 @@ func TestRouter_ValidDispatch(t *testing.T) {
 }
 
 func TestRouter_MalformedJSONArg(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
+	r, buf := newTestRouter()
 	r.Handle("test", func(req *Request) *Response {
 		t.Fatal("handler should not be called for malformed input")
 		return nil
@@ -106,7 +107,7 @@ func TestRouter_MalformedJSONArg(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
-	resp := decodeResponse(t, &buf)
+	resp := decodeResponse(t, buf)
 	if resp.Error == nil {
 		t.Fatal("expected error in response, got nil")
 	}
@@ -116,9 +117,7 @@ func TestRouter_MalformedJSONArg(t *testing.T) {
 }
 
 func TestRouter_JSONFromStdin(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
+	r, _ := newTestRouter()
 
 	input := `{"scope":"wiki/"}`
 
@@ -140,9 +139,7 @@ func TestRouter_JSONFromStdin(t *testing.T) {
 }
 
 func TestRouter_InputTooLarge(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
+	r, buf := newTestRouter()
 	r.Handle("test", func(req *Request) *Response {
 		t.Fatal("handler should not be called for oversized input")
 		return nil
@@ -155,7 +152,7 @@ func TestRouter_InputTooLarge(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
-	resp := decodeResponse(t, &buf)
+	resp := decodeResponse(t, buf)
 	if resp.Error == nil {
 		t.Fatal("expected error in response, got nil")
 	}
@@ -165,9 +162,7 @@ func TestRouter_InputTooLarge(t *testing.T) {
 }
 
 func TestRouter_EmptyStdin(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
+	r, _ := newTestRouter()
 
 	r.Handle("test", func(req *Request) *Response {
 		if req.Params != nil {
@@ -184,9 +179,7 @@ func TestRouter_EmptyStdin(t *testing.T) {
 }
 
 func TestRouter_MalformedJSONStdin(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
+	r, buf := newTestRouter()
 	r.Handle("test", func(req *Request) *Response {
 		t.Fatal("handler should not be called for malformed stdin")
 		return nil
@@ -197,7 +190,7 @@ func TestRouter_MalformedJSONStdin(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
-	resp := decodeResponse(t, &buf)
+	resp := decodeResponse(t, buf)
 	if resp.Error == nil {
 		t.Fatal("expected error in response, got nil")
 	}
@@ -207,9 +200,7 @@ func TestRouter_MalformedJSONStdin(t *testing.T) {
 }
 
 func TestRouter_TwoWordCommand(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
+	r, _ := newTestRouter()
 
 	called := false
 	r.Handle("rules ls", func(req *Request) *Response {
@@ -232,9 +223,7 @@ func TestRouter_TwoWordCommand(t *testing.T) {
 }
 
 func TestRouter_TwoWordCommand_WithParams(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
+	r, _ := newTestRouter()
 
 	paramJSON := `{"profile":"strict"}`
 
@@ -274,9 +263,7 @@ func TestRouter_Commands(t *testing.T) {
 }
 
 func TestRouter_ArgParamsTakesPrecedenceOverStdin(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
+	r, _ := newTestRouter()
 
 	argJSON := `{"from":"arg"}`
 	stdinJSON := `{"from":"stdin"}`
@@ -296,9 +283,7 @@ func TestRouter_ArgParamsTakesPrecedenceOverStdin(t *testing.T) {
 }
 
 func TestRouter_WhitespaceOnlyStdin(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
+	r, _ := newTestRouter()
 
 	r.Handle("test", func(req *Request) *Response {
 		if req.Params != nil {
@@ -315,9 +300,7 @@ func TestRouter_WhitespaceOnlyStdin(t *testing.T) {
 }
 
 func TestRouter_HandlerVersionDefault(t *testing.T) {
-	var buf bytes.Buffer
-	r := NewRouter()
-	r.SetOutput(&buf)
+	r, buf := newTestRouter()
 
 	// Handler returns response with empty Version — router should fill it.
 	r.Handle("test", func(req *Request) *Response {
@@ -329,7 +312,7 @@ func TestRouter_HandlerVersionDefault(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	resp := decodeResponse(t, &buf)
+	resp := decodeResponse(t, buf)
 	if resp.Version != ResponseVersion {
 		t.Fatalf("version = %q, want %q (should be filled by router)", resp.Version, ResponseVersion)
 	}

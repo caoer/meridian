@@ -2,7 +2,7 @@ package cli
 
 import "runtime"
 
-func newVersionHandler() Handler {
+func NewVersionHandler() Handler {
 	return func(req *Request) *Response {
 		return &Response{
 			Version: ResponseVersion,

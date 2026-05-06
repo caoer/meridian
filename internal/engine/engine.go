@@ -91,6 +91,11 @@ func (e *Engine) Run(fsys fs.FS, ruleList []rules.Rule) []types.Finding {
 				continue
 			}
 
+			// Suppression: skip if doc has lint-ignore for this rule
+			if doc.IsIgnored(rule.ID) {
+				continue
+			}
+
 			raws := checkFn(doc, rule.Params)
 			for _, raw := range raws {
 				var msgBuf bytes.Buffer

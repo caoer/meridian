@@ -19,7 +19,29 @@ type paramHelp struct {
 	Required bool   `json:"required"`
 }
 
-func newHelpHandler(commands func() []string) Handler {
+// HelpListData is the data payload for help (list all commands).
+type HelpListData struct {
+	Commands []HelpListEntry `json:"commands"`
+}
+
+// HelpListEntry is one command in the help list.
+type HelpListEntry struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
+// HelpCommandData is the data payload for help (single command info).
+type HelpCommandData struct {
+	Command     string              `json:"command"`
+	Description string              `json:"description"`
+	Params      map[string]paramHelp `json:"params,omitempty"`
+	ExitCodes   map[string]string   `json:"exit_codes,omitempty"`
+}
+
+// SearchFunc is a function that searches rules/checks by query string.
+type SearchFunc func(query string) HelpSearchData
+
+func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 	registry := map[string]commandHelp{
 		"check": {
 			Description: "Scan files, match rules, evaluate, return findings",
@@ -72,44 +94,46 @@ func newHelpHandler(commands func() []string) Handler {
 			}
 			return &Response{
 				Version: ResponseVersion,
-				Data: map[string]any{
-					"command":     p.Command,
-					"description": info.Description,
-					"params":      info.Params,
-					"exit_codes":  info.ExitCodes,
+				Data: HelpCommandData{
+					Command:     p.Command,
+					Description: info.Description,
+					Params:      info.Params,
+					ExitCodes:   info.ExitCodes,
 				},
 			}
 		}
 
-		// Search (stub — return empty for now)
+		// Search — delegate to search function
 		if p.Search != "" {
+			if searchFn != nil {
+				return &Response{
+					Version: ResponseVersion,
+					Data:    searchFn(p.Search),
+				}
+			}
 			return &Response{
 				Version: ResponseVersion,
-				Data: map[string]any{
-					"results": []any{},
-				},
+				Data:    HelpSearchData{Results: []SearchResult{}},
 			}
 		}
 
 		// List all commands
 		cmds := commands()
-		cmdList := make([]map[string]string, 0, len(cmds))
+		cmdList := make([]HelpListEntry, 0, len(cmds))
 		for _, name := range cmds {
 			desc := ""
 			if info, ok := registry[name]; ok {
 				desc = info.Description
 			}
-			cmdList = append(cmdList, map[string]string{
-				"command":     name,
-				"description": desc,
+			cmdList = append(cmdList, HelpListEntry{
+				Command:     name,
+				Description: desc,
 			})
 		}
 
 		return &Response{
 			Version: ResponseVersion,
-			Data: map[string]any{
-				"commands": cmdList,
-			},
+			Data: HelpListData{Commands: cmdList},
 		}
 	}
 }

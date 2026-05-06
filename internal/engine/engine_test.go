@@ -215,5 +215,79 @@ func TestEngine_NoMatchingFiles(t *testing.T) {
 	}
 }
 
+func TestEngine_LintIgnore(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"wiki/suppressed.md": "---\ncreated: 2026-05-05\nlint-ignore: [required-fields]\n---\n# Suppressed\n",
+		"wiki/normal.md":     "---\ncreated: 2026-05-05\n---\n# Normal\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("field-exists", func(doc *Document, params map[string]any) []RawFinding {
+		return []RawFinding{{TemplateData: map[string]string{"Field": "tags"}}}
+	})
+
+	rule := rules.Rule{
+		ID: "required-fields", Check: "field-exists", Message: "Missing: {{.Field}}",
+		Severity: rules.SeverityError, On: rules.ParseOnFilter([]string{"wiki/**"}),
+		Params: map[string]any{},
+	}
+
+	results := eng.Run(fs, []rules.Rule{rule})
+
+	// normal.md should have finding
+	found := false
+	for _, f := range results {
+		if f.FilePath == "wiki/normal.md" {
+			found = true
+		}
+		if f.FilePath == "wiki/suppressed.md" {
+			t.Error("suppressed file should not have findings")
+		}
+	}
+	if !found {
+		t.Error("normal.md should have finding")
+	}
+}
+
+func TestEngine_LintIgnore_PartialSuppress(t *testing.T) {
+	// lint-ignore only suppresses the listed rule, other rules still fire
+	fs := makeFS(map[string]string{
+		"wiki/partial.md": "---\ncreated: 2026-05-05\nlint-ignore: [rule-a]\n---\n# Partial\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("always-fire", func(doc *Document, params map[string]any) []RawFinding {
+		return []RawFinding{{TemplateData: map[string]string{}}}
+	})
+
+	ruleA := rules.Rule{
+		ID: "rule-a", Check: "always-fire", Message: "a",
+		Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}),
+		Params: map[string]any{},
+	}
+	ruleB := rules.Rule{
+		ID: "rule-b", Check: "always-fire", Message: "b",
+		Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}),
+		Params: map[string]any{},
+	}
+
+	results := eng.Run(fs, []rules.Rule{ruleA, ruleB})
+
+	for _, f := range results {
+		if f.RuleID == "rule-a" {
+			t.Error("rule-a should be suppressed by lint-ignore")
+		}
+	}
+	foundB := false
+	for _, f := range results {
+		if f.RuleID == "rule-b" {
+			foundB = true
+		}
+	}
+	if !foundB {
+		t.Error("rule-b should still fire (not in lint-ignore)")
+	}
+}
+
 // Verify types.Finding is the return type (compile-time check)
 var _ []types.Finding = New().Run(vfs.NewMemFS(), nil)
