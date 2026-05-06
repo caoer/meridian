@@ -206,6 +206,55 @@ func TestRouter_MalformedJSONStdin(t *testing.T) {
 	}
 }
 
+func TestRouter_TwoWordCommand(t *testing.T) {
+	var buf bytes.Buffer
+	r := NewRouter()
+	r.SetOutput(&buf)
+
+	called := false
+	r.Handle("rules ls", func(req *Request) *Response {
+		called = true
+		if req.Command != "rules ls" {
+			t.Errorf("req.Command = %q, want %q", req.Command, "rules ls")
+		}
+		return &Response{Version: ResponseVersion}
+	})
+
+	// Two separate args, as real CLI would split them
+	code := r.Run([]string{"rules", "ls"}, nil)
+
+	if !called {
+		t.Fatal("handler was not called for two-word command")
+	}
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+}
+
+func TestRouter_TwoWordCommand_WithParams(t *testing.T) {
+	var buf bytes.Buffer
+	r := NewRouter()
+	r.SetOutput(&buf)
+
+	paramJSON := `{"profile":"strict"}`
+
+	r.Handle("rules ls", func(req *Request) *Response {
+		if req.Command != "rules ls" {
+			t.Errorf("req.Command = %q, want %q", req.Command, "rules ls")
+		}
+		if string(req.Params) != paramJSON {
+			t.Errorf("params = %s, want %s", string(req.Params), paramJSON)
+		}
+		return &Response{Version: ResponseVersion}
+	})
+
+	code := r.Run([]string{"rules", "ls", paramJSON}, nil)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+}
+
 func TestRouter_Commands(t *testing.T) {
 	r := NewRouter()
 	r.Handle("check", func(req *Request) *Response { return nil })

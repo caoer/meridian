@@ -46,15 +46,25 @@ func (r *Router) Run(args []string, stdin io.Reader) int {
 	}
 
 	command := args[0]
+	paramIdx := 1
 	handler, ok := r.handlers[command]
+	if !ok && len(args) > 1 {
+		twoWord := args[0] + " " + args[1]
+		if h, found := r.handlers[twoWord]; found {
+			handler = h
+			ok = true
+			command = twoWord
+			paramIdx = 2
+		}
+	}
 	if !ok {
 		return r.respond(ErrorResponse(ErrUnknownCommand, "unknown command: "+command))
 	}
 
 	// Parse JSON params: arg takes precedence over stdin.
 	var params json.RawMessage
-	if len(args) > 1 {
-		raw := args[1]
+	if len(args) > paramIdx {
+		raw := args[paramIdx]
 		if !json.Valid([]byte(raw)) {
 			return r.respond(ErrorResponse(ErrInvalidInput, "malformed JSON argument"))
 		}

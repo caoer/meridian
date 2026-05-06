@@ -1,8 +1,10 @@
 package rules
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -314,6 +316,52 @@ on: "wiki/**"
 	}
 	if len(rules) != 1 {
 		t.Fatalf("got %d rules, want 1 (should ignore .md)", len(rules))
+	}
+}
+
+// --- YAML bomb / depth protection ---
+
+func TestLoader_YAMLDepthExceeded(t *testing.T) {
+	dir := tempRuleDir(t)
+	// Build a YAML string with nesting deeper than 10 levels.
+	// Each level: "l<N>:\n  l<N+1>:\n ..."
+	var content string
+	indent := ""
+	for i := 0; i < 15; i++ {
+		content += indent + fmt.Sprintf("l%d:\n", i)
+		indent += "  "
+	}
+	content += indent + "val: deep\n"
+	// Wrap as valid rule YAML with required fields at top level
+	rule := fmt.Sprintf("check: field-exists\nmessage: test\nseverity: warn\non: \"wiki/**\"\nnested:\n%s", content)
+	writeRuleFile(t, dir, "deep.yaml", rule)
+
+	_, _, err := LoadDir(dir)
+	if err == nil {
+		t.Fatal("expected error for deeply nested YAML")
+	}
+	if !strings.Contains(err.Error(), "nesting depth") {
+		t.Errorf("error = %q, want mention of nesting depth", err.Error())
+	}
+}
+
+func TestLoader_YAMLAliasesExceeded(t *testing.T) {
+	dir := tempRuleDir(t)
+	// Build YAML with >100 aliases referencing a single anchor.
+	var b strings.Builder
+	b.WriteString("check: field-exists\nmessage: test\nseverity: warn\non: \"wiki/**\"\n")
+	b.WriteString("anchor: &a value\n")
+	for i := 0; i < 101; i++ {
+		b.WriteString(fmt.Sprintf("ref%d: *a\n", i))
+	}
+	writeRuleFile(t, dir, "bomb.yaml", b.String())
+
+	_, _, err := LoadDir(dir)
+	if err == nil {
+		t.Fatal("expected error for excessive YAML aliases")
+	}
+	if !strings.Contains(err.Error(), "aliases") {
+		t.Errorf("error = %q, want mention of aliases", err.Error())
 	}
 }
 

@@ -50,10 +50,54 @@ func LoadDir(dir string) ([]Rule, []string, error) {
 	return rules, warnings, nil
 }
 
+// maxYAMLAliases is the maximum number of anchor aliases allowed in a rule file.
+const maxYAMLAliases = 100
+
+// maxYAMLDepth is the maximum nesting depth allowed in a rule file.
+const maxYAMLDepth = 10
+
+// validateYAMLComplexity checks that a YAML document does not exceed alias or depth limits.
+func validateYAMLComplexity(data []byte) error {
+	var node yaml.Node
+	if err := yaml.Unmarshal(data, &node); err != nil {
+		return fmt.Errorf("YAML parse: %w", err)
+	}
+	aliases := 0
+	maxDepth := 0
+	var walk func(n *yaml.Node, depth int)
+	walk = func(n *yaml.Node, depth int) {
+		if n == nil {
+			return
+		}
+		if depth > maxDepth {
+			maxDepth = depth
+		}
+		if n.Kind == yaml.AliasNode {
+			aliases++
+		}
+		for _, c := range n.Content {
+			walk(c, depth+1)
+		}
+	}
+	walk(&node, 0)
+	if aliases > maxYAMLAliases {
+		return fmt.Errorf("YAML has %d aliases (max %d)", aliases, maxYAMLAliases)
+	}
+	if maxDepth > maxYAMLDepth {
+		return fmt.Errorf("YAML nesting depth %d exceeds max %d", maxDepth, maxYAMLDepth)
+	}
+	return nil
+}
+
 // loadFile loads a single rule YAML file.
 func loadFile(path string) (Rule, []string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		return Rule{}, nil, err
+	}
+
+	// Validate YAML complexity before full unmarshal.
+	if err := validateYAMLComplexity(data); err != nil {
 		return Rule{}, nil, err
 	}
 

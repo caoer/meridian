@@ -19,6 +19,7 @@ var bom = []byte{0xEF, 0xBB, 0xBF}
 // Returns nil, error for unclosed frontmatter or invalid YAML.
 func ParseReader(r io.Reader) (*Doc, error) {
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	// First line must be ---
 	if !scanner.Scan() {
@@ -45,6 +46,10 @@ func ParseReader(r io.Reader) (*Doc, error) {
 		}
 		yamlBuf.WriteString(line)
 		yamlBuf.WriteByte('\n')
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("reading frontmatter: %w", err)
 	}
 
 	if !closed {

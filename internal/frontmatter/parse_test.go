@@ -223,6 +223,23 @@ func TestDoc_StringField(t *testing.T) {
 	}
 }
 
+func TestParse_LongLine(t *testing.T) {
+	// A value longer than the default 64KB bufio.Scanner token limit.
+	longVal := strings.Repeat("x", 70000)
+	input := "---\nbig: " + longVal + "\n---\nBody\n"
+	doc, err := ParseReader(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if doc == nil {
+		t.Fatal("expected doc, got nil")
+	}
+	got, _ := doc.Meta["big"].(string)
+	if len(got) != 70000 {
+		t.Errorf("big field length = %d, want 70000", len(got))
+	}
+}
+
 func TestDoc_StringListField(t *testing.T) {
 	doc := &Doc{
 		Meta: map[string]any{

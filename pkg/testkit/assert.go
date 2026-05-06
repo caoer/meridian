@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/caoer/meridian/internal/cli"
+	"github.com/caoer/meridian/internal/types"
 )
 
 // ExpectedFinding describes an expected finding for assertion.
@@ -21,7 +21,7 @@ func Finding(ruleID, filePath, severity string) ExpectedFinding {
 }
 
 // AssertFindings checks that each expected finding exists in actual.
-func AssertFindings(t *testing.T, actual []cli.Finding, expected ...ExpectedFinding) {
+func AssertFindings(t *testing.T, actual []types.Finding, expected ...ExpectedFinding) {
 	t.Helper()
 	for _, e := range expected {
 		found := false
@@ -39,7 +39,7 @@ func AssertFindings(t *testing.T, actual []cli.Finding, expected ...ExpectedFind
 }
 
 // AssertNoFinding checks that NO finding exists for the given rule+file.
-func AssertNoFinding(t *testing.T, actual []cli.Finding, ruleID, filePath string) {
+func AssertNoFinding(t *testing.T, actual []types.Finding, ruleID, filePath string) {
 	t.Helper()
 	for _, a := range actual {
 		if a.RuleID == ruleID && a.FilePath == filePath {
@@ -50,7 +50,7 @@ func AssertNoFinding(t *testing.T, actual []cli.Finding, ruleID, filePath string
 }
 
 // AssertClean checks that there are no findings.
-func AssertClean(t *testing.T, actual []cli.Finding) {
+func AssertClean(t *testing.T, actual []types.Finding) {
 	t.Helper()
 	if len(actual) > 0 {
 		t.Errorf("Expected 0 findings, got %d:\n%s", len(actual), formatFindings(actual))
@@ -58,7 +58,7 @@ func AssertClean(t *testing.T, actual []cli.Finding) {
 }
 
 // AssertFindingCount checks the total number of findings.
-func AssertFindingCount(t *testing.T, actual []cli.Finding, want int) {
+func AssertFindingCount(t *testing.T, actual []types.Finding, want int) {
 	t.Helper()
 	if len(actual) != want {
 		t.Errorf("Expected %d findings, got %d:\n%s", want, len(actual), formatFindings(actual))
@@ -66,7 +66,7 @@ func AssertFindingCount(t *testing.T, actual []cli.Finding, want int) {
 }
 
 // AssertFindingMessage checks that a finding for rule+file contains a message substring.
-func AssertFindingMessage(t *testing.T, actual []cli.Finding, ruleID, filePath, msgSubstr string) {
+func AssertFindingMessage(t *testing.T, actual []types.Finding, ruleID, filePath, msgSubstr string) {
 	t.Helper()
 	for _, a := range actual {
 		if a.RuleID == ruleID && a.FilePath == filePath {
@@ -80,7 +80,7 @@ func AssertFindingMessage(t *testing.T, actual []cli.Finding, ruleID, filePath, 
 	t.Errorf("No finding for rule=%s file=%s to check message", ruleID, filePath)
 }
 
-func formatFindings(fs []cli.Finding) string {
+func formatFindings(fs []types.Finding) string {
 	if len(fs) == 0 {
 		return "  (none)"
 	}

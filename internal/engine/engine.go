@@ -7,8 +7,8 @@ import (
 	"sort"
 	"text/template"
 
-	"github.com/caoer/meridian/internal/cli"
 	"github.com/caoer/meridian/internal/rules"
+	"github.com/caoer/meridian/internal/types"
 )
 
 // RawFinding is what a check function produces before template rendering.
@@ -24,7 +24,7 @@ type CheckFunc func(doc *Document, params map[string]any) []RawFinding
 // Engine runs rules against documents.
 type Engine struct {
 	checks   map[string]CheckFunc
-	warnings []cli.Warning
+	warnings []types.Warning
 }
 
 // New creates an Engine.
@@ -40,24 +40,24 @@ func (e *Engine) RegisterCheck(name string, fn CheckFunc) {
 }
 
 // Warnings returns accumulated warnings from the last Run.
-func (e *Engine) Warnings() []cli.Warning {
+func (e *Engine) Warnings() []types.Warning {
 	return e.warnings
 }
 
 // Run scans the filesystem, matches rules, evaluates checks, returns sorted findings.
-func (e *Engine) Run(fsys fs.FS, ruleList []rules.Rule) []cli.Finding {
+func (e *Engine) Run(fsys fs.FS, ruleList []rules.Rule) []types.Finding {
 	e.warnings = nil
 
 	docs, err := scan(fsys)
 	if err != nil {
-		e.warnings = append(e.warnings, cli.Warning{
+		e.warnings = append(e.warnings, types.Warning{
 			Code:    "SCAN_ERROR",
 			Message: fmt.Sprintf("scan error: %v", err),
 		})
 		return nil
 	}
 
-	var findings []cli.Finding
+	var findings []types.Finding
 
 	for _, rule := range ruleList {
 		// Skip severity=off
@@ -68,7 +68,7 @@ func (e *Engine) Run(fsys fs.FS, ruleList []rules.Rule) []cli.Finding {
 		// Check if check type is registered
 		checkFn, ok := e.checks[rule.Check]
 		if !ok {
-			e.warnings = append(e.warnings, cli.Warning{
+			e.warnings = append(e.warnings, types.Warning{
 				Code:    "CHECK_NOT_REGISTERED",
 				Message: fmt.Sprintf("Rule '%s': check '%s' not registered, skipping", rule.ID, rule.Check),
 			})
@@ -78,7 +78,7 @@ func (e *Engine) Run(fsys fs.FS, ruleList []rules.Rule) []cli.Finding {
 		// Parse message template
 		tmpl, err := template.New("").Parse(rule.Message)
 		if err != nil {
-			e.warnings = append(e.warnings, cli.Warning{
+			e.warnings = append(e.warnings, types.Warning{
 				Code:    "TEMPLATE_ERROR",
 				Message: fmt.Sprintf("Rule '%s': invalid template: %v", rule.ID, err),
 			})
@@ -99,7 +99,7 @@ func (e *Engine) Run(fsys fs.FS, ruleList []rules.Rule) []cli.Finding {
 					msgBuf.WriteString(fmt.Sprintf("template error: %v", err))
 				}
 
-				findings = append(findings, cli.Finding{
+				findings = append(findings, types.Finding{
 					RuleID:   rule.ID,
 					Severity: rule.Severity.String(),
 					FilePath: doc.Path,

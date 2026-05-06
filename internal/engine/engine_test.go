@@ -3,8 +3,8 @@ package engine
 import (
 	"testing"
 
-	"github.com/caoer/meridian/internal/cli"
 	"github.com/caoer/meridian/internal/rules"
+	"github.com/caoer/meridian/internal/types"
 	"github.com/caoer/meridian/internal/vfs"
 )
 
@@ -215,5 +215,5 @@ func TestEngine_NoMatchingFiles(t *testing.T) {
 	}
 }
 
-// Verify cli.Finding is the return type (compile-time check)
-var _ []cli.Finding = New().Run(vfs.NewMemFS(), nil)
+// Verify types.Finding is the return type (compile-time check)
+var _ []types.Finding = New().Run(vfs.NewMemFS(), nil)
