@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 )
 
@@ -139,6 +140,32 @@ func formatData(w io.Writer, data any) {
 			for code, desc := range d.ExitCodes {
 				fmt.Fprintf(w, "  %s  %s\n", code, desc)
 			}
+		}
+
+	case DomainsTreeData:
+		if len(d.Domains) == 0 {
+			fmt.Fprintln(w, "no domains")
+			return
+		}
+		// Sort prefixes for deterministic output
+		prefixes := make([]string, 0, len(d.Domains))
+		for p := range d.Domains {
+			prefixes = append(prefixes, p)
+		}
+		sort.Strings(prefixes)
+		for _, p := range prefixes {
+			dom := d.Domains[p]
+			fmt.Fprintf(w, "%s/\n", p)
+			for _, v := range dom.Values {
+				fmt.Fprintf(w, "  %-20s %d\n", v, dom.Counts[v])
+			}
+		}
+		fmt.Fprintf(w, "\n%d prefixes, %d pages\n", d.TotalPrefixes, d.TotalPages)
+
+	case DomainsShowData:
+		fmt.Fprintf(w, "%s/\n", d.Prefix)
+		for _, v := range d.Values {
+			fmt.Fprintf(w, "  %-20s %d\n", v.Name, v.Count)
 		}
 
 	case HelpSearchData:

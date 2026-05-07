@@ -11,6 +11,7 @@ import (
 	"github.com/caoer/meridian/internal/checks"
 	"github.com/caoer/meridian/internal/cli"
 	"github.com/caoer/meridian/internal/config"
+	"github.com/caoer/meridian/internal/domains"
 	"github.com/caoer/meridian/internal/engine"
 	"github.com/caoer/meridian/internal/rules"
 )
@@ -88,8 +89,50 @@ func main() {
 	router.Handle("rules ls", cli.RulesLsHandler(loadedRules))
 	router.Handle("debug", cli.DebugHandler(loadedRules, registeredChecks))
 	router.Handle("check", checkHandler(eng, loadedRules, cfg, cfgErr))
+	router.Handle("domains tree", domainsTreeHandler(cfg, cfgErr))
+	router.Handle("domains show", domainsShowHandler(cfg, cfgErr))
 
 	os.Exit(router.Run(os.Args[1:], os.Stdin))
+}
+
+func buildRegistry(cfg *config.Config, cfgErr error) (*domains.Registry, *cli.Response) {
+	if cfgErr != nil {
+		return nil, cli.ErrorResponseWithHint(cli.ErrNoConfig,
+			cfgErr.Error(),
+			"create meridian.yaml or set MERIDIAN_CONFIG env var")
+	}
+
+	fsys := os.DirFS(cfg.Scan.Root)
+	docs, err := engine.Scan(fsys)
+	if err != nil {
+		return nil, cli.ErrorResponse("SCAN_ERROR", "scan failed: "+err.Error())
+	}
+
+	reg := domains.NewRegistry()
+	for _, doc := range docs {
+		reg.Add(doc.Tags)
+	}
+	return reg, nil
+}
+
+func domainsTreeHandler(cfg *config.Config, cfgErr error) cli.Handler {
+	return func(req *cli.Request) *cli.Response {
+		reg, errResp := buildRegistry(cfg, cfgErr)
+		if errResp != nil {
+			return errResp
+		}
+		return cli.DomainsTreeHandler(reg)(req)
+	}
+}
+
+func domainsShowHandler(cfg *config.Config, cfgErr error) cli.Handler {
+	return func(req *cli.Request) *cli.Response {
+		reg, errResp := buildRegistry(cfg, cfgErr)
+		if errResp != nil {
+			return errResp
+		}
+		return cli.DomainsShowHandler(reg)(req)
+	}
 }
 
 func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config, cfgErr error) cli.Handler {
@@ -105,7 +148,9 @@ func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Conf
 			Scope string `json:"scope"`
 		}
 		if req.Params != nil {
-			json.Unmarshal(req.Params, &params)
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return cli.ErrorResponse(cli.ErrInvalidParams, "invalid params: "+err.Error())
+			}
 		}
 
 		start := time.Now()

@@ -93,7 +93,9 @@ func DebugHandler(loadedRules []rules.Rule, registeredChecks map[string]bool) Ha
 			Rule string `json:"rule"`
 		}
 		if req.Params != nil {
-			json.Unmarshal(req.Params, &params)
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return ErrorResponse(ErrInvalidParams, "invalid params: "+err.Error())
+			}
 		}
 		if params.Rule == "" {
 			return ErrorResponse(ErrInvalidParams, "debug requires 'rule' parameter")

@@ -7,8 +7,8 @@ import (
 	"github.com/caoer/meridian/internal/frontmatter"
 )
 
-// scan walks the filesystem and parses each .md file into a Document.
-func scan(fsys fs.FS) ([]*Document, error) {
+// Scan walks the filesystem and parses each .md file into a Document.
+func Scan(fsys fs.FS) ([]*Document, error) {
 	var docs []*Document
 
 	err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
