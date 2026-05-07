@@ -1,6 +1,7 @@
 package mv
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -123,5 +124,30 @@ func TestRewriteWikilinks_Count(t *testing.T) {
 	_, n := RewriteWikilinks(body, "old-name", "new-name")
 	if n != 2 {
 		t.Fatalf("count = %d, want 2", n)
+	}
+}
+
+func TestRewriteWikilinks_SkipFencedCode(t *testing.T) {
+	body := "See [[old-name]] here.\n```\n[[old-name]] in code\n```\nAnd [[old-name]] after."
+	got, n := RewriteWikilinks(body, "old-name", "new-name")
+	if n != 2 {
+		t.Fatalf("count = %d, want 2", n)
+	}
+	if strings.Contains(got, "```\n[[new-name]]") {
+		t.Error("rewrote inside code fence!")
+	}
+	if !strings.Contains(got, "```\n[[old-name]]") {
+		t.Error("fenced wikilink was modified")
+	}
+}
+
+func TestRewriteWikilinks_SkipTildeFence(t *testing.T) {
+	body := "Before [[old-name]]\n~~~\n[[old-name]] in code\n~~~\nAfter [[old-name]]"
+	got, n := RewriteWikilinks(body, "old-name", "new-name")
+	if n != 2 {
+		t.Fatalf("count = %d, want 2", n)
+	}
+	if strings.Contains(got, "~~~\n[[new-name]]") {
+		t.Error("rewrote inside tilde fence!")
 	}
 }

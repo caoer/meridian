@@ -25,7 +25,10 @@ func MoveFiles(fsys vfs.WriteFS, source, dest string) (movedFiles []string, err 
 	}
 
 	if !srcInfo.IsDir() {
-		// Single file move
+		// Single file move — ensure parent dirs exist
+		if err := fsys.MkdirAll(path.Dir(dest), 0755); err != nil {
+			return nil, fmt.Errorf("creating parent dirs for %q: %w", dest, err)
+		}
 		if err := fsys.Rename(source, dest); err != nil {
 			return nil, err
 		}
@@ -50,6 +53,9 @@ func MoveFiles(fsys vfs.WriteFS, source, dest string) (movedFiles []string, err 
 	for _, f := range files {
 		rel := strings.TrimPrefix(f, source+"/")
 		newPath := path.Join(dest, rel)
+		if err := fsys.MkdirAll(path.Dir(newPath), 0755); err != nil {
+			return nil, fmt.Errorf("creating parent dirs for %q: %w", newPath, err)
+		}
 		if err := fsys.Rename(f, newPath); err != nil {
 			return nil, fmt.Errorf("moving %q → %q: %w", f, newPath, err)
 		}

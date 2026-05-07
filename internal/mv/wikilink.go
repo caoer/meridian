@@ -65,26 +65,45 @@ func ExtractWikilinks(body string) []Wikilink {
 
 // RewriteWikilinks replaces all wikilinks matching oldStem with newStem.
 // Preserves aliases. Case-insensitive stem matching.
+// Skips wikilinks inside fenced code blocks (``` or ~~~).
 // Returns new body text and count of replacements.
 func RewriteWikilinks(body string, oldStem, newStem string) (string, int) {
 	count := 0
 	oldLower := strings.ToLower(oldStem)
 
-	result := wikilinkRe.ReplaceAllStringFunc(body, func(match string) string {
-		sub := wikilinkRe.FindStringSubmatch(match)
-		if sub == nil {
-			return match
-		}
-		target := sub[1]
-		if strings.ToLower(target) != oldLower {
-			return match
-		}
-		count++
-		if sub[2] != "" {
-			return "[[" + newStem + "|" + sub[2] + "]]"
-		}
-		return "[[" + newStem + "]]"
-	})
+	var inFence bool
+	var fenceMarker string
 
-	return result, count
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		if m := fenceRe.FindStringSubmatch(line); m != nil {
+			if !inFence {
+				inFence = true
+				fenceMarker = string(m[1][0])
+			} else if string(m[1][0]) == fenceMarker {
+				inFence = false
+				fenceMarker = ""
+			}
+			continue
+		}
+		if inFence {
+			continue
+		}
+		lines[i] = wikilinkRe.ReplaceAllStringFunc(line, func(match string) string {
+			sub := wikilinkRe.FindStringSubmatch(match)
+			if sub == nil {
+				return match
+			}
+			if strings.ToLower(sub[1]) != oldLower {
+				return match
+			}
+			count++
+			if sub[2] != "" {
+				return "[[" + newStem + "|" + sub[2] + "]]"
+			}
+			return "[[" + newStem + "]]"
+		})
+	}
+
+	return strings.Join(lines, "\n"), count
 }

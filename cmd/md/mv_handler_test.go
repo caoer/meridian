@@ -189,6 +189,19 @@ func TestMvHandler_DryRun(t *testing.T) {
 	}
 }
 
+func TestMvHandler_MalformedParams(t *testing.T) {
+	m := vfs.NewMemFS()
+	r, buf := newMvTestRouter(m, engine.New(), nil, nil)
+	code := r.Run([]string{"mv", `{"source":123}`}, nil)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	resp := decodeMvResponse(t, buf)
+	if resp.Error == nil || resp.Error.Code != cli.ErrInvalidParams {
+		t.Fatalf("error = %+v, want INVALID_PARAMS", resp.Error)
+	}
+}
+
 func TestMvHandler_WithRelint(t *testing.T) {
 	m := vfs.NewMemFS()
 	m.AddFile("wiki/locus/page.md", "---\ntags: [domain/locus]\n---\nBody")
