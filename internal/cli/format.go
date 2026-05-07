@@ -150,6 +150,26 @@ func formatData(w io.Writer, data any) {
 			fmt.Fprintf(w, "  [%s] %-30s %s\n", r.Type, r.ID, r.Description)
 		}
 
+	case RulesCheckData:
+		if len(d.Conflicts) > 0 {
+			fmt.Fprintln(w, "Conflicts:")
+			for _, c := range d.Conflicts {
+				fmt.Fprintf(w, "  %-5s %s vs %s: %s\n", strings.ToUpper(c.Severity), c.RuleA, c.RuleB, c.Detail)
+			}
+		}
+		if len(d.OverlapsWithoutConflict) > 0 {
+			if len(d.Conflicts) > 0 {
+				fmt.Fprintln(w)
+			}
+			fmt.Fprintln(w, "Overlaps (no conflict):")
+			for _, o := range d.OverlapsWithoutConflict {
+				fmt.Fprintf(w, "  %s vs %s: %s\n", o.RuleA, o.RuleB, o.Reason)
+			}
+		}
+		if len(d.Conflicts) == 0 && len(d.OverlapsWithoutConflict) == 0 {
+			fmt.Fprintln(w, "no conflicts or overlaps detected")
+		}
+
 	default:
 		// Fallback — just print
 		fmt.Fprintf(w, "%v\n", data)

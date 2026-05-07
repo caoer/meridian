@@ -59,6 +59,12 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 				"profile": {Type: "string", Required: false},
 			},
 		},
+		"rules check": {
+			Description: "Detect rule overlaps and conflicts",
+			Params: map[string]paramHelp{
+				"profile": {Type: "string", Required: false},
+			},
+		},
 		"debug": {
 			Description: "Deep inspection of one rule",
 			Params: map[string]paramHelp{
