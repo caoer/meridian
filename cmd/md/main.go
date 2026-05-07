@@ -12,7 +12,9 @@ import (
 	"github.com/caoer/meridian/internal/cli"
 	"github.com/caoer/meridian/internal/config"
 	"github.com/caoer/meridian/internal/engine"
+	"github.com/caoer/meridian/internal/mv"
 	"github.com/caoer/meridian/internal/rules"
+	"github.com/caoer/meridian/internal/vfs"
 )
 
 func main() {
@@ -88,8 +90,58 @@ func main() {
 	router.Handle("rules ls", cli.RulesLsHandler(loadedRules))
 	router.Handle("debug", cli.DebugHandler(loadedRules, registeredChecks))
 	router.Handle("check", checkHandler(eng, loadedRules, cfg, cfgErr))
+	router.Handle("mv", mvHandler(eng, loadedRules, cfg, cfgErr))
 
 	os.Exit(router.Run(os.Args[1:], os.Stdin))
+}
+
+func mvHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config, cfgErr error) cli.Handler {
+	return mvHandlerFS(eng, loadedRules, cfgErr, func() vfs.WriteFS {
+		return vfs.NewOSFS(cfg.Scan.Root)
+	})
+}
+
+func mvHandlerFS(eng *engine.Engine, loadedRules []rules.Rule, cfgErr error, makeFS func() vfs.WriteFS) cli.Handler {
+	return func(req *cli.Request) *cli.Response {
+		if cfgErr != nil {
+			return cli.ErrorResponseWithHint(cli.ErrNoConfig,
+				cfgErr.Error(),
+				"create meridian.yaml or set MERIDIAN_CONFIG env var")
+		}
+
+		var params struct {
+			Source string `json:"source"`
+			Dest   string `json:"dest"`
+			DryRun bool   `json:"dry-run"`
+		}
+		if req.Params != nil {
+			json.Unmarshal(req.Params, &params)
+		}
+
+		if params.Source == "" {
+			return cli.ErrorResponse(cli.ErrInvalidParams, "missing required param: source")
+		}
+		if params.Dest == "" {
+			return cli.ErrorResponse(cli.ErrInvalidParams, "missing required param: dest")
+		}
+
+		fsys := makeFS()
+		result, err := mv.Move(fsys, params.Source, params.Dest, eng, loadedRules, params.DryRun)
+		if err != nil {
+			return cli.ErrorResponse(cli.ErrInvalidParams, err.Error())
+		}
+
+		var warnings []cli.Warning
+		for _, w := range result.Warnings {
+			warnings = append(warnings, cli.Warning{Message: w})
+		}
+
+		return &cli.Response{
+			Version:  cli.ResponseVersion,
+			Data:     result,
+			Warnings: warnings,
+		}
+	}
 }
 
 func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config, cfgErr error) cli.Handler {
