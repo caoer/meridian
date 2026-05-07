@@ -119,3 +119,42 @@ func TestHeadingStructure_TildeFencedBlock_Skip(t *testing.T) {
 		t.Fatalf("want 0 findings, got %d", len(findings))
 	}
 }
+
+func TestHeadingStructure_LongTildeFenceNotClosedByShort(t *testing.T) {
+	// ~~~~ opened, ~~~ should NOT close it — heading after ~~~ is still fenced
+	doc := &engine.Document{
+		Body:       "# Title\n~~~~\n~~~\n### Still fenced\n~~~~\n## Real",
+		BodyOffset: 1,
+	}
+	findings := headingStructureCheck(doc, nil)
+	// ### is inside ~~~~...~~~~ fence → invisible. ## Real is valid after # Title.
+	// Bug: ~~~ prematurely closes fence → ### becomes visible → reports skipped level
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings (heading inside fence), got %d", len(findings))
+	}
+}
+
+func TestHeadingStructure_BacktickFenceNotClosedByTilde(t *testing.T) {
+	// ``` opened, ~~~ should NOT close it
+	doc := &engine.Document{
+		Body:       "# Title\n```\n### Inside backtick fence\n~~~\nstill fenced\n```\n## Real",
+		BodyOffset: 1,
+	}
+	findings := headingStructureCheck(doc, nil)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings (heading inside backtick fence), got %d", len(findings))
+	}
+}
+
+func TestHeadingStructure_ExactFenceCloses(t *testing.T) {
+	// ``` closed by ``` — heading outside should be checked
+	doc := &engine.Document{
+		Body:       "# Title\n```\n### Inside\n```\n### Skipped",
+		BodyOffset: 1,
+	}
+	findings := headingStructureCheck(doc, nil)
+	// ### after # Title skips H2 — should flag
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding (skipped level), got %d", len(findings))
+	}
+}

@@ -1,6 +1,7 @@
 package fix_test
 
 import (
+	"fmt"
 	"io/fs"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/caoer/meridian/internal/engine"
 	"github.com/caoer/meridian/internal/fix"
 	"github.com/caoer/meridian/internal/rules"
+	"github.com/caoer/meridian/internal/vfs"
 	"github.com/caoer/meridian/pkg/testkit"
 )
 
@@ -224,6 +226,161 @@ func TestFixer_FixThenRecheckPasses(t *testing.T) {
 			t.Logf("  %s: %s (%s)", f.FilePath, f.Message, f.RuleID)
 		}
 	}
+}
+
+// Fix #4: Deterministic ordering — two rules on same file produce consistent results.
+func TestFixer_DeterministicOrdering(t *testing.T) {
+	eng := setupEngine()
+	ruleList := []rules.Rule{
+		testkit.Rule("rule-b",
+			testkit.Check("field-exists"),
+			testkit.On("wiki/**"),
+			testkit.Frontmatter("tags"),
+			testkit.MessageTemplate("missing {{.Field}}"),
+		),
+		testkit.Rule("rule-a",
+			testkit.Check("field-exists"),
+			testkit.On("wiki/**"),
+			testkit.Frontmatter("source"),
+			testkit.MessageTemplate("missing {{.Field}}"),
+		),
+	}
+
+	// Run 10 times — must produce identical results
+	var firstFixed []fix.FixResult
+	for i := 0; i < 10; i++ {
+		testFS := testkit.Wiki(
+			testkit.F("wiki/page.md", "---\ncreated: 2026-05-05\n---\n# Page\n"),
+		)
+		fixer := fix.New(eng, fix.All)
+		report, err := fixer.Fix(testFS, ruleList, fix.Options{DryRun: true})
+		if err != nil {
+			t.Fatalf("iteration %d: Fix error: %v", i, err)
+		}
+		if i == 0 {
+			firstFixed = report.Fixed
+			continue
+		}
+		if len(report.Fixed) != len(firstFixed) {
+			t.Fatalf("iteration %d: fixed count %d != %d", i, len(report.Fixed), len(firstFixed))
+		}
+		for j := range firstFixed {
+			if report.Fixed[j].RuleID != firstFixed[j].RuleID {
+				t.Errorf("iteration %d, result %d: ruleID %q != %q (nondeterministic)",
+					i, j, report.Fixed[j].RuleID, firstFixed[j].RuleID)
+			}
+		}
+	}
+}
+
+// Fix #5: fixFn error should appear in Unfixable, not be silently dropped.
+func TestFixer_FixFnErrorReportsUnfixable(t *testing.T) {
+	fsys := testkit.Wiki(
+		testkit.F("wiki/page.md", "---\ncreated: 2026-05-05\n---\n# Page\n"),
+	)
+	eng := setupEngine()
+	ruleList := []rules.Rule{
+		testkit.Rule("required-fields",
+			testkit.Check("field-exists"),
+			testkit.On("wiki/**"),
+			testkit.Frontmatter("tags"),
+			testkit.MessageTemplate("missing {{.Field}}"),
+		),
+	}
+
+	// Register a fix that always errors
+	registry := map[string]fix.FixFunc{
+		"field-exists": func(content []byte, params map[string]any) (bool, []byte, []string, error) {
+			return false, nil, nil, fmt.Errorf("simulated fix error")
+		},
+	}
+
+	fixer := fix.New(eng, registry)
+	report, err := fixer.Fix(fsys, ruleList, fix.Options{})
+	if err != nil {
+		t.Fatalf("Fix error: %v", err)
+	}
+
+	// The finding should appear in Unfixable, not disappear
+	if report.UnfixableCount == 0 {
+		t.Error("expected unfixable entry for fix error, got 0")
+	}
+	foundReason := false
+	for _, u := range report.Unfixable {
+		if u.RuleID == "required-fields" && u.FilePath == "wiki/page.md" {
+			foundReason = true
+			if u.Reason == "" {
+				t.Error("unfixable entry should have a reason")
+			}
+		}
+	}
+	if !foundReason {
+		t.Error("expected unfixable entry for required-fields on wiki/page.md")
+	}
+}
+
+// Fix #6: Write failure should move fixes to Unfixable, not return error.
+func TestFixer_WriteFailureMovesToUnfixable(t *testing.T) {
+	fsys := &failWriteFS{
+		MemFS:    testkit.Wiki(
+			testkit.F("wiki/good.md", "---\ncreated: 2026-05-05\n---\n# Good\n"),
+			testkit.F("wiki/bad.md", "---\ncreated: 2026-05-05\n---\n# Bad\n"),
+		),
+		failPath: "wiki/bad.md",
+	}
+	eng := setupEngine()
+	ruleList := []rules.Rule{
+		testkit.Rule("required-fields",
+			testkit.Check("field-exists"),
+			testkit.On("wiki/**"),
+			testkit.Frontmatter("tags"),
+			testkit.MessageTemplate("missing {{.Field}}"),
+		),
+	}
+
+	fixer := fix.New(eng, fix.All)
+	report, err := fixer.Fix(fsys, ruleList, fix.Options{})
+	if err != nil {
+		t.Fatalf("Fix should not return error on write failure: %v", err)
+	}
+
+	// good.md should be fixed
+	goodFixed := false
+	for _, f := range report.Fixed {
+		if f.FilePath == "wiki/good.md" {
+			goodFixed = true
+		}
+	}
+	if !goodFixed {
+		t.Error("expected wiki/good.md in Fixed")
+	}
+
+	// bad.md should be in Unfixable
+	badUnfixable := false
+	for _, u := range report.Unfixable {
+		if u.FilePath == "wiki/bad.md" {
+			badUnfixable = true
+			if u.Reason == "" {
+				t.Error("unfixable entry should have write error reason")
+			}
+		}
+	}
+	if !badUnfixable {
+		t.Error("expected wiki/bad.md in Unfixable after write failure")
+	}
+}
+
+// failWriteFS wraps MemFS but fails WriteFile on a specific path.
+type failWriteFS struct {
+	*vfs.MemFS
+	failPath string
+}
+
+func (f *failWriteFS) WriteFile(name string, data []byte, perm fs.FileMode) error {
+	if name == f.failPath {
+		return fmt.Errorf("simulated write error for %s", name)
+	}
+	return f.MemFS.WriteFile(name, data, perm)
 }
 
 func containsSubstring(s, sub string) bool {

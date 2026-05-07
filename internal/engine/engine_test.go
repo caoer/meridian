@@ -289,5 +289,33 @@ func TestEngine_LintIgnore_PartialSuppress(t *testing.T) {
 	}
 }
 
+func TestEngine_InjectsScannedPaths(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"wiki/page-a.md": "---\nsource: \"[[page-b]]\"\n---\n# A\n",
+		"wiki/page-b.md": "---\nsource: \"[[page-a]]\"\n---\n# B\n",
+	})
+
+	eng := New()
+	// Register a check that verifies __scanned_paths is present
+	eng.RegisterCheck("test-paths", func(doc *Document, params map[string]any) []RawFinding {
+		paths, ok := params["__scanned_paths"].([]string)
+		if !ok || len(paths) == 0 {
+			return []RawFinding{{TemplateData: map[string]string{"Issue": "missing __scanned_paths"}}}
+		}
+		return nil
+	})
+
+	rule := rules.Rule{
+		ID: "test-paths", Check: "test-paths", Message: "{{.Issue}}",
+		Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}),
+		Params: map[string]any{},
+	}
+
+	results := eng.Run(fs, []rules.Rule{rule})
+	if len(results) != 0 {
+		t.Errorf("expected 0 findings (scanned paths injected), got %d: %v", len(results), results)
+	}
+}
+
 // Verify types.Finding is the return type (compile-time check)
 var _ []types.Finding = New().Run(vfs.NewMemFS(), nil)

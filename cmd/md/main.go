@@ -152,7 +152,9 @@ func fixHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config
 			DryRun bool   `json:"dry-run"`
 		}
 		if req.Params != nil {
-			json.Unmarshal(req.Params, &params)
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return cli.ErrorResponse(cli.ErrInvalidParams, "invalid params: "+err.Error())
+			}
 		}
 
 		// Filter rules by scope if set

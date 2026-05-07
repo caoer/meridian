@@ -2,6 +2,7 @@ package fix
 
 import (
 	"io/fs"
+	"sort"
 
 	"github.com/caoer/meridian/internal/engine"
 	"github.com/caoer/meridian/internal/rules"
@@ -83,10 +84,23 @@ func (f *Fixer) Fix(fsys vfs.WriteFS, ruleList []rules.Rule, opts Options) (*Fix
 
 	report := &FixReport{}
 
+	// Fix #4: Deterministic iteration order — sort keys.
+	keys := make([]fileRuleKey, 0, len(grouped))
+	for k := range grouped {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].path != keys[j].path {
+			return keys[i].path < keys[j].path
+		}
+		return keys[i].ruleID < keys[j].ruleID
+	})
+
 	// Track files we've already fixed (apply fixes cumulatively)
 	fixedContent := make(map[string][]byte)
 
-	for key, group := range grouped {
+	for _, key := range keys {
+		group := grouped[key]
 		rule, ok := ruleMap[key.ruleID]
 		if !ok {
 			continue
@@ -110,6 +124,13 @@ func (f *Fixer) Fix(fsys vfs.WriteFS, ruleList []rules.Rule, opts Options) (*Fix
 		if !ok {
 			data, err := fs.ReadFile(fsys, key.path)
 			if err != nil {
+				// Fix #5: Report read errors instead of silently dropping.
+				report.Unfixable = append(report.Unfixable, SkipResult{
+					FilePath: key.path,
+					RuleID:   key.ruleID,
+					Reason:   "read error: " + err.Error(),
+				})
+				report.UnfixableCount++
 				continue
 			}
 			content = data
@@ -117,6 +138,13 @@ func (f *Fixer) Fix(fsys vfs.WriteFS, ruleList []rules.Rule, opts Options) (*Fix
 
 		changed, newContent, actions, err := fixFn(content, rule.Params)
 		if err != nil {
+			// Fix #5: Report fix errors instead of silently dropping.
+			report.Unfixable = append(report.Unfixable, SkipResult{
+				FilePath: key.path,
+				RuleID:   key.ruleID,
+				Reason:   "fix error: " + err.Error(),
+			})
+			report.UnfixableCount++
 			continue
 		}
 		if !changed {
@@ -135,11 +163,32 @@ func (f *Fixer) Fix(fsys vfs.WriteFS, ruleList []rules.Rule, opts Options) (*Fix
 		}
 	}
 
-	// Write fixed files (unless dry-run)
+	// Fix #6: Write in deterministic order, track failures instead of returning early.
 	if !opts.DryRun {
-		for path, content := range fixedContent {
-			if err := fsys.WriteFile(path, content, 0644); err != nil {
-				return report, err
+		writePaths := make([]string, 0, len(fixedContent))
+		for p := range fixedContent {
+			writePaths = append(writePaths, p)
+		}
+		sort.Strings(writePaths)
+
+		for _, path := range writePaths {
+			if err := fsys.WriteFile(path, fixedContent[path], 0644); err != nil {
+				// Move this file's fixes from Fixed to Unfixable.
+				var kept []FixResult
+				for _, f := range report.Fixed {
+					if f.FilePath == path {
+						report.Unfixable = append(report.Unfixable, SkipResult{
+							FilePath: f.FilePath,
+							RuleID:   f.RuleID,
+							Reason:   "write error: " + err.Error(),
+						})
+						report.UnfixableCount++
+					} else {
+						kept = append(kept, f)
+					}
+				}
+				report.Fixed = kept
+				report.FixedCount = len(kept)
 			}
 		}
 	}

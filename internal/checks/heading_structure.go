@@ -7,6 +7,11 @@ import (
 	"github.com/caoer/meridian/internal/engine"
 )
 
+// headingFencedOpenRe matches the opening of a fenced code block (``` or ~~~).
+// Duplicated from backticked_wikilink.go; extract to shared helper when a third
+// check needs it (P3 #24).
+var headingFencedOpenRe = fencedOpenRe
+
 func headingStructureCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
 	if doc.Body == "" {
 		return nil
@@ -29,13 +34,14 @@ func headingStructureCheck(doc *engine.Document, params map[string]any) []engine
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
-		// Fenced code block toggling.
-		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-			marker := string(trimmed[0])
+		// Fenced code block toggling — tracks full opener length.
+		if m := headingFencedOpenRe.FindStringSubmatch(line); m != nil {
+			marker := string(m[1][0])
+			count := len(m[1])
 			if !inFence {
 				inFence = true
-				fenceMarker = marker
-			} else if marker == fenceMarker {
+				fenceMarker = strings.Repeat(marker, count)
+			} else if strings.HasPrefix(trimmed, fenceMarker) && marker == string(fenceMarker[0]) {
 				inFence = false
 				fenceMarker = ""
 			}

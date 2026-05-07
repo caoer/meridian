@@ -57,6 +57,12 @@ func (e *Engine) Run(fsys fs.FS, ruleList []rules.Rule) []types.Finding {
 		return nil
 	}
 
+	// Build scanned path list for checks that need resolution context.
+	scannedPaths := make([]string, len(docs))
+	for i, d := range docs {
+		scannedPaths[i] = d.Path
+	}
+
 	var findings []types.Finding
 
 	for _, rule := range ruleList {
@@ -96,7 +102,14 @@ func (e *Engine) Run(fsys fs.FS, ruleList []rules.Rule) []types.Finding {
 				continue
 			}
 
-			raws := checkFn(doc, rule.Params)
+			// Inject scanned paths for checks that need resolution context.
+			effectiveParams := make(map[string]any, len(rule.Params)+1)
+			for k, v := range rule.Params {
+				effectiveParams[k] = v
+			}
+			effectiveParams["__scanned_paths"] = scannedPaths
+
+			raws := checkFn(doc, effectiveParams)
 			for _, raw := range raws {
 				var msgBuf bytes.Buffer
 				if err := tmpl.Execute(&msgBuf, raw.TemplateData); err != nil {

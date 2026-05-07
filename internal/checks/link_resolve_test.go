@@ -115,3 +115,90 @@ func TestLinkResolve_WikilinkWithAlias(t *testing.T) {
 		t.Fatalf("want 0 findings for aliased link that resolves, got %d", len(findings))
 	}
 }
+
+func TestLinkResolve_ScannedPaths_Resolves(t *testing.T) {
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"source": "see [[page-a]]",
+		},
+	}
+	params := map[string]any{
+		"frontmatter":      "source",
+		"roots":            []any{"wiki/**"},
+		"__scanned_paths":  []string{"wiki/page-a.md", "wiki/page-b.md"},
+	}
+	findings := linkResolveCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for resolved link via scanned paths, got %d", len(findings))
+	}
+}
+
+func TestLinkResolve_ScannedPaths_Unresolved(t *testing.T) {
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"source": "[[nonexistent]]",
+		},
+	}
+	params := map[string]any{
+		"frontmatter":      "source",
+		"roots":            []any{"wiki/**"},
+		"__scanned_paths":  []string{"wiki/page-a.md"},
+	}
+	findings := linkResolveCheck(doc, params)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding for unresolved link, got %d", len(findings))
+	}
+}
+
+func TestLinkResolve_ScannedPaths_CaseInsensitive(t *testing.T) {
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"source": "[[Page-A]]",
+		},
+	}
+	params := map[string]any{
+		"frontmatter":      "source",
+		"roots":            []any{"wiki/**"},
+		"__scanned_paths":  []string{"wiki/page-a.md"},
+	}
+	findings := linkResolveCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for case-insensitive match, got %d", len(findings))
+	}
+}
+
+func TestLinkResolve_NoScannedPaths_AllFlag(t *testing.T) {
+	// No __scanned_paths and no resolved_index → all wikilinks flag (graceful degradation)
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"source": "[[anything]]",
+		},
+	}
+	params := map[string]any{
+		"frontmatter": "source",
+		"roots":       []any{"wiki/**"},
+	}
+	findings := linkResolveCheck(doc, params)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding for graceful degradation (no scanned paths), got %d", len(findings))
+	}
+}
+
+func TestLinkResolve_RootsFiltersPaths(t *testing.T) {
+	// Only paths matching roots should be in resolved index
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"source": "[[inbox-page]]",
+		},
+	}
+	params := map[string]any{
+		"frontmatter":      "source",
+		"roots":            []any{"wiki/**"},
+		"__scanned_paths":  []string{"wiki/wiki-page.md", "inbox/inbox-page.md"},
+	}
+	findings := linkResolveCheck(doc, params)
+	// inbox-page.md doesn't match wiki/**, so it shouldn't resolve
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding (inbox-page not in roots), got %d", len(findings))
+	}
+}
