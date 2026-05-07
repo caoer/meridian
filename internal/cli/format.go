@@ -150,6 +150,15 @@ func formatData(w io.Writer, data any) {
 			fmt.Fprintf(w, "  [%s] %-30s %s\n", r.Type, r.ID, r.Description)
 		}
 
+	case FixData:
+		for _, f := range d.Fixed {
+			fmt.Fprintf(w, "FIX   %-30s [%s] %s\n", f.FilePath, f.RuleID, f.Action)
+		}
+		for _, s := range d.Unfixable {
+			fmt.Fprintf(w, "SKIP  %-30s [%s] %s\n", s.FilePath, s.RuleID, s.Reason)
+		}
+		fmt.Fprintf(w, "\n%d fixed, %d unfixable\n", d.FixedCount, d.UnfixableCount)
+
 	default:
 		// Fallback — just print
 		fmt.Fprintf(w, "%v\n", data)
