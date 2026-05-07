@@ -76,6 +76,19 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 		"version": {
 			Description: "Show version information",
 		},
+		"domains tree": {
+			Description: "Show domain hierarchy from scanned wiki",
+			Params: map[string]paramHelp{
+				"scope": {Type: "string", Required: false},
+			},
+		},
+		"domains show": {
+			Description: "Detail for one domain prefix",
+			Params: map[string]paramHelp{
+				"prefix": {Type: "string", Required: true},
+				"scope":  {Type: "string", Required: false},
+			},
+		},
 	}
 
 	return func(req *Request) *Response {

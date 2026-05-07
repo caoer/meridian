@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 )
 
 // MaxInputSize is the maximum allowed size for JSON input (10MB).
@@ -103,8 +104,10 @@ func (r *Router) Run(args []string, stdin io.Reader) int {
 		var formatCheck struct {
 			Format string `json:"format"`
 		}
-		json.Unmarshal(params, &formatCheck)
-		if formatCheck.Format == "json" {
+		if err := json.Unmarshal(params, &formatCheck); err != nil {
+			return r.respond(ErrorResponse(ErrInvalidParams, "invalid params: "+err.Error()))
+		}
+		if strings.EqualFold(formatCheck.Format, "json") {
 			format = FormatJSON
 		}
 	}

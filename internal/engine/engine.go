@@ -48,7 +48,7 @@ func (e *Engine) Warnings() []types.Warning {
 func (e *Engine) Run(fsys fs.FS, ruleList []rules.Rule) []types.Finding {
 	e.warnings = nil
 
-	docs, err := scan(fsys)
+	docs, err := Scan(fsys)
 	if err != nil {
 		e.warnings = append(e.warnings, types.Warning{
 			Code:    "SCAN_ERROR",
