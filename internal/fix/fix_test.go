@@ -383,6 +383,112 @@ func (f *failWriteFS) WriteFile(name string, data []byte, perm fs.FileMode) erro
 	return f.MemFS.WriteFile(name, data, perm)
 }
 
+// Scope pre-filter: only files matching scope get fixed, others unchanged.
+func TestFixer_ScopeFiltersPreventsWrites(t *testing.T) {
+	originalB := "---\ncreated: 2026-05-05\n---\n# Other\n"
+	fsys := testkit.Wiki(
+		testkit.F("wiki/sub/a.md", "---\ncreated: 2026-05-05\n---\n# A\n"),
+		testkit.F("wiki/other/b.md", originalB),
+	)
+	eng := setupEngine()
+	ruleList := []rules.Rule{
+		testkit.Rule("required-fields",
+			testkit.Check("field-exists"),
+			testkit.On("wiki/**"),
+			testkit.Frontmatter("tags"),
+			testkit.MessageTemplate("missing {{.Field}}"),
+		),
+	}
+
+	fixer := fix.New(eng, fix.All)
+	report, err := fixer.Fix(fsys, ruleList, fix.Options{Scope: "wiki/sub/"})
+	if err != nil {
+		t.Fatalf("Fix error: %v", err)
+	}
+
+	// File A in scope — should be fixed
+	if report.FixedCount != 1 {
+		t.Errorf("expected 1 fixed, got %d", report.FixedCount)
+	}
+	foundA := false
+	for _, f := range report.Fixed {
+		if f.FilePath == "wiki/sub/a.md" {
+			foundA = true
+		}
+	}
+	if !foundA {
+		t.Error("expected wiki/sub/a.md in Fixed")
+	}
+
+	// File B out of scope — must NOT be modified
+	dataB, err := fs.ReadFile(fsys, "wiki/other/b.md")
+	if err != nil {
+		t.Fatalf("read wiki/other/b.md: %v", err)
+	}
+	if string(dataB) != originalB {
+		t.Errorf("out-of-scope file was modified!\nbefore: %q\nafter:  %q", originalB, string(dataB))
+	}
+}
+
+// Scope with .md shorthand: "wiki/sub/page" matches "wiki/sub/page.md".
+func TestFixer_ScopeMDShorthand(t *testing.T) {
+	fsys := testkit.Wiki(
+		testkit.F("wiki/sub/page.md", "---\ncreated: 2026-05-05\n---\n# Page\n"),
+		testkit.F("wiki/other/b.md", "---\ncreated: 2026-05-05\n---\n# Other\n"),
+	)
+	eng := setupEngine()
+	ruleList := []rules.Rule{
+		testkit.Rule("required-fields",
+			testkit.Check("field-exists"),
+			testkit.On("wiki/**"),
+			testkit.Frontmatter("tags"),
+			testkit.MessageTemplate("missing {{.Field}}"),
+		),
+	}
+
+	fixer := fix.New(eng, fix.All)
+	report, err := fixer.Fix(fsys, ruleList, fix.Options{Scope: "wiki/sub/page"})
+	if err != nil {
+		t.Fatalf("Fix error: %v", err)
+	}
+
+	if report.FixedCount != 1 {
+		t.Errorf("expected 1 fixed (page.md via shorthand), got %d", report.FixedCount)
+	}
+	for _, f := range report.Fixed {
+		if f.FilePath != "wiki/sub/page.md" {
+			t.Errorf("unexpected fixed file: %s", f.FilePath)
+		}
+	}
+}
+
+// Empty scope: all files processed (existing behavior preserved).
+func TestFixer_EmptyScopeFixesAll(t *testing.T) {
+	fsys := testkit.Wiki(
+		testkit.F("wiki/a.md", "---\ncreated: 2026-05-05\n---\n# A\n"),
+		testkit.F("wiki/b.md", "---\ncreated: 2026-05-05\n---\n# B\n"),
+	)
+	eng := setupEngine()
+	ruleList := []rules.Rule{
+		testkit.Rule("required-fields",
+			testkit.Check("field-exists"),
+			testkit.On("wiki/**"),
+			testkit.Frontmatter("tags"),
+			testkit.MessageTemplate("missing {{.Field}}"),
+		),
+	}
+
+	fixer := fix.New(eng, fix.All)
+	report, err := fixer.Fix(fsys, ruleList, fix.Options{})
+	if err != nil {
+		t.Fatalf("Fix error: %v", err)
+	}
+
+	if report.FixedCount != 2 {
+		t.Errorf("expected 2 fixed with empty scope, got %d", report.FixedCount)
+	}
+}
+
 func containsSubstring(s, sub string) bool {
 	return len(s) >= len(sub) && searchSubstring(s, sub)
 }

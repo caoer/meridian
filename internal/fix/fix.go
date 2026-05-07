@@ -3,6 +3,7 @@ package fix
 import (
 	"io/fs"
 	"sort"
+	"strings"
 
 	"github.com/caoer/meridian/internal/engine"
 	"github.com/caoer/meridian/internal/rules"
@@ -45,6 +46,7 @@ type FixReport struct {
 // Options controls fix behavior.
 type Options struct {
 	DryRun bool
+	Scope  string
 }
 
 // Fixer runs checks and applies registered fixes.
@@ -61,6 +63,24 @@ func New(eng *engine.Engine, registry map[string]FixFunc) *Fixer {
 // Fix runs checks, applies fixes for fixable findings, writes results.
 func (f *Fixer) Fix(fsys vfs.WriteFS, ruleList []rules.Rule, opts Options) (*FixReport, error) {
 	findings := f.engine.Run(fsys, ruleList)
+
+	// Pre-filter findings by scope so only scoped files get modified.
+	if opts.Scope != "" {
+		dirPrefix := opts.Scope
+		if !strings.HasSuffix(dirPrefix, "/") {
+			dirPrefix += "/"
+		}
+		var scoped []types.Finding
+		for _, finding := range findings {
+			if finding.FilePath == opts.Scope ||
+				finding.FilePath == opts.Scope+".md" ||
+				strings.HasPrefix(finding.FilePath, dirPrefix) {
+				scoped = append(scoped, finding)
+			}
+		}
+		findings = scoped
+	}
+
 	if len(findings) == 0 {
 		return &FixReport{}, nil
 	}

@@ -176,34 +176,12 @@ func fixHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config
 
 		fsys := vfs.NewOSFS(cfg.Scan.Root)
 		fixer := fix.New(eng, fix.All)
-		report, err := fixer.Fix(fsys, targetRules, fix.Options{DryRun: params.DryRun})
+		report, err := fixer.Fix(fsys, targetRules, fix.Options{
+			DryRun: params.DryRun,
+			Scope:  params.Scope,
+		})
 		if err != nil {
 			return cli.ErrorResponse(cli.ErrInvalidInput, err.Error())
-		}
-
-		// Filter results by scope prefix
-		if params.Scope != "" {
-			dirPrefix := params.Scope
-			if !strings.HasSuffix(dirPrefix, "/") {
-				dirPrefix += "/"
-			}
-			var scopedFixed []fix.FixResult
-			for _, f := range report.Fixed {
-				if f.FilePath == params.Scope || strings.HasPrefix(f.FilePath, dirPrefix) {
-					scopedFixed = append(scopedFixed, f)
-				}
-			}
-			report.Fixed = scopedFixed
-			report.FixedCount = len(scopedFixed)
-
-			var scopedUnfixable []fix.SkipResult
-			for _, s := range report.Unfixable {
-				if s.FilePath == params.Scope || strings.HasPrefix(s.FilePath, dirPrefix) {
-					scopedUnfixable = append(scopedUnfixable, s)
-				}
-			}
-			report.Unfixable = scopedUnfixable
-			report.UnfixableCount = len(scopedUnfixable)
 		}
 
 		// Convert fix.FixReport → cli.FixData
