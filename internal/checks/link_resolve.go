@@ -28,7 +28,21 @@ func linkResolveCheck(doc *engine.Document, params map[string]any) []engine.RawF
 		return nil
 	}
 
-	value := fmt.Sprintf("%v", raw)
+	var value string
+	switch v := raw.(type) {
+	case string:
+		value = v
+	case []any:
+		// Join list elements with space — preserves individual wikilink brackets.
+		parts := make([]string, len(v))
+		for i, item := range v {
+			parts[i] = fmt.Sprintf("%v", item)
+		}
+		value = strings.Join(parts, " ")
+	default:
+		value = fmt.Sprintf("%v", raw)
+	}
+
 	if value == "" {
 		return nil
 	}

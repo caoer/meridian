@@ -148,8 +148,9 @@ func fixHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config
 		}
 
 		var params struct {
-			Scope  string `json:"scope"`
-			DryRun bool   `json:"dry-run"`
+			Scope  string   `json:"scope"`
+			Rules  []string `json:"rules"`
+			DryRun bool     `json:"dry-run"`
 		}
 		if req.Params != nil {
 			if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -157,11 +158,20 @@ func fixHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config
 			}
 		}
 
-		// Filter rules by scope if set
+		// Filter rules if specific IDs requested
 		targetRules := loadedRules
-		if params.Scope != "" {
-			// Scope filtering happens at engine level via file paths,
-			// so we pass all rules and let the engine match.
+		if len(params.Rules) > 0 {
+			ruleSet := make(map[string]bool, len(params.Rules))
+			for _, id := range params.Rules {
+				ruleSet[id] = true
+			}
+			var filtered []rules.Rule
+			for _, r := range loadedRules {
+				if ruleSet[r.ID] {
+					filtered = append(filtered, r)
+				}
+			}
+			targetRules = filtered
 		}
 
 		fsys := vfs.NewOSFS(cfg.Scan.Root)
@@ -169,6 +179,31 @@ func fixHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config
 		report, err := fixer.Fix(fsys, targetRules, fix.Options{DryRun: params.DryRun})
 		if err != nil {
 			return cli.ErrorResponse(cli.ErrInvalidInput, err.Error())
+		}
+
+		// Filter results by scope prefix
+		if params.Scope != "" {
+			dirPrefix := params.Scope
+			if !strings.HasSuffix(dirPrefix, "/") {
+				dirPrefix += "/"
+			}
+			var scopedFixed []fix.FixResult
+			for _, f := range report.Fixed {
+				if f.FilePath == params.Scope || strings.HasPrefix(f.FilePath, dirPrefix) {
+					scopedFixed = append(scopedFixed, f)
+				}
+			}
+			report.Fixed = scopedFixed
+			report.FixedCount = len(scopedFixed)
+
+			var scopedUnfixable []fix.SkipResult
+			for _, s := range report.Unfixable {
+				if s.FilePath == params.Scope || strings.HasPrefix(s.FilePath, dirPrefix) {
+					scopedUnfixable = append(scopedUnfixable, s)
+				}
+			}
+			report.Unfixable = scopedUnfixable
+			report.UnfixableCount = len(scopedUnfixable)
 		}
 
 		// Convert fix.FixReport → cli.FixData

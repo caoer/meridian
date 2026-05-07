@@ -184,6 +184,80 @@ func TestLinkResolve_NoScannedPaths_AllFlag(t *testing.T) {
 	}
 }
 
+func TestLinkResolve_ListTypedFrontmatter_BothExtracted(t *testing.T) {
+	// Bug: []any via Sprintf produces "[[[link1]] [[link2]]]" — leading bracket
+	// merges with wikilink, causing false positive on "[link1".
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"sources": []any{"[[page-a]]", "[[page-b]]"},
+		},
+	}
+	params := map[string]any{
+		"frontmatter": "sources",
+		// No resolved index = all links unresolvable
+	}
+	findings := linkResolveCheck(doc, params)
+	if len(findings) != 2 {
+		t.Fatalf("want 2 findings, got %d", len(findings))
+	}
+	targets := map[string]bool{
+		findings[0].TemplateData["Target"]: true,
+		findings[1].TemplateData["Target"]: true,
+	}
+	if !targets["page-a"] || !targets["page-b"] {
+		t.Errorf("want targets page-a and page-b, got %v", targets)
+	}
+}
+
+func TestLinkResolve_ListTypedFrontmatter_MixedValidity(t *testing.T) {
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"sources": []any{"[[valid-page]]", "[[missing-page]]"},
+		},
+	}
+	params := map[string]any{
+		"frontmatter":    "sources",
+		"resolved_index": map[string]bool{"valid-page": true},
+	}
+	findings := linkResolveCheck(doc, params)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding (missing-page), got %d", len(findings))
+	}
+	if findings[0].TemplateData["Target"] != "missing-page" {
+		t.Errorf("Target = %q, want missing-page", findings[0].TemplateData["Target"])
+	}
+}
+
+func TestLinkResolve_IntTypedFrontmatter_NoFindings(t *testing.T) {
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"count": 42,
+		},
+	}
+	params := map[string]any{
+		"frontmatter": "count",
+	}
+	findings := linkResolveCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for int field, got %d", len(findings))
+	}
+}
+
+func TestLinkResolve_BoolTypedFrontmatter_NoFindings(t *testing.T) {
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"draft": true,
+		},
+	}
+	params := map[string]any{
+		"frontmatter": "draft",
+	}
+	findings := linkResolveCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for bool field, got %d", len(findings))
+	}
+}
+
 func TestLinkResolve_RootsFiltersPaths(t *testing.T) {
 	// Only paths matching roots should be in resolved index
 	doc := &engine.Document{
