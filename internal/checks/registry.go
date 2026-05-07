@@ -8,7 +8,10 @@ import "github.com/caoer/meridian/internal/engine"
 // All is the registry of built-in checks. Each entry maps a check name
 // (as referenced by rule YAML "check" field) to its implementation.
 var All = map[string]engine.CheckFunc{
-	"field-exists": fieldExistsCheck,
-	"tag-format":   tagFormatCheck,
-	"pattern":      patternCheck,
+	"field-exists":       fieldExistsCheck,
+	"tag-format":         tagFormatCheck,
+	"pattern":            patternCheck,
+	"backticked-wikilink": backtickWikilinkCheck,
+	"link-resolve":       linkResolveCheck,
+	"heading-structure":  headingStructureCheck,
 }

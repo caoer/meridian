@@ -25,7 +25,12 @@ func patternCheck(doc *engine.Document, params map[string]any) []engine.RawFindi
 	} else {
 		compiled, err := regexp.Compile(matchRaw)
 		if err != nil {
-			return nil
+			return []engine.RawFinding{{
+				TemplateData: map[string]string{
+					"Filename": filepath.Base(doc.Path),
+					"Match":    "INVALID_REGEX: " + err.Error(),
+				},
+			}}
 		}
 		regexCache.Store(matchRaw, compiled)
 		re = compiled
