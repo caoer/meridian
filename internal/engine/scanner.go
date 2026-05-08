@@ -29,6 +29,7 @@ func scan(fsys fs.FS) ([]*Document, error) {
 
 		doc := &Document{
 			Path:        path,
+			RawContent:  data,
 			Frontmatter: make(map[string]any),
 		}
 

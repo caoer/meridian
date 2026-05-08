@@ -12,13 +12,22 @@ import (
 	"github.com/caoer/meridian/internal/types"
 )
 
-// RunCached is like Run but skips evaluation for files whose content+rules
-// hash matches a cached entry. If store is nil, falls back to regular Run.
-func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store) []types.Finding {
-	if store == nil {
-		return e.Run(fsys, ruleList)
-	}
+// activeRule bundles a rule with its pre-parsed template and check function.
+type activeRule struct {
+	rule    rules.Rule
+	checkFn CheckFunc
+	tmpl    *template.Template
+}
 
+// evalResult holds output from a single (doc, rule) evaluation.
+type evalResult struct {
+	findings []types.Finding
+	panicMsg string
+}
+
+// RunCached scans the filesystem, matches rules, evaluates checks with optional
+// caching. If store is nil, evaluation proceeds without caching.
+func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store) []types.Finding {
 	e.warnings = nil
 
 	docs, err := scan(fsys)
@@ -30,24 +39,76 @@ func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 		return nil
 	}
 
-	// Pre-compute rule hashes for combined hash calculation.
-	ruleHashes := make([]string, len(ruleList))
-	for i, r := range ruleList {
-		ruleHashes[i] = cache.RuleHash(r)
+	// Prepare active rules (filter off, validate check registration, parse templates).
+	active := e.prepareActiveRules(ruleList)
+	if len(active) == 0 {
+		return nil
 	}
 
-	// Build scanned path list for checks that need resolution context.
+	// Pre-compute rule hashes from active rules only (if caching).
+	var ruleHashes []string
+	if store != nil {
+		ruleHashes = make([]string, len(active))
+		for i, ar := range active {
+			ruleHashes[i] = cache.RuleHash(ar.rule)
+		}
+	}
+
+	// Build scanned paths for checks that need cross-file context.
 	scannedPaths := make([]string, len(docs))
 	for i, d := range docs {
 		scannedPaths[i] = d.Path
 	}
 
-	// Pre-parse message templates for active rules.
-	type activeRule struct {
-		rule    rules.Rule
-		checkFn CheckFunc
-		tmpl    *template.Template
+	var findings []types.Finding
+
+	for _, doc := range docs {
+		// Cache check (if store present).
+		var combined string
+		if store != nil {
+			contentHash := cache.FileHash(doc.RawContent)
+			combined = cache.CombinedHash(contentHash, ruleHashes)
+			if cached, ok := store.Get(doc.Path, combined); ok {
+				findings = append(findings, cached...)
+				continue
+			}
+		}
+
+		// Cache miss or no store — evaluate all active rules against this doc.
+		var docFindings []types.Finding
+		for _, ar := range active {
+			if !Match(ar.rule.On, doc.Path, doc.Tags) {
+				continue
+			}
+			if doc.IsIgnored(ar.rule.ID) {
+				continue
+			}
+			result := e.evalDoc(doc, ar, scannedPaths)
+			if result.panicMsg != "" {
+				e.warnings = append(e.warnings, types.Warning{
+					Code:    "CHECK_PANIC",
+					Message: result.panicMsg,
+				})
+				continue
+			}
+			docFindings = append(docFindings, result.findings...)
+		}
+
+		// Cache put (if store present).
+		if store != nil {
+			store.Put(doc.Path, combined, docFindings)
+		}
+
+		findings = append(findings, docFindings...)
 	}
+
+	sortFindings(findings)
+	return findings
+}
+
+// prepareActiveRules filters rules by severity, validates check registration,
+// and pre-parses message templates. Warnings are appended to engine.
+func (e *Engine) prepareActiveRules(ruleList []rules.Rule) []activeRule {
 	var active []activeRule
 	for _, rule := range ruleList {
 		if rule.Severity == rules.SeverityOff {
@@ -71,60 +132,58 @@ func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 		}
 		active = append(active, activeRule{rule: rule, checkFn: checkFn, tmpl: tmpl})
 	}
+	return active
+}
 
-	var findings []types.Finding
+// evalDoc evaluates a single rule against a single doc. Recovers panics.
+func (e *Engine) evalDoc(doc *Document, ar activeRule, scannedPaths []string) evalResult {
+	effectiveParams := make(map[string]any, len(ar.rule.Params)+1)
+	for k, v := range ar.rule.Params {
+		effectiveParams[k] = v
+	}
+	effectiveParams["__scanned_paths"] = scannedPaths
 
-	for _, doc := range docs {
-		// Compute combined hash for this file.
-		raw, _ := fs.ReadFile(fsys, doc.Path)
-		contentHash := cache.FileHash(raw)
-		combined := cache.CombinedHash(contentHash, ruleHashes)
+	var result evalResult
+	var raws []RawFinding
+	var didPanic bool
+	var panicVal any
 
-		// Cache check.
-		if cached, ok := store.Get(doc.Path, combined); ok {
-			findings = append(findings, cached...)
-			continue
-		}
-
-		// Cache miss — evaluate all rules against this doc.
-		var docFindings []types.Finding
-		for _, ar := range active {
-			if !Match(ar.rule.On, doc.Path, doc.Tags) {
-				continue
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				didPanic = true
+				panicVal = r
 			}
-			if doc.IsIgnored(ar.rule.ID) {
-				continue
-			}
+		}()
+		raws = ar.checkFn(doc, effectiveParams)
+	}()
 
-			effectiveParams := make(map[string]any, len(ar.rule.Params)+1)
-			for k, v := range ar.rule.Params {
-				effectiveParams[k] = v
-			}
-			effectiveParams["__scanned_paths"] = scannedPaths
-
-			raws := ar.checkFn(doc, effectiveParams)
-			for _, raw := range raws {
-				var msgBuf bytes.Buffer
-				if err := ar.tmpl.Execute(&msgBuf, raw.TemplateData); err != nil {
-					msgBuf.Reset()
-					msgBuf.WriteString(fmt.Sprintf("template error: %v", err))
-				}
-				docFindings = append(docFindings, types.Finding{
-					RuleID:   ar.rule.ID,
-					Severity: ar.rule.Severity.String(),
-					FilePath: doc.Path,
-					Line:     raw.Line,
-					Column:   raw.Column,
-					Message:  msgBuf.String(),
-				})
-			}
-		}
-
-		store.Put(doc.Path, combined, docFindings)
-		findings = append(findings, docFindings...)
+	if didPanic {
+		result.panicMsg = fmt.Sprintf("Rule '%s' check '%s' panicked on '%s': %v",
+			ar.rule.ID, ar.rule.Check, doc.Path, panicVal)
+		return result
 	}
 
-	// Sort: file_path, rule_id, line.
+	for _, raw := range raws {
+		var msgBuf bytes.Buffer
+		if err := ar.tmpl.Execute(&msgBuf, raw.TemplateData); err != nil {
+			msgBuf.Reset()
+			msgBuf.WriteString(fmt.Sprintf("template error: %v", err))
+		}
+		result.findings = append(result.findings, types.Finding{
+			RuleID:   ar.rule.ID,
+			Severity: ar.rule.Severity.String(),
+			FilePath: doc.Path,
+			Line:     raw.Line,
+			Column:   raw.Column,
+			Message:  msgBuf.String(),
+		})
+	}
+	return result
+}
+
+// sortFindings sorts by file_path → rule_id → line.
+func sortFindings(findings []types.Finding) {
 	sort.Slice(findings, func(i, j int) bool {
 		if findings[i].FilePath != findings[j].FilePath {
 			return findings[i].FilePath < findings[j].FilePath
@@ -134,6 +193,4 @@ func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 		}
 		return findings[i].Line < findings[j].Line
 	})
-
-	return findings
 }

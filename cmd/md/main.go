@@ -94,6 +94,7 @@ func main() {
 }
 
 func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config, cfgErr error) cli.Handler {
+	store := cache.NewStore("") // in-memory; persists across handler calls within same process
 	return func(req *cli.Request) *cli.Response {
 		if cfgErr != nil {
 			return cli.ErrorResponseWithHint(cli.ErrNoConfig,
@@ -112,7 +113,6 @@ func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Conf
 		start := time.Now()
 		fsys := os.DirFS(cfg.Scan.Root)
 
-		store := cache.NewStore("") // in-memory only; disk persistence is future work
 		findings := eng.RunCached(fsys, loadedRules, store)
 
 		// Filter by scope prefix if set

@@ -38,12 +38,14 @@ Bug fixes: reproduction test -> fails -> fix -> passes -> full suite.
 | `internal/vfs` | nothing | yes |
 | `internal/frontmatter` | nothing | yes |
 | `internal/rules` | nothing | yes |
+| `internal/types` | nothing | yes |
+| `internal/cache` | types, rules | no |
 | `pkg/testkit` | vfs, rules | no |
-| `internal/engine` | rules, frontmatter, vfs | no |
+| `internal/engine` | cache, rules, frontmatter, vfs | no |
 | `internal/checks` | engine | no |
 | `internal/config` | rules | no |
 | `internal/cli` | types, rules | no |
-| `cmd/md` | checks, cli, config, engine, rules | no |
+| `cmd/md` | cache, checks, cli, config, engine, rules | no |
 
 Leaf packages import nothing from meridian. No circular deps.
 

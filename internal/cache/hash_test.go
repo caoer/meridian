@@ -76,6 +76,70 @@ func TestRuleHash_DifferentSeverity(t *testing.T) {
 	}
 }
 
+func TestRuleHash_DifferentID(t *testing.T) {
+	r1 := rules.Rule{
+		ID:    "rule-alpha",
+		Check: "frontmatter_exists",
+		Params: map[string]any{"field": "title"},
+	}
+	r2 := rules.Rule{
+		ID:    "rule-beta",
+		Check: "frontmatter_exists",
+		Params: map[string]any{"field": "title"},
+	}
+	if RuleHash(r1) == RuleHash(r2) {
+		t.Fatal("rules with different IDs should have different hashes")
+	}
+}
+
+func TestRuleHash_DifferentOnFilter(t *testing.T) {
+	r1 := rules.Rule{
+		ID:    "test-rule",
+		Check: "frontmatter_exists",
+		On:    rules.ParseOnFilter([]string{"wiki/**"}),
+	}
+	r2 := rules.Rule{
+		ID:    "test-rule",
+		Check: "frontmatter_exists",
+		On:    rules.ParseOnFilter([]string{"inbox/**"}),
+	}
+	if RuleHash(r1) == RuleHash(r2) {
+		t.Fatal("rules with different On filters should have different hashes")
+	}
+}
+
+func TestRuleHash_DifferentOnTags(t *testing.T) {
+	r1 := rules.Rule{
+		ID:    "test-rule",
+		Check: "frontmatter_exists",
+		On:    rules.ParseOnFilter([]string{"#domain/locus"}),
+	}
+	r2 := rules.Rule{
+		ID:    "test-rule",
+		Check: "frontmatter_exists",
+		On:    rules.ParseOnFilter([]string{"#domain/mesh"}),
+	}
+	if RuleHash(r1) == RuleHash(r2) {
+		t.Fatal("rules with different On tags should have different hashes")
+	}
+}
+
+func TestRuleHash_OnOrderIndependent(t *testing.T) {
+	r1 := rules.Rule{
+		ID:    "test-rule",
+		Check: "frontmatter_exists",
+		On:    rules.ParseOnFilter([]string{"wiki/**", "inbox/**"}),
+	}
+	r2 := rules.Rule{
+		ID:    "test-rule",
+		Check: "frontmatter_exists",
+		On:    rules.ParseOnFilter([]string{"inbox/**", "wiki/**"}),
+	}
+	if RuleHash(r1) != RuleHash(r2) {
+		t.Fatal("On filter order should not affect hash (sorted internally)")
+	}
+}
+
 func TestCombinedHash_Deterministic(t *testing.T) {
 	fileH := FileHash([]byte("content"))
 	ruleHashes := []string{"aaa", "ccc", "bbb"}

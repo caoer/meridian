@@ -16,13 +16,40 @@ func FileHash(content []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-// RuleHash returns a SHA-256 hex digest that captures a rule's identity:
-// check type, severity, message template, and params.
+// RuleHash returns a SHA-256 hex digest that captures a rule's full identity:
+// ID, check type, severity, message template, on filter, and params.
 func RuleHash(r rules.Rule) string {
 	h := sha256.New()
+	fmt.Fprintf(h, "id:%s\n", r.ID)
 	fmt.Fprintf(h, "check:%s\n", r.Check)
 	fmt.Fprintf(h, "severity:%s\n", r.Severity.String())
 	fmt.Fprintf(h, "message:%s\n", r.Message)
+
+	// On filter — sorted for deterministic hashing.
+	paths := make([]string, len(r.On.Paths))
+	copy(paths, r.On.Paths)
+	sort.Strings(paths)
+	for _, p := range paths {
+		fmt.Fprintf(h, "on:path:%s\n", p)
+	}
+	tags := make([]string, len(r.On.Tags))
+	copy(tags, r.On.Tags)
+	sort.Strings(tags)
+	for _, tag := range tags {
+		fmt.Fprintf(h, "on:tag:%s\n", tag)
+	}
+	excludeStrs := make([]string, len(r.On.Excludes))
+	for i, e := range r.On.Excludes {
+		if e.Path != "" {
+			excludeStrs[i] = "path:" + e.Path
+		} else {
+			excludeStrs[i] = "tag:" + e.Tag
+		}
+	}
+	sort.Strings(excludeStrs)
+	for _, s := range excludeStrs {
+		fmt.Fprintf(h, "on:exclude:%s\n", s)
+	}
 
 	// Deterministic param ordering.
 	keys := make([]string, 0, len(r.Params))
