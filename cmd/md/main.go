@@ -113,6 +113,7 @@ func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Conf
 		start := time.Now()
 		fsys := os.DirFS(cfg.Scan.Root)
 
+		store.ResetStats() // per-invocation stats, not cumulative
 		findings := eng.RunCached(fsys, loadedRules, store)
 
 		// Filter by scope prefix if set

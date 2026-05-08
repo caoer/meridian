@@ -76,6 +76,7 @@ func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 
 		// Cache miss or no store — evaluate all active rules against this doc.
 		var docFindings []types.Finding
+		hadPanic := false
 		for _, ar := range active {
 			if !Match(ar.rule.On, doc.Path, doc.Tags) {
 				continue
@@ -89,13 +90,16 @@ func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 					Code:    "CHECK_PANIC",
 					Message: result.panicMsg,
 				})
+				hadPanic = true
 				continue
 			}
 			docFindings = append(docFindings, result.findings...)
 		}
 
-		// Cache put (if store present).
-		if store != nil {
+		// Cache put (if store present). Skip if any rule panicked —
+		// partial results must not be cached as they'd suppress
+		// the panicked rule's findings on subsequent runs.
+		if store != nil && !hadPanic {
 			store.Put(doc.Path, combined, docFindings)
 		}
 
