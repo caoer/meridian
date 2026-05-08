@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/caoer/meridian/internal/cache"
 	"github.com/caoer/meridian/internal/checks"
 	"github.com/caoer/meridian/internal/cli"
 	"github.com/caoer/meridian/internal/config"
@@ -276,6 +277,7 @@ func mvHandlerFS(eng *engine.Engine, loadedRules []rules.Rule, cfgErr error, mak
 }
 
 func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config, cfgErr error) cli.Handler {
+	store := cache.NewStore("") // in-memory; persists across handler calls within same process
 	return func(req *cli.Request) *cli.Response {
 		if cfgErr != nil {
 			return cli.ErrorResponseWithHint(cli.ErrNoConfig,
@@ -295,7 +297,9 @@ func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Conf
 
 		start := time.Now()
 		fsys := os.DirFS(cfg.Scan.Root)
-		findings := eng.Run(fsys, loadedRules)
+
+		store.ResetStats() // per-invocation stats, not cumulative
+		findings := eng.RunCached(fsys, loadedRules, store)
 
 		// Filter by scope prefix if set
 		if params.Scope != "" {
@@ -324,10 +328,20 @@ func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Conf
 			cliWarnings[i] = cli.Warning(w)
 		}
 
+		// Populate cache stats
+		cs := store.Stats()
+		var hitRate float64
+		if cs.Total > 0 {
+			hitRate = float64(cs.Hits) / float64(cs.Total)
+		}
+
 		return &cli.Response{
 			Version:  cli.ResponseVersion,
 			Findings: findings,
 			Stats: &cli.Stats{
+				FilesScanned:  cs.Total,
+				FilesSkipped:  cs.Hits,
+				CacheHitRate:  hitRate,
 				RulesApplied:  len(loadedRules),
 				FindingsCount: len(findings),
 				DurationMs:    int(dur.Milliseconds()),

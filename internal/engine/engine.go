@@ -1,11 +1,7 @@
 package engine
 
 import (
-	"bytes"
-	"fmt"
 	"io/fs"
-	"sort"
-	"text/template"
 
 	"github.com/caoer/meridian/internal/rules"
 	"github.com/caoer/meridian/internal/types"
@@ -45,100 +41,7 @@ func (e *Engine) Warnings() []types.Warning {
 }
 
 // Run scans the filesystem, matches rules, evaluates checks, returns sorted findings.
+// Delegates to RunCached with no cache store.
 func (e *Engine) Run(fsys fs.FS, ruleList []rules.Rule) []types.Finding {
-	e.warnings = nil
-
-	docs, err := Scan(fsys)
-	if err != nil {
-		e.warnings = append(e.warnings, types.Warning{
-			Code:    "SCAN_ERROR",
-			Message: fmt.Sprintf("scan error: %v", err),
-		})
-		return nil
-	}
-
-	// Build scanned path list for checks that need resolution context.
-	scannedPaths := make([]string, len(docs))
-	for i, d := range docs {
-		scannedPaths[i] = d.Path
-	}
-
-	var findings []types.Finding
-
-	for _, rule := range ruleList {
-		// Skip severity=off
-		if rule.Severity == rules.SeverityOff {
-			continue
-		}
-
-		// Check if check type is registered
-		checkFn, ok := e.checks[rule.Check]
-		if !ok {
-			e.warnings = append(e.warnings, types.Warning{
-				Code:    "CHECK_NOT_REGISTERED",
-				Message: fmt.Sprintf("Rule '%s': check '%s' not registered, skipping", rule.ID, rule.Check),
-			})
-			continue
-		}
-
-		// Parse message template
-		tmpl, err := template.New("").Parse(rule.Message)
-		if err != nil {
-			e.warnings = append(e.warnings, types.Warning{
-				Code:    "TEMPLATE_ERROR",
-				Message: fmt.Sprintf("Rule '%s': invalid template: %v", rule.ID, err),
-			})
-			continue
-		}
-
-		for _, doc := range docs {
-			// Match on filter
-			if !Match(rule.On, doc.Path, doc.Tags) {
-				continue
-			}
-
-			// Suppression: skip if doc has lint-ignore for this rule
-			if doc.IsIgnored(rule.ID) {
-				continue
-			}
-
-			// Inject scanned paths for checks that need resolution context.
-			effectiveParams := make(map[string]any, len(rule.Params)+1)
-			for k, v := range rule.Params {
-				effectiveParams[k] = v
-			}
-			effectiveParams["__scanned_paths"] = scannedPaths
-
-			raws := checkFn(doc, effectiveParams)
-			for _, raw := range raws {
-				var msgBuf bytes.Buffer
-				if err := tmpl.Execute(&msgBuf, raw.TemplateData); err != nil {
-					msgBuf.Reset()
-					msgBuf.WriteString(fmt.Sprintf("template error: %v", err))
-				}
-
-				findings = append(findings, types.Finding{
-					RuleID:   rule.ID,
-					Severity: rule.Severity.String(),
-					FilePath: doc.Path,
-					Line:     raw.Line,
-					Column:   raw.Column,
-					Message:  msgBuf.String(),
-				})
-			}
-		}
-	}
-
-	// Sort: file_path, rule_id, line
-	sort.Slice(findings, func(i, j int) bool {
-		if findings[i].FilePath != findings[j].FilePath {
-			return findings[i].FilePath < findings[j].FilePath
-		}
-		if findings[i].RuleID != findings[j].RuleID {
-			return findings[i].RuleID < findings[j].RuleID
-		}
-		return findings[i].Line < findings[j].Line
-	})
-
-	return findings
+	return e.RunCached(fsys, ruleList, nil)
 }

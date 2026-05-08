@@ -12,11 +12,12 @@ type Finding struct {
 
 // Stats holds scan metrics (check command only).
 type Stats struct {
-	FilesScanned  int `json:"files_scanned"`
-	FilesSkipped  int `json:"files_skipped"`
-	RulesApplied  int `json:"rules_applied"`
-	FindingsCount int `json:"findings_count"`
-	DurationMs    int `json:"duration_ms"`
+	FilesScanned  int     `json:"files_scanned"`
+	FilesSkipped  int     `json:"files_skipped"`
+	CacheHitRate  float64 `json:"cache_hit_rate,omitempty"`
+	RulesApplied  int     `json:"rules_applied"`
+	FindingsCount int     `json:"findings_count"`
+	DurationMs    int     `json:"duration_ms"`
 }
 
 // Warning is a non-fatal issue.

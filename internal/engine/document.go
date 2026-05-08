@@ -5,6 +5,7 @@ import "strings"
 // Document represents a parsed markdown file ready for checks.
 type Document struct {
 	Path        string         // relative to scan root
+	RawContent  []byte         // raw file content (retained for cache hashing)
 	Frontmatter map[string]any // parsed YAML frontmatter
 	Tags        []string       // extracted from frontmatter tags field
 	Body        string         // content after frontmatter
