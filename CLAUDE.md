@@ -10,8 +10,7 @@ Wiki health checker. YAML rules, JSON CLI. `md <subcommand> [json]`.
 
 - `go.yaml.in/yaml/v3` — YAML parsing
 - `github.com/bmatcuk/doublestar/v4` — glob matching with `**`
-
-No other deps. Stdlib for everything else.
+- `github.com/fsnotify/fsnotify` — filesystem notifications for `md watch`
 
 ## Build & Test
 
@@ -41,9 +40,11 @@ Bug fixes: reproduction test -> fails -> fix -> passes -> full suite.
 | `pkg/testkit` | vfs, rules | no |
 | `internal/engine` | rules, frontmatter, vfs | no |
 | `internal/checks` | engine | no |
-| `internal/config` | rules | no |
+| `internal/hooks` | nothing | yes |
+| `internal/watch` | hooks | no |
+| `internal/config` | rules, hooks | no |
 | `internal/cli` | types, rules | no |
-| `cmd/md` | checks, cli, config, engine, rules | no |
+| `cmd/md` | checks, cli, config, engine, hooks, rules, watch | no |
 
 Leaf packages import nothing from meridian. No circular deps.
 

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/bmatcuk/doublestar/v4"
+	"github.com/caoer/meridian/internal/hooks"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -14,6 +16,14 @@ type Config struct {
 	Profiles       map[string]Profile `yaml:"profiles"`
 	DefaultProfile string             `yaml:"default_profile"`
 	Scan           ScanConfig         `yaml:"scan"`
+	Watch          *WatchConfig       `yaml:"watch"`
+}
+
+// WatchConfig controls the md watch daemon.
+type WatchConfig struct {
+	DebounceMs int                    `yaml:"debounce_ms"`
+	Ignore     []string               `yaml:"ignore"`
+	Hooks      map[string]hooks.HookDef `yaml:"hooks"`
 }
 
 // RulePack is a directory containing rule YAML files.
@@ -53,6 +63,24 @@ func Parse(data []byte, configDir string) (*Config, error) {
 	// Apply default skip dirs
 	if cfg.Scan.Skip == nil {
 		cfg.Scan.Skip = []string{".git", ".obsidian", "node_modules"}
+	}
+
+	// Validate watch config
+	if cfg.Watch != nil {
+		if cfg.Watch.DebounceMs < 0 {
+			return nil, fmt.Errorf("watch: debounce_ms must be non-negative, got %d", cfg.Watch.DebounceMs)
+		}
+		if cfg.Watch.DebounceMs == 0 {
+			cfg.Watch.DebounceMs = 6000
+		}
+		for _, pattern := range cfg.Watch.Ignore {
+			if !doublestar.ValidatePattern(pattern) {
+				return nil, fmt.Errorf("watch: invalid ignore glob %q", pattern)
+			}
+		}
+		if _, err := hooks.ParseHooks(cfg.Watch.Hooks); err != nil {
+			return nil, fmt.Errorf("watch: %w", err)
+		}
 	}
 
 	return &cfg, nil
