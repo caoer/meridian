@@ -59,13 +59,6 @@ func TestDispatch_FieldChange_Fires(t *testing.T) {
 	hooks := []Hook{
 		{Name: "on-field-change", Kind: KindFieldChange, Def: HookDef{Action: "check", Field: "tags", Scope: "{{.Path}}"}},
 	}
-	d := NewDispatcher()
-	// Seed old frontmatter
-	d.SetFrontmatter("wiki/page.md", map[string]any{"tags": []any{"old"}})
-	// New frontmatter with changed tags
-	d.SetFrontmatter("wiki/page.md", map[string]any{"tags": []any{"new"}})
-	// But dispatch needs old vs current — let's use the proper API
-	// Reset and use the cache-based approach
 	d2 := NewDispatcher()
 	d2.CacheFrontmatter("wiki/page.md", map[string]any{"tags": []any{"old"}})
 	results := d2.DispatchWithFrontmatter(

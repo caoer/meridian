@@ -16,6 +16,9 @@ const (
 	ErrInvalidGlob       = "INVALID_GLOB"
 	ErrInvalidTemplate   = "INVALID_TEMPLATE"
 	ErrYAMLDepthExceeded = "YAML_DEPTH_EXCEEDED"
+	ErrWatchFailed       = "WATCH_FAILED"
+	ErrNoDaemon          = "NO_DAEMON"
+	ErrStatusFailed      = "STATUS_FAILED"
 )
 
 // ErrorResponse creates an error response with exit code 2.

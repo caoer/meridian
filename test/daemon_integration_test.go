@@ -91,8 +91,8 @@ func TestIntegration_DaemonFullCycle(t *testing.T) {
 	if err := json.Unmarshal(lines[0], &out); err != nil {
 		t.Fatalf("invalid JSON line: %v\nraw: %s", err, lines[0])
 	}
-	if out.HooksFired < 1 {
-		t.Errorf("hooks_fired = %d after create, want >= 1", out.HooksFired)
+	if len(out.Results) < 1 {
+		t.Errorf("results = %d after create, want >= 1", len(out.Results))
 	}
 
 	// --- Modify same file twice rapidly → single batch ---
@@ -118,7 +118,7 @@ func TestIntegration_DaemonFullCycle(t *testing.T) {
 		var batch watch.BatchOutput
 		json.Unmarshal(line, &batch)
 		for _, f := range batch.Files {
-			if f == "scratch.tmp" {
+			if f.Path == "scratch.tmp" {
 				t.Error("ignored file appeared in batch")
 			}
 		}
@@ -131,16 +131,14 @@ func TestIntegration_DaemonFullCycle(t *testing.T) {
 	}
 
 	var status struct {
-		Data struct {
-			EventsProcessed int `json:"events_processed"`
-			HooksFired      int `json:"hooks_fired"`
-		} `json:"data"`
+		EventsProcessed int `json:"events_processed"`
+		HooksFired      int `json:"hooks_fired"`
 	}
 	json.Unmarshal(data, &status)
-	if status.Data.EventsProcessed == 0 {
+	if status.EventsProcessed == 0 {
 		t.Error("events_processed = 0 after activity")
 	}
-	if status.Data.HooksFired == 0 {
+	if status.HooksFired == 0 {
 		t.Error("hooks_fired = 0 after activity")
 	}
 

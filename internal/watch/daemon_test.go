@@ -70,8 +70,8 @@ func TestDaemon_BatchProducesJSON(t *testing.T) {
 	if len(out.Files) == 0 {
 		t.Error("no files in output")
 	}
-	if out.HooksFired != 1 {
-		t.Errorf("hooks_fired = %d, want 1", out.HooksFired)
+	if len(out.Results) < 1 {
+		t.Errorf("results = %d, want >= 1", len(out.Results))
 	}
 }
 

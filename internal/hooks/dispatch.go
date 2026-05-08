@@ -1,7 +1,7 @@
 package hooks
 
 import (
-	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -40,11 +40,6 @@ func (d *Dispatcher) CacheFrontmatter(path string, fm map[string]any) {
 	d.cache[path] = fm
 }
 
-// SetFrontmatter is an alias for CacheFrontmatter (backward compat with tests).
-func (d *Dispatcher) SetFrontmatter(path string, fm map[string]any) {
-	d.CacheFrontmatter(path, fm)
-}
-
 // Dispatch matches events to hooks. Does not handle on-field-change (no new frontmatter provided).
 func (d *Dispatcher) Dispatch(events []Event, hooks []Hook) []HookResult {
 	return d.DispatchWithFrontmatter(events, hooks, nil)
@@ -76,14 +71,18 @@ func (d *Dispatcher) DispatchWithFrontmatter(events []Event, hooks []Hook, newFM
 		}
 	}
 
-	// Update cache with new frontmatter
-	if newFM != nil {
-		d.mu.Lock()
-		for path, fm := range newFM {
-			d.cache[path] = fm
+	d.mu.Lock()
+	// Evict cache for deleted files
+	for _, ev := range events {
+		if ev.Op == "delete" {
+			delete(d.cache, ev.Path)
 		}
-		d.mu.Unlock()
 	}
+	// Update cache with new frontmatter
+	for path, fm := range newFM {
+		d.cache[path] = fm
+	}
+	d.mu.Unlock()
 
 	return results
 }
@@ -106,6 +105,9 @@ func (d *Dispatcher) fieldChanged(path, field string, newFM map[string]map[strin
 	oldFM := d.cache[path]
 	d.mu.Unlock()
 
+	if oldFM == nil {
+		return false // no previous state — treat as no change
+	}
 	if newFM == nil {
 		return false
 	}
@@ -114,9 +116,7 @@ func (d *Dispatcher) fieldChanged(path, field string, newFM map[string]map[strin
 		return false
 	}
 
-	oldVal := fmt.Sprintf("%v", oldFM[field])
-	newVal := fmt.Sprintf("%v", current[field])
-	return oldVal != newVal
+	return !reflect.DeepEqual(oldFM[field], current[field])
 }
 
 func renderScope(tmpl, path string) string {

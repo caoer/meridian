@@ -93,7 +93,7 @@ func main() {
 	router.Handle("debug", cli.DebugHandler(loadedRules, registeredChecks))
 	router.Handle("check", checkHandler(eng, loadedRules, cfg, cfgErr))
 	router.Handle("watch", watchHandler(cfg, cfgErr, cfgPath))
-	router.Handle("status", statusHandler(cfgPath))
+	router.Handle("status", statusHandler(cfgPath, cfgErr))
 
 	os.Exit(router.Run(os.Args[1:], os.Stdin))
 }
@@ -118,7 +118,7 @@ func watchHandler(cfg *config.Config, cfgErr error, cfgPath string) cli.Handler 
 
 		w, err := watch.New(cfg.Scan.Root, cfg.Watch.Ignore, cfg.Watch.DebounceMs)
 		if err != nil {
-			return cli.ErrorResponse("WATCH_FAILED", fmt.Sprintf("cannot start watcher: %v", err))
+			return cli.ErrorResponse(cli.ErrWatchFailed, fmt.Sprintf("cannot start watcher: %v", err))
 		}
 
 		d := watch.NewDaemon(w, parsedHooks, os.Stdout)
@@ -128,7 +128,7 @@ func watchHandler(cfg *config.Config, cfgErr error, cfgPath string) cli.Handler 
 		srv, err := watch.NewStatusServer(sockPath, d.Stats())
 		if err != nil {
 			w.Close()
-			return cli.ErrorResponse("WATCH_FAILED", fmt.Sprintf("cannot start status socket: %v", err))
+			return cli.ErrorResponse(cli.ErrWatchFailed, fmt.Sprintf("cannot start status socket: %v", err))
 		}
 
 		// Handle signals for graceful shutdown
@@ -143,24 +143,30 @@ func watchHandler(cfg *config.Config, cfgErr error, cfgPath string) cli.Handler 
 
 		// Run blocks until stopped by signal
 		d.Run()
+		signal.Stop(sigCh)
 		return &cli.Response{Version: cli.ResponseVersion}
 	}
 }
 
-func statusHandler(cfgPath string) cli.Handler {
+func statusHandler(cfgPath string, cfgErr error) cli.Handler {
 	return func(req *cli.Request) *cli.Response {
+		if cfgErr != nil {
+			return cli.ErrorResponseWithHint(cli.ErrNoConfig,
+				cfgErr.Error(),
+				"create meridian.yaml or set MERIDIAN_CONFIG env var")
+		}
 		sockPath := watch.SocketPath(cfgPath)
 		data, err := watch.QueryStatus(sockPath)
 		if err != nil {
-			return cli.ErrorResponseWithHint("NO_DAEMON",
+			return cli.ErrorResponseWithHint(cli.ErrNoDaemon,
 				"no running daemon found",
 				"start with: md watch")
 		}
 
-		// Parse and re-wrap in standard envelope
+		// Socket returns bare stats — wrap in standard envelope
 		var raw json.RawMessage
 		if err := json.Unmarshal(data, &raw); err != nil {
-			return cli.ErrorResponse("STATUS_FAILED", fmt.Sprintf("invalid status response: %v", err))
+			return cli.ErrorResponse(cli.ErrStatusFailed, fmt.Sprintf("invalid status response: %v", err))
 		}
 
 		return &cli.Response{

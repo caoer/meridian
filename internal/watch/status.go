@@ -4,17 +4,20 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sync"
+	"time"
 )
 
 // StatusServer listens on a Unix socket for status queries.
 type StatusServer struct {
-	listener net.Listener
-	stats    *DaemonStats
-	done     chan struct{}
-	wg       sync.WaitGroup
+	listener  net.Listener
+	stats     *DaemonStats
+	done      chan struct{}
+	closeOnce sync.Once
+	wg        sync.WaitGroup
 }
 
 // SocketPath returns the socket path for a given config path.
@@ -44,9 +47,13 @@ func NewStatusServer(sockPath string, stats *DaemonStats) (*StatusServer, error)
 }
 
 // Close shuts down the status server and removes the socket.
+// Safe to call multiple times.
 func (s *StatusServer) Close() error {
-	close(s.done)
-	err := s.listener.Close()
+	var err error
+	s.closeOnce.Do(func() {
+		close(s.done)
+		err = s.listener.Close()
+	})
 	s.wg.Wait()
 	// Clean up socket file
 	if addr, ok := s.listener.Addr().(*net.UnixAddr); ok {
@@ -78,42 +85,38 @@ func (s *StatusServer) serve() {
 
 func (s *StatusServer) handleConn(conn net.Conn) {
 	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	snap := s.stats.Snapshot()
 
 	resp := struct {
-		Version string `json:"version"`
-		Data    struct {
-			RunningSince    string `json:"running_since"`
-			EventsProcessed int   `json:"events_processed"`
-			LastEvent       string `json:"last_event"`
-			HooksFired      int   `json:"hooks_fired"`
-		} `json:"data"`
-	}{
-		Version: "0.1",
-	}
-	resp.Data.RunningSince = snap.RunningSince.Format("2006-01-02T15:04:05Z07:00")
-	resp.Data.EventsProcessed = snap.EventsProcessed
+		RunningSince    string `json:"running_since"`
+		EventsProcessed int   `json:"events_processed"`
+		LastEvent       string `json:"last_event,omitempty"`
+		HooksFired      int   `json:"hooks_fired"`
+	}{}
+	resp.RunningSince = snap.RunningSince.Format(time.RFC3339)
+	resp.EventsProcessed = snap.EventsProcessed
 	if !snap.LastEvent.IsZero() {
-		resp.Data.LastEvent = snap.LastEvent.Format("2006-01-02T15:04:05Z07:00")
+		resp.LastEvent = snap.LastEvent.Format(time.RFC3339)
 	}
-	resp.Data.HooksFired = snap.HooksFired
+	resp.HooksFired = snap.HooksFired
 
 	json.NewEncoder(conn).Encode(resp)
 }
 
 // QueryStatus connects to a daemon's status socket and returns the response.
 func QueryStatus(sockPath string) ([]byte, error) {
-	conn, err := net.Dial("unix", sockPath)
+	conn, err := net.DialTimeout("unix", sockPath, 3*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("no daemon running (socket %s): %w", sockPath, err)
 	}
 	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
 
-	buf := make([]byte, 4096)
-	n, err := conn.Read(buf)
-	if err != nil && n == 0 {
+	data, err := io.ReadAll(conn)
+	if err != nil {
 		return nil, fmt.Errorf("reading status: %w", err)
 	}
-	return buf[:n], nil
+	return data, nil
 }

@@ -37,24 +37,18 @@ func TestStatusServer_ReturnsCounters(t *testing.T) {
 	}
 
 	var resp struct {
-		Version string `json:"version"`
-		Data    struct {
-			EventsProcessed int    `json:"events_processed"`
-			HooksFired      int    `json:"hooks_fired"`
-			RunningSince    string `json:"running_since"`
-		} `json:"data"`
+		EventsProcessed int    `json:"events_processed"`
+		HooksFired      int    `json:"hooks_fired"`
+		RunningSince    string `json:"running_since"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatalf("unmarshal: %v\nraw: %s", err, data)
 	}
-	if resp.Version != "0.1" {
-		t.Errorf("version = %q", resp.Version)
+	if resp.EventsProcessed != 42 {
+		t.Errorf("events_processed = %d, want 42", resp.EventsProcessed)
 	}
-	if resp.Data.EventsProcessed != 42 {
-		t.Errorf("events_processed = %d, want 42", resp.Data.EventsProcessed)
-	}
-	if resp.Data.HooksFired != 18 {
-		t.Errorf("hooks_fired = %d, want 18", resp.Data.HooksFired)
+	if resp.HooksFired != 18 {
+		t.Errorf("hooks_fired = %d, want 18", resp.HooksFired)
 	}
 }
 
