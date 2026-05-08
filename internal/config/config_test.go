@@ -161,6 +161,104 @@ func TestProfile_SeverityOverride(t *testing.T) {
 	}
 }
 
+// --- Watch config ---
+
+func TestConfig_WatchSection(t *testing.T) {
+	raw := `
+rule_packs:
+  - path: "./rules"
+watch:
+  debounce_ms: 3000
+  ignore: [".git/**", "*.tmp"]
+  hooks:
+    on-create:
+      action: "check"
+      scope: "{{.Path}}"
+    on-modify:
+      action: "check"
+`
+	cfg, err := Parse([]byte(raw), "/project")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if cfg.Watch == nil {
+		t.Fatal("Watch is nil")
+	}
+	if cfg.Watch.DebounceMs != 3000 {
+		t.Errorf("DebounceMs = %d, want 3000", cfg.Watch.DebounceMs)
+	}
+	if len(cfg.Watch.Ignore) != 2 {
+		t.Errorf("Ignore = %v, want 2 items", cfg.Watch.Ignore)
+	}
+	if len(cfg.Watch.Hooks) != 2 {
+		t.Errorf("Hooks = %d, want 2", len(cfg.Watch.Hooks))
+	}
+}
+
+func TestConfig_NoWatchSection(t *testing.T) {
+	raw := `
+rule_packs:
+  - path: "./rules"
+`
+	cfg, err := Parse([]byte(raw), "/project")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if cfg.Watch != nil {
+		t.Errorf("Watch should be nil, got %+v", cfg.Watch)
+	}
+}
+
+func TestConfig_WatchNegativeDebounce(t *testing.T) {
+	raw := `
+rule_packs:
+  - path: "./rules"
+watch:
+  debounce_ms: -1
+  hooks:
+    on-create:
+      action: "check"
+`
+	_, err := Parse([]byte(raw), "/project")
+	if err == nil {
+		t.Fatal("expected error for negative debounce_ms")
+	}
+}
+
+func TestConfig_WatchDefaultDebounce(t *testing.T) {
+	raw := `
+rule_packs:
+  - path: "./rules"
+watch:
+  hooks:
+    on-create:
+      action: "check"
+`
+	cfg, err := Parse([]byte(raw), "/project")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if cfg.Watch.DebounceMs != 6000 {
+		t.Errorf("DebounceMs = %d, want 6000 (default)", cfg.Watch.DebounceMs)
+	}
+}
+
+func TestConfig_WatchInvalidIgnoreGlob(t *testing.T) {
+	raw := `
+rule_packs:
+  - path: "./rules"
+watch:
+  ignore: ["[invalid"]
+  hooks:
+    on-create:
+      action: "check"
+`
+	_, err := Parse([]byte(raw), "/project")
+	if err == nil {
+		t.Fatal("expected error for invalid glob in ignore")
+	}
+}
+
 func TestProfile_EmptyInclude_DefaultAll(t *testing.T) {
 	// Empty include defaults to ["*"]
 	profile := Profile{}

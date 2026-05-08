@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/caoer/meridian/internal/cache"
@@ -14,9 +17,11 @@ import (
 	"github.com/caoer/meridian/internal/domains"
 	"github.com/caoer/meridian/internal/engine"
 	"github.com/caoer/meridian/internal/fix"
+	"github.com/caoer/meridian/internal/hooks"
 	"github.com/caoer/meridian/internal/mv"
 	"github.com/caoer/meridian/internal/rules"
 	"github.com/caoer/meridian/internal/vfs"
+	"github.com/caoer/meridian/internal/watch"
 )
 
 // exitError writes a proper JSON error response to stderr and exits.
@@ -109,6 +114,8 @@ func main() {
 	router.Handle("domains show", domainsShowHandler(cfg, cfgErr))
 	router.Handle("fix", fixHandler(eng, loadedRules, cfg, cfgErr))
 	router.Handle("mv", mvHandler(eng, loadedRules, cfg, cfgErr))
+	router.Handle("watch", watchHandler(cfg, cfgErr, cfgPath))
+	router.Handle("status", statusHandler(cfgPath, cfgErr))
 
 	os.Exit(router.Run(os.Args[1:], os.Stdin))
 }
@@ -272,6 +279,89 @@ func mvHandlerFS(eng *engine.Engine, loadedRules []rules.Rule, cfgErr error, mak
 			Version:  cli.ResponseVersion,
 			Data:     result,
 			Warnings: warnings,
+		}
+	}
+}
+
+func watchHandler(cfg *config.Config, cfgErr error, cfgPath string) cli.Handler {
+	return func(req *cli.Request) *cli.Response {
+		if cfgErr != nil {
+			return cli.ErrorResponseWithHint(cli.ErrNoConfig,
+				cfgErr.Error(),
+				"create meridian.yaml or set MERIDIAN_CONFIG env var")
+		}
+		if cfg.Watch == nil {
+			return cli.ErrorResponseWithHint(cli.ErrInvalidConfig,
+				"no watch section in config",
+				"add a 'watch:' section to meridian.yaml")
+		}
+
+		parsedHooks, err := hooks.ParseHooks(cfg.Watch.Hooks)
+		if err != nil {
+			return cli.ErrorResponse(cli.ErrInvalidConfig, err.Error())
+		}
+
+		w, err := watch.New(cfg.Scan.Root, cfg.Watch.Ignore, cfg.Watch.DebounceMs)
+		if err != nil {
+			return cli.ErrorResponse(cli.ErrWatchFailed, fmt.Sprintf("cannot start watcher: %v", err))
+		}
+
+		d := watch.NewDaemon(w, parsedHooks, os.Stdout)
+
+		// Start status socket
+		sockPath := watch.SocketPath(cfgPath)
+		srv, err := watch.NewStatusServer(sockPath, d.Stats())
+		if err != nil {
+			w.Close()
+			return cli.ErrorResponse(cli.ErrWatchFailed, fmt.Sprintf("cannot start status socket: %v", err))
+		}
+
+		// Handle signals for graceful shutdown
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+		go func() {
+			<-sigCh
+			srv.Close()
+			d.Stop()
+		}()
+
+		// Run blocks until stopped by signal or watcher close
+		d.Run()
+
+		// Ensure cleanup regardless of exit path (signal or watcher close).
+		// Both are idempotent via sync.Once.
+		signal.Stop(sigCh)
+		srv.Close()
+		d.Stop()
+		return &cli.Response{Version: cli.ResponseVersion}
+	}
+}
+
+func statusHandler(cfgPath string, cfgErr error) cli.Handler {
+	return func(req *cli.Request) *cli.Response {
+		if cfgErr != nil {
+			return cli.ErrorResponseWithHint(cli.ErrNoConfig,
+				cfgErr.Error(),
+				"create meridian.yaml or set MERIDIAN_CONFIG env var")
+		}
+		sockPath := watch.SocketPath(cfgPath)
+		data, err := watch.QueryStatus(sockPath)
+		if err != nil {
+			return cli.ErrorResponseWithHint(cli.ErrNoDaemon,
+				"no running daemon found",
+				"start with: md watch")
+		}
+
+		// Socket returns bare stats — wrap in standard envelope
+		var raw json.RawMessage
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return cli.ErrorResponse(cli.ErrStatusFailed, fmt.Sprintf("invalid status response: %v", err))
+		}
+
+		return &cli.Response{
+			Version: cli.ResponseVersion,
+			Data:    raw,
 		}
 	}
 }
