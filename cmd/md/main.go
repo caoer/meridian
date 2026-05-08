@@ -13,6 +13,7 @@ import (
 	"github.com/caoer/meridian/internal/domains"
 	"github.com/caoer/meridian/internal/engine"
 	"github.com/caoer/meridian/internal/fix"
+	"github.com/caoer/meridian/internal/mv"
 	"github.com/caoer/meridian/internal/rules"
 	"github.com/caoer/meridian/internal/vfs"
 )
@@ -95,6 +96,7 @@ func main() {
 	router.Handle("domains tree", domainsTreeHandler(cfg, cfgErr))
 	router.Handle("domains show", domainsShowHandler(cfg, cfgErr))
 	router.Handle("fix", fixHandler(eng, loadedRules, cfg, cfgErr))
+	router.Handle("mv", mvHandler(eng, loadedRules, cfg, cfgErr))
 
 	os.Exit(router.Run(os.Args[1:], os.Stdin))
 }
@@ -207,6 +209,57 @@ func fixHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config
 		return &cli.Response{
 			Version: cli.ResponseVersion,
 			Data:    data,
+		}
+	}
+}
+
+func mvHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config, cfgErr error) cli.Handler {
+	return mvHandlerFS(eng, loadedRules, cfgErr, func() vfs.WriteFS {
+		return vfs.NewOSFS(cfg.Scan.Root)
+	})
+}
+
+func mvHandlerFS(eng *engine.Engine, loadedRules []rules.Rule, cfgErr error, makeFS func() vfs.WriteFS) cli.Handler {
+	return func(req *cli.Request) *cli.Response {
+		if cfgErr != nil {
+			return cli.ErrorResponseWithHint(cli.ErrNoConfig,
+				cfgErr.Error(),
+				"create meridian.yaml or set MERIDIAN_CONFIG env var")
+		}
+
+		var params struct {
+			Source string `json:"source"`
+			Dest   string `json:"dest"`
+			DryRun bool   `json:"dry-run"`
+		}
+		if req.Params != nil {
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return cli.ErrorResponse(cli.ErrInvalidParams, "invalid params: "+err.Error())
+			}
+		}
+
+		if params.Source == "" {
+			return cli.ErrorResponse(cli.ErrInvalidParams, "missing required param: source")
+		}
+		if params.Dest == "" {
+			return cli.ErrorResponse(cli.ErrInvalidParams, "missing required param: dest")
+		}
+
+		fsys := makeFS()
+		result, err := mv.Move(fsys, params.Source, params.Dest, eng, loadedRules, params.DryRun)
+		if err != nil {
+			return cli.ErrorResponse(cli.ErrInvalidParams, err.Error())
+		}
+
+		var warnings []cli.Warning
+		for _, w := range result.Warnings {
+			warnings = append(warnings, cli.Warning{Message: w})
+		}
+
+		return &cli.Response{
+			Version:  cli.ResponseVersion,
+			Data:     result,
+			Warnings: warnings,
 		}
 	}
 }
