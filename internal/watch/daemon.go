@@ -12,10 +12,10 @@ import (
 
 // BatchOutput is one JSON line emitted per debounced batch.
 type BatchOutput struct {
-	Event      string   `json:"event"`
-	Files      []string `json:"files"`
-	HooksFired int      `json:"hooks_fired"`
-	Time       string   `json:"time"`
+	Event   string         `json:"event"`
+	Files   []hooks.Event  `json:"files"`
+	Results []hooks.HookResult `json:"results,omitempty"`
+	Time    string         `json:"time"`
 }
 
 // DaemonStats tracks daemon runtime counters.
@@ -47,23 +47,22 @@ func (s *DaemonStats) Snapshot() DaemonStats {
 	}
 }
 
-// Daemon runs the watch loop: watcher → dispatcher → JSON output.
+// Daemon runs the watch loop: watcher → dispatch → JSON output.
 type Daemon struct {
-	watcher    *Watcher
-	hooks      []hooks.Hook
-	dispatcher *hooks.Dispatcher
-	stats      *DaemonStats
-	output     io.Writer
-	done       chan struct{}
-	wg         sync.WaitGroup
+	watcher  *Watcher
+	hooks    []hooks.Hook
+	stats    *DaemonStats
+	output   io.Writer
+	done     chan struct{}
+	stopOnce sync.Once
+	wg       sync.WaitGroup
 }
 
 // NewDaemon creates a daemon. Call Run() to start the loop.
 func NewDaemon(w *Watcher, parsedHooks []hooks.Hook, output io.Writer) *Daemon {
 	return &Daemon{
-		watcher:    w,
-		hooks:      parsedHooks,
-		dispatcher: hooks.NewDispatcher(),
+		watcher: w,
+		hooks:   parsedHooks,
 		stats: &DaemonStats{
 			RunningSince: time.Now(),
 		},
@@ -96,29 +95,24 @@ func (d *Daemon) Run() {
 }
 
 // Stop signals the daemon to shut down and waits for completion.
+// Safe to call multiple times.
 func (d *Daemon) Stop() {
-	close(d.done)
-	d.watcher.Close()
+	d.stopOnce.Do(func() {
+		close(d.done)
+		d.watcher.Close()
+	})
 	d.wg.Wait()
 }
 
-func (d *Daemon) processBatch(batch []Event) {
-	// Convert watch.Event → hooks.Event
-	hookEvents := make([]hooks.Event, len(batch))
-	files := make([]string, len(batch))
-	for i, e := range batch {
-		hookEvents[i] = hooks.Event{Path: e.Path, Op: e.Op, Time: e.Time}
-		files[i] = e.Path
-	}
-
-	results := d.dispatcher.Dispatch(hookEvents, d.hooks)
+func (d *Daemon) processBatch(batch []hooks.Event) {
+	results := hooks.Dispatch(batch, d.hooks)
 	d.stats.record(len(batch), len(results))
 
 	out := BatchOutput{
-		Event:      "batch",
-		Files:      files,
-		HooksFired: len(results),
-		Time:       time.Now().Format(time.RFC3339),
+		Event:   "batch",
+		Files:   batch,
+		Results: results,
+		Time:    time.Now().Format(time.RFC3339),
 	}
 
 	data, err := json.Marshal(out)

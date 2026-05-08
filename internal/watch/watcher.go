@@ -7,15 +7,9 @@ import (
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"github.com/caoer/meridian/internal/hooks"
 	"github.com/fsnotify/fsnotify"
 )
-
-// Event represents a filesystem change.
-type Event struct {
-	Path string    `json:"path"`
-	Op   string    `json:"op"` // "create", "modify", "delete"
-	Time time.Time `json:"time"`
-}
 
 // Watcher wraps fsnotify with debounce and ignore filtering.
 type Watcher struct {
@@ -23,8 +17,9 @@ type Watcher struct {
 	root       string
 	ignore     []string
 	debounceMs int
-	events     chan []Event
+	events     chan []hooks.Event
 	done       chan struct{}
+	closeOnce  sync.Once
 	wg         sync.WaitGroup
 }
 
@@ -56,7 +51,7 @@ func New(root string, ignore []string, debounceMs int) (*Watcher, error) {
 		root:       root,
 		ignore:     ignore,
 		debounceMs: debounceMs,
-		events:     make(chan []Event, 16),
+		events:     make(chan []hooks.Event, 16),
 		done:       make(chan struct{}),
 	}
 	w.wg.Add(1)
@@ -65,31 +60,39 @@ func New(root string, ignore []string, debounceMs int) (*Watcher, error) {
 }
 
 // Events returns the channel of debounced event batches.
-func (w *Watcher) Events() <-chan []Event {
+func (w *Watcher) Events() <-chan []hooks.Event {
 	return w.events
 }
 
-// Close stops the watcher.
+// Close stops the watcher. Safe to call multiple times.
 func (w *Watcher) Close() error {
-	close(w.done)
-	err := w.fsw.Close()
+	var err error
+	w.closeOnce.Do(func() {
+		close(w.done)
+		err = w.fsw.Close()
+	})
 	w.wg.Wait()
 	return err
 }
 
 func (w *Watcher) loop() {
 	defer w.wg.Done()
+	defer close(w.events)
 
-	pending := make(map[string]*Event)
+	pending := make(map[string]*hooks.Event)
 	var timer *time.Timer
 	var timerC <-chan time.Time
 
 	resetTimer := func() {
-		if timer == nil {
-			timer = time.NewTimer(time.Duration(w.debounceMs) * time.Millisecond)
-		} else {
-			timer.Reset(time.Duration(w.debounceMs) * time.Millisecond)
+		if timer != nil {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 		}
+		timer = time.NewTimer(time.Duration(w.debounceMs) * time.Millisecond)
 		timerC = timer.C
 	}
 
@@ -107,6 +110,12 @@ func (w *Watcher) loop() {
 
 		case ev, ok := <-w.fsw.Events:
 			if !ok {
+				if timer != nil {
+					timer.Stop()
+				}
+				if len(pending) > 0 {
+					w.flush(pending)
+				}
 				return
 			}
 
@@ -130,7 +139,7 @@ func (w *Watcher) loop() {
 				continue
 			}
 
-			pending[rel] = &Event{
+			pending[rel] = &hooks.Event{
 				Path: rel,
 				Op:   op,
 				Time: time.Now(),
@@ -140,19 +149,25 @@ func (w *Watcher) loop() {
 		case <-timerC:
 			if len(pending) > 0 {
 				w.flush(pending)
-				pending = make(map[string]*Event)
+				pending = make(map[string]*hooks.Event)
 			}
 
 		case _, ok := <-w.fsw.Errors:
 			if !ok {
+				if timer != nil {
+					timer.Stop()
+				}
+				if len(pending) > 0 {
+					w.flush(pending)
+				}
 				return
 			}
 		}
 	}
 }
 
-func (w *Watcher) flush(pending map[string]*Event) {
-	batch := make([]Event, 0, len(pending))
+func (w *Watcher) flush(pending map[string]*hooks.Event) {
+	batch := make([]hooks.Event, 0, len(pending))
 	for _, e := range pending {
 		batch = append(batch, *e)
 	}

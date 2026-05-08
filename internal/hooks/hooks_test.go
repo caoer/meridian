@@ -18,22 +18,13 @@ func TestParseHooks_Valid(t *testing.T) {
 	}
 }
 
-func TestParseHooks_FieldChange(t *testing.T) {
+func TestParseHooks_FieldChangeRejected(t *testing.T) {
 	defs := map[string]HookDef{
-		"on-field-change": {Action: "check", Scope: "{{.Path}}", Field: "tags"},
+		"on-field-change": {Action: "check"},
 	}
-	hooks, err := ParseHooks(defs)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(hooks) != 1 {
-		t.Fatalf("got %d hooks, want 1", len(hooks))
-	}
-	if hooks[0].Kind != KindFieldChange {
-		t.Errorf("kind = %v, want KindFieldChange", hooks[0].Kind)
-	}
-	if hooks[0].Def.Field != "tags" {
-		t.Errorf("field = %q, want tags", hooks[0].Def.Field)
+	_, err := ParseHooks(defs)
+	if err == nil {
+		t.Fatal("expected error: on-field-change not yet supported")
 	}
 }
 
@@ -54,16 +45,6 @@ func TestParseHooks_UnknownAction(t *testing.T) {
 	_, err := ParseHooks(defs)
 	if err == nil {
 		t.Fatal("expected error for unknown action")
-	}
-}
-
-func TestParseHooks_FieldChangeNoField(t *testing.T) {
-	defs := map[string]HookDef{
-		"on-field-change": {Action: "check"},
-	}
-	_, err := ParseHooks(defs)
-	if err == nil {
-		t.Fatal("expected error for on-field-change without field")
 	}
 }
 

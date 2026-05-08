@@ -141,9 +141,14 @@ func watchHandler(cfg *config.Config, cfgErr error, cfgPath string) cli.Handler 
 			d.Stop()
 		}()
 
-		// Run blocks until stopped by signal
+		// Run blocks until stopped by signal or watcher close
 		d.Run()
+
+		// Ensure cleanup regardless of exit path (signal or watcher close).
+		// Both are idempotent via sync.Once.
 		signal.Stop(sigCh)
+		srv.Close()
+		d.Stop()
 		return &cli.Response{Version: cli.ResponseVersion}
 	}
 }

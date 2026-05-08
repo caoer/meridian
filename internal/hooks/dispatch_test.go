@@ -10,11 +10,10 @@ func makeEvent(path, op string) Event {
 }
 
 func TestDispatch_OnCreate(t *testing.T) {
-	hooks := []Hook{
+	hks := []Hook{
 		{Name: "on-create", Kind: KindCreate, Def: HookDef{Action: "check", Scope: "{{.Path}}"}},
 	}
-	d := NewDispatcher()
-	results := d.Dispatch([]Event{makeEvent("wiki/new.md", "create")}, hooks)
+	results := Dispatch([]Event{makeEvent("wiki/new.md", "create")}, hks)
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
@@ -30,11 +29,10 @@ func TestDispatch_OnCreate(t *testing.T) {
 }
 
 func TestDispatch_OnModify(t *testing.T) {
-	hooks := []Hook{
+	hks := []Hook{
 		{Name: "on-modify", Kind: KindModify, Def: HookDef{Action: "check", Scope: "{{.Path}}"}},
 	}
-	d := NewDispatcher()
-	results := d.Dispatch([]Event{makeEvent("wiki/page.md", "modify")}, hooks)
+	results := Dispatch([]Event{makeEvent("wiki/page.md", "modify")}, hks)
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
@@ -44,70 +42,40 @@ func TestDispatch_OnModify(t *testing.T) {
 }
 
 func TestDispatch_NoMatchingHook(t *testing.T) {
-	hooks := []Hook{
+	hks := []Hook{
 		{Name: "on-create", Kind: KindCreate, Def: HookDef{Action: "check"}},
 	}
-	d := NewDispatcher()
 	// modify event won't match on-create hook
-	results := d.Dispatch([]Event{makeEvent("wiki/page.md", "modify")}, hooks)
+	results := Dispatch([]Event{makeEvent("wiki/page.md", "modify")}, hks)
 	if len(results) != 0 {
 		t.Errorf("got %d results, want 0", len(results))
 	}
 }
 
-func TestDispatch_FieldChange_Fires(t *testing.T) {
-	hooks := []Hook{
-		{Name: "on-field-change", Kind: KindFieldChange, Def: HookDef{Action: "check", Field: "tags", Scope: "{{.Path}}"}},
+func TestDispatch_EmptyScopeUsesPath(t *testing.T) {
+	hks := []Hook{
+		{Name: "on-create", Kind: KindCreate, Def: HookDef{Action: "check"}},
 	}
-	d2 := NewDispatcher()
-	d2.CacheFrontmatter("wiki/page.md", map[string]any{"tags": []any{"old"}})
-	results := d2.DispatchWithFrontmatter(
-		[]Event{makeEvent("wiki/page.md", "modify")},
-		hooks,
-		map[string]map[string]any{
-			"wiki/page.md": {"tags": []any{"new"}},
-		},
-	)
+	results := Dispatch([]Event{makeEvent("wiki/page.md", "create")}, hks)
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
-	if results[0].Hook != "on-field-change" {
-		t.Errorf("hook = %q", results[0].Hook)
+	if results[0].Scope != "wiki/page.md" {
+		t.Errorf("scope = %q, want wiki/page.md", results[0].Scope)
 	}
 }
 
-func TestDispatch_FieldChange_NoFire_SameValue(t *testing.T) {
-	hooks := []Hook{
-		{Name: "on-field-change", Kind: KindFieldChange, Def: HookDef{Action: "check", Field: "tags", Scope: "{{.Path}}"}},
+func TestDispatch_MultipleEventsAndHooks(t *testing.T) {
+	hks := []Hook{
+		{Name: "on-create", Kind: KindCreate, Def: HookDef{Action: "check"}},
+		{Name: "on-modify", Kind: KindModify, Def: HookDef{Action: "check"}},
 	}
-	d := NewDispatcher()
-	d.CacheFrontmatter("wiki/page.md", map[string]any{"tags": []any{"same"}})
-	results := d.DispatchWithFrontmatter(
-		[]Event{makeEvent("wiki/page.md", "modify")},
-		hooks,
-		map[string]map[string]any{
-			"wiki/page.md": {"tags": []any{"same"}},
-		},
-	)
-	if len(results) != 0 {
-		t.Errorf("got %d results, want 0 (field didn't change)", len(results))
+	events := []Event{
+		makeEvent("a.md", "create"),
+		makeEvent("b.md", "modify"),
 	}
-}
-
-func TestDispatch_FieldChange_NoFire_OtherField(t *testing.T) {
-	hooks := []Hook{
-		{Name: "on-field-change", Kind: KindFieldChange, Def: HookDef{Action: "check", Field: "tags", Scope: "{{.Path}}"}},
-	}
-	d := NewDispatcher()
-	d.CacheFrontmatter("wiki/page.md", map[string]any{"tags": []any{"same"}, "title": "old"})
-	results := d.DispatchWithFrontmatter(
-		[]Event{makeEvent("wiki/page.md", "modify")},
-		hooks,
-		map[string]map[string]any{
-			"wiki/page.md": {"tags": []any{"same"}, "title": "new"},
-		},
-	)
-	if len(results) != 0 {
-		t.Errorf("got %d results, want 0 (watched field didn't change)", len(results))
+	results := Dispatch(events, hks)
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
 	}
 }

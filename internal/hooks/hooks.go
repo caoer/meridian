@@ -15,16 +15,14 @@ var knownActions = map[string]bool{
 type HookKind int
 
 const (
-	KindCreate      HookKind = iota // on-create
-	KindModify                      // on-modify
-	KindFieldChange                 // on-field-change
+	KindCreate HookKind = iota // on-create
+	KindModify                 // on-modify
 )
 
 // HookDef is the YAML-parsed hook definition.
 type HookDef struct {
 	Action string `yaml:"action"`
 	Scope  string `yaml:"scope"`
-	Field  string `yaml:"field"` // only for on-field-change
 }
 
 // Hook is a validated, ready-to-use hook.
@@ -36,9 +34,8 @@ type Hook struct {
 
 // hookKinds maps YAML key names to HookKind.
 var hookKinds = map[string]HookKind{
-	"on-create":       KindCreate,
-	"on-modify":       KindModify,
-	"on-field-change": KindFieldChange,
+	"on-create": KindCreate,
+	"on-modify": KindModify,
 }
 
 // ParseHooks validates hook definitions and returns parsed hooks.
@@ -69,10 +66,6 @@ func ParseHooks(defs map[string]HookDef) ([]Hook, error) {
 		}
 		if !knownActions[def.Action] {
 			return nil, fmt.Errorf("hook %q: unknown action %q", name, def.Action)
-		}
-
-		if kind == KindFieldChange && def.Field == "" {
-			return nil, fmt.Errorf("hook %q: field required for on-field-change", name)
 		}
 
 		hooks = append(hooks, Hook{Name: name, Kind: kind, Def: def})
