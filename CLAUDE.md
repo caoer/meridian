@@ -41,9 +41,11 @@ Bug fixes: reproduction test -> fails -> fix -> passes -> full suite.
 | `internal/domains` | nothing | yes |
 | `pkg/testkit` | vfs, rules | no |
 | `internal/engine` | rules, frontmatter, vfs | no |
-| `internal/checks` | engine | no |
+| `internal/conflict` | rules | no |
+| `internal/partition` | engine | no |
+| `internal/checks` | engine, partition | no |
 | `internal/config` | rules | no |
-| `internal/cli` | types, rules, domains | no |
+| `internal/cli` | types, rules, domains, conflict, config | no |
 | `internal/mv` | engine, frontmatter, rules, types, vfs | no |
 | `cmd/md` | checks, cli, config, domains, engine, mv, rules, vfs | no |
 

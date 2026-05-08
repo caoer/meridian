@@ -39,6 +39,7 @@ func main() {
 	cfgPath, cfgErr := config.Discover(cwd)
 
 	var loadedRules []rules.Rule
+	var allRules []rules.Rule
 	var cfg *config.Config
 
 	if cfgErr == nil {
@@ -67,7 +68,10 @@ func main() {
 			exitError("DUPLICATE_RULE", err.Error())
 		}
 
-		// Apply profile
+		// Capture unfiltered rules for rules check (needs all rules).
+		allRules = loadedRules
+
+		// Apply default profile for other commands.
 		if cfg.DefaultProfile != "" {
 			if p, ok := cfg.Profiles[cfg.DefaultProfile]; ok {
 				loadedRules = p.Resolve(loadedRules)
@@ -88,9 +92,16 @@ func main() {
 		return cli.SearchRulesAndChecks(loadedRules, registeredChecks, query)
 	}
 
+	// Profiles map for rules check handler.
+	var profiles map[string]config.Profile
+	if cfg != nil {
+		profiles = cfg.Profiles
+	}
+
 	// Register commands
 	router.Handle("help", cli.NewHelpHandler(router.Commands, searchFn))
 	router.Handle("rules ls", cli.RulesLsHandler(loadedRules))
+	router.Handle("rules check", cli.RulesCheckHandler(allRules, profiles))
 	router.Handle("debug", cli.DebugHandler(loadedRules, registeredChecks))
 	router.Handle("check", checkHandler(eng, loadedRules, cfg, cfgErr))
 	router.Handle("domains tree", domainsTreeHandler(cfg, cfgErr))
