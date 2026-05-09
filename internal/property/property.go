@@ -10,9 +10,10 @@ type Finding struct {
 
 // EvalContext provides cross-file context to evaluators.
 type EvalContext struct {
-	ScannedPaths []string // all scanned file paths (for resolve)
-	FilePath     string   // current document path
-	GitRoot      string   // git repo root (for freshness checks)
+	ScannedPaths []string        // all scanned file paths (for resolve)
+	FilePath     string          // current document path
+	GitRoot      string          // git repo root (for freshness checks)
+	GitTimeCache map[string]int64 // cache of git timestamps (path → unix time)
 }
 
 // TypeBlock evaluates a frontmatter value against type-specific predicates.
@@ -29,7 +30,6 @@ type Config struct {
 	Required bool     // from required: field
 	TypeName string   // "wikilink", "tag", "date", "text", or "" (existence-only)
 	TypeRaw  any      // raw YAML value for the type block
-	Message  string   // custom message template (empty = use defaults)
 }
 
 // ResolvedConfig has a concrete TypeBlock ready for evaluation.
@@ -37,15 +37,6 @@ type ResolvedConfig struct {
 	Keys     []string
 	Required bool
 	Type     TypeBlock // resolved from TypeRaw via parser
-	Message  string
-}
-
-// typeBlockKeys enumerates recognized type block names.
-var typeBlockKeys = map[string]bool{
-	"wikilink": true,
-	"tag":      true,
-	"date":     true,
-	"text":     true,
 }
 
 // Parse builds a Config from a rule's Params map.
@@ -84,17 +75,8 @@ func Parse(params map[string]any) (*Config, error) {
 		c.Required = b
 	}
 
-	// Extract message if present
-	if mv, ok := params["message"]; ok {
-		s, ok := mv.(string)
-		if !ok {
-			return nil, fmt.Errorf("message: expected string, got %T", mv)
-		}
-		c.Message = s
-	}
-
 	// Detect type block — at most one expected (loader already validates this)
-	for name := range typeBlockKeys {
+	for _, name := range []string{"wikilink", "tag", "date", "text"} {
 		if raw, ok := params[name]; ok {
 			c.TypeName = name
 			c.TypeRaw = raw
@@ -111,7 +93,6 @@ func (c *Config) ResolveType(parsers map[string]TypeBlockParser) (*ResolvedConfi
 	rc := &ResolvedConfig{
 		Keys:     c.Keys,
 		Required: c.Required,
-		Message:  c.Message,
 	}
 
 	if c.TypeName == "" {

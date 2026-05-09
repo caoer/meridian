@@ -651,6 +651,71 @@ func TestEvaluate_ResolvePathQualifiedWikilink(t *testing.T) {
 	}
 }
 
+func TestExecuteLinkTemplate_SelfReference(t *testing.T) {
+	// P1-1: {{template "link"}} must not stack overflow.
+	// With unnamed template, the self-reference can't resolve.
+	_, err := ExecuteLinkTemplate(`{{template "link"}}`, "target")
+	if err == nil {
+		t.Fatal("expected error for self-referencing template, got nil")
+	}
+}
+
+func TestBuildResolveIndex_AbsolutePathNoHang(t *testing.T) {
+	// P1-4: absolute paths must not cause infinite loop.
+	done := make(chan struct{})
+	go func() {
+		BuildResolveIndex([]string{"/absolute/path.md"}, "file_exists")
+		BuildResolveIndex([]string{"/absolute/path.md"}, "folder_exists")
+		BuildResolveIndex([]string{"/absolute/path.md"}, "file_or_folder_exists")
+		BuildResolveIndex([]string{"/absolute/path.md"}, "parent_exists")
+		close(done)
+	}()
+	select {
+	case <-done:
+		// success
+	case <-time.After(2 * time.Second):
+		t.Fatal("BuildResolveIndex hung on absolute path")
+	}
+}
+
+func TestEvaluate_FreshCachesGitTime(t *testing.T) {
+	// P1-3: git timestamps should be cached across evaluations.
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v failed: %s", args, out)
+		}
+	}
+
+	run("git", "init")
+	os.WriteFile(filepath.Join(dir, "source.md"), []byte("---\nref: \"[[target]]\"\n---\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "target.md"), []byte("# Target\n"), 0644)
+	run("git", "add", ".")
+	run("git", "commit", "-m", "init")
+
+	ctx := &EvalContext{
+		ScannedPaths: []string{"target.md"},
+		FilePath:     "source.md",
+		GitRoot:      dir,
+	}
+	wb := &WikilinkBlock{Fresh: "git"}
+	wb.Evaluate("ref", "[[target]]", ctx)
+
+	if ctx.GitTimeCache == nil {
+		t.Fatal("GitTimeCache should be initialized after evaluation")
+	}
+	if _, ok := ctx.GitTimeCache["source.md"]; !ok {
+		t.Error("source.md should be cached")
+	}
+	if _, ok := ctx.GitTimeCache["target.md"]; !ok {
+		t.Error("target.md should be cached")
+	}
+}
+
 func TestEvaluate_BareStringTarget(t *testing.T) {
 	// Bare strings (without [[]] syntax) should be treated as wikilink targets
 	wb := &WikilinkBlock{Resolve: "file_exists"}

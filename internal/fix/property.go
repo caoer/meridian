@@ -102,8 +102,17 @@ func fixLinkDisplay(content []byte, cfg *property.Config) (bool, []byte, []strin
 		return false, content, nil
 	}
 
+	// Split content into frontmatter and body so replacements only affect frontmatter.
+	s := string(content)
+	fmBoundary := strings.Index(s, "\n---\n")
+	if fmBoundary < 0 {
+		return false, content, nil
+	}
+	fmBoundary += 4 // include "\n---"
+	fmSection := s[:fmBoundary]
+	bodySection := s[fmBoundary:]
+
 	changed := false
-	result := string(content)
 	var actions []string
 
 	for _, key := range cfg.Keys {
@@ -140,8 +149,8 @@ func fixLinkDisplay(content []byte, cfg *property.Config) (bool, []byte, []strin
 				}
 				newLink := "[[" + link.Target + "|" + expected + "]]"
 
-				if strings.Contains(result, oldLink) {
-					result = strings.Replace(result, oldLink, newLink, 1)
+				if strings.Contains(fmSection, oldLink) {
+					fmSection = strings.Replace(fmSection, oldLink, newLink, 1)
 					changed = true
 					actions = append(actions, fmt.Sprintf("rewrote %s -> %s", oldLink, newLink))
 				}
@@ -152,7 +161,7 @@ func fixLinkDisplay(content []byte, cfg *property.Config) (bool, []byte, []strin
 	if !changed {
 		return false, content, nil
 	}
-	return true, []byte(result), actions
+	return true, []byte(fmSection + bodySection), actions
 }
 
 // matchLinkDisplay returns expected display text for a wikilink, or "" if no template matches.

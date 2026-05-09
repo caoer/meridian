@@ -258,6 +258,108 @@ func TestParseTag_NestedPrefixAndValue(t *testing.T) {
 	}
 }
 
+func TestTagEvaluate_PrefixInAndMatchNoDuplicate(t *testing.T) {
+	// P1-5: when both PrefixIn and PrefixMatch are configured, a failing tag
+	// should produce exactly 1 finding per predicate group, not 2.
+	re := "^type$"
+	compiled, _ := compileRe(re)
+	tb := &TagBlock{
+		PrefixIn:    []string{"type"},
+		PrefixMatch: re,
+		prefixRe:    compiled,
+	}
+	findings := tb.Evaluate("tags", "bad/value", nil)
+	prefixFindings := 0
+	for _, f := range findings {
+		if f.TemplateData["Prefix"] == "bad" {
+			prefixFindings++
+		}
+	}
+	if prefixFindings != 1 {
+		t.Fatalf("expected exactly 1 prefix finding, got %d", prefixFindings)
+	}
+}
+
+func TestTagEvaluate_ValueInAndMatchNoDuplicate(t *testing.T) {
+	re := "^source$"
+	compiled, _ := compileRe(re)
+	tb := &TagBlock{
+		ValueIn:    []string{"source"},
+		ValueMatch: re,
+		valueRe:    compiled,
+	}
+	findings := tb.Evaluate("tags", "type/bad", nil)
+	valueFindings := 0
+	for _, f := range findings {
+		if f.TemplateData["TagValue"] == "bad" {
+			valueFindings++
+		}
+	}
+	if valueFindings != 1 {
+		t.Fatalf("expected exactly 1 value finding, got %d", valueFindings)
+	}
+}
+
+func TestTagEvaluate_ReasonFields(t *testing.T) {
+	// P1-8: findings must include Reason in TemplateData.
+	tests := []struct {
+		name   string
+		tb     *TagBlock
+		tag    string
+		reason string
+	}{
+		{
+			name:   "no slash",
+			tb:     &TagBlock{},
+			tag:    "noslash",
+			reason: "tag missing prefix/value separator",
+		},
+		{
+			name:   "unknown prefix",
+			tb:     &TagBlock{PrefixIn: []string{"type"}},
+			tag:    "bad/value",
+			reason: `unknown prefix "bad"`,
+		},
+		{
+			name: "prefix match fail",
+			tb: func() *TagBlock {
+				re, _ := compileRe("^type$")
+				return &TagBlock{PrefixMatch: "^type$", prefixRe: re}
+			}(),
+			tag:    "bad/value",
+			reason: `prefix does not match pattern "^type$"`,
+		},
+		{
+			name:   "unknown value",
+			tb:     &TagBlock{ValueIn: []string{"source"}},
+			tag:    "type/bad",
+			reason: `unknown value "bad"`,
+		},
+		{
+			name: "value match fail",
+			tb: func() *TagBlock {
+				re, _ := compileRe("^[a-z]+$")
+				return &TagBlock{ValueMatch: "^[a-z]+$", valueRe: re}
+			}(),
+			tag:    "type/123",
+			reason: `value does not match pattern "^[a-z]+$"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			findings := tt.tb.Evaluate("tags", tt.tag, nil)
+			if len(findings) == 0 {
+				t.Fatal("expected at least 1 finding")
+			}
+			reason := findings[0].TemplateData["Reason"]
+			if reason != tt.reason {
+				t.Errorf("Reason = %q, want %q", reason, tt.reason)
+			}
+		})
+	}
+}
+
 func TestParseTag_PrefixNotMap(t *testing.T) {
 	raw := map[string]any{
 		"prefix": "not-a-map",

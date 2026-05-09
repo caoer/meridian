@@ -1,6 +1,7 @@
 package property
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
 )
@@ -140,6 +142,9 @@ func BuildResolveIndex(paths []string, mode string) map[string]bool {
 	switch mode {
 	case "file_exists":
 		for _, p := range paths {
+			if filepath.IsAbs(p) {
+				continue
+			}
 			stem := strings.TrimSuffix(filepath.Base(p), ".md")
 			idx[strings.ToLower(stem)] = true
 			rel := strings.TrimSuffix(p, ".md")
@@ -147,6 +152,9 @@ func BuildResolveIndex(paths []string, mode string) map[string]bool {
 		}
 	case "folder_exists":
 		for _, p := range paths {
+			if filepath.IsAbs(p) {
+				continue
+			}
 			dir := filepath.Dir(p)
 			for dir != "." && dir != "" {
 				idx[strings.ToLower(dir)] = true
@@ -156,6 +164,9 @@ func BuildResolveIndex(paths []string, mode string) map[string]bool {
 		}
 	case "parent_exists":
 		for _, p := range paths {
+			if filepath.IsAbs(p) {
+				continue
+			}
 			dir := filepath.Dir(p)
 			if dir != "." && dir != "" {
 				idx[strings.ToLower(dir)] = true
@@ -164,6 +175,9 @@ func BuildResolveIndex(paths []string, mode string) map[string]bool {
 		}
 	case "file_or_folder_exists":
 		for _, p := range paths {
+			if filepath.IsAbs(p) {
+				continue
+			}
 			stem := strings.TrimSuffix(filepath.Base(p), ".md")
 			idx[strings.ToLower(stem)] = true
 			rel := strings.TrimSuffix(p, ".md")
@@ -275,8 +289,8 @@ func (wb *WikilinkBlock) checkFresh(key string, link Wikilink, ctx *EvalContext)
 		return nil // can't check freshness if target doesn't resolve
 	}
 
-	sourceTime := gitLastCommitTime(ctx.GitRoot, ctx.FilePath)
-	targetTime := gitLastCommitTime(ctx.GitRoot, targetPath)
+	sourceTime := ctx.gitTime(ctx.FilePath)
+	targetTime := ctx.gitTime(targetPath)
 
 	if sourceTime == 0 || targetTime == 0 {
 		return nil // git timestamp unavailable
@@ -307,9 +321,26 @@ func resolveTargetPath(target string, paths []string) string {
 	return ""
 }
 
+// gitTime returns a cached git timestamp for path, calling git only on cache miss.
+func (ctx *EvalContext) gitTime(path string) int64 {
+	if ctx.GitTimeCache != nil {
+		if t, ok := ctx.GitTimeCache[path]; ok {
+			return t
+		}
+	}
+	t := gitLastCommitTime(ctx.GitRoot, path)
+	if ctx.GitTimeCache == nil {
+		ctx.GitTimeCache = make(map[string]int64)
+	}
+	ctx.GitTimeCache[path] = t
+	return t
+}
+
 // gitLastCommitTime returns unix timestamp of last commit touching filePath.
 func gitLastCommitTime(gitRoot, filePath string) int64 {
-	cmd := exec.Command("git", "-C", gitRoot, "log", "-1", "--format=%ct", "--", filePath)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", gitRoot, "log", "-1", "--format=%ct", "--", filePath)
 	out, err := cmd.Output()
 	if err != nil {
 		return 0
@@ -385,7 +416,7 @@ func ExecuteLinkTemplate(format, target string) (string, error) {
 	}
 	funcs["target"] = func() string { return target }
 
-	tmpl, err := template.New("link").Funcs(funcs).Parse(format)
+	tmpl, err := template.New("").Funcs(funcs).Parse(format)
 	if err != nil {
 		return "", err
 	}

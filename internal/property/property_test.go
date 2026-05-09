@@ -119,18 +119,17 @@ func TestParse_NoTypeBlock(t *testing.T) {
 	}
 }
 
-func TestParse_MessagePreserved(t *testing.T) {
+func TestParse_DeterministicTypeBlock(t *testing.T) {
 	params := map[string]any{
 		"property": "title",
 		"required": false,
-		"message":  "custom: {{.Key}} missing",
 	}
 	c, err := Parse(params)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Message != "custom: {{.Key}} missing" {
-		t.Errorf("Message = %q", c.Message)
+	if c.TypeName != "" {
+		t.Errorf("TypeName = %q, want empty for no type block", c.TypeName)
 	}
 }
 

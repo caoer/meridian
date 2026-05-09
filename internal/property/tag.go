@@ -106,12 +106,12 @@ func (tb *TagBlock) Evaluate(key string, value any, ctx *EvalContext) []Finding 
 func (tb *TagBlock) evaluateOne(key, tag string) []Finding {
 	idx := strings.IndexByte(tag, '/')
 	if idx < 0 {
-		return []Finding{{
-			TemplateData: map[string]string{
-				"Key":   key,
-				"Value": tag,
-			},
-		}}
+		m := map[string]string{
+			"Key":    key,
+			"Value":  tag,
+			"Reason": "tag missing prefix/value separator",
+		}
+		return []Finding{{TemplateData: m}}
 	}
 
 	prefix := tag[:idx]
@@ -125,20 +125,32 @@ func (tb *TagBlock) evaluateOne(key, tag string) []Finding {
 
 	var findings []Finding
 
+	prefixFailed := false
 	if tb.PrefixIn != nil && !contains(tb.PrefixIn, prefix) {
-		findings = append(findings, Finding{TemplateData: copyMap(base)})
+		m := copyMap(base)
+		m["Reason"] = fmt.Sprintf("unknown prefix %q", prefix)
+		findings = append(findings, Finding{TemplateData: m})
+		prefixFailed = true
 	}
 
-	if tb.prefixRe != nil && !tb.prefixRe.MatchString(prefix) {
-		findings = append(findings, Finding{TemplateData: copyMap(base)})
+	if !prefixFailed && tb.prefixRe != nil && !tb.prefixRe.MatchString(prefix) {
+		m := copyMap(base)
+		m["Reason"] = fmt.Sprintf("prefix does not match pattern %q", tb.PrefixMatch)
+		findings = append(findings, Finding{TemplateData: m})
 	}
 
+	valueFailed := false
 	if tb.ValueIn != nil && !contains(tb.ValueIn, tagValue) {
-		findings = append(findings, Finding{TemplateData: copyMap(base)})
+		m := copyMap(base)
+		m["Reason"] = fmt.Sprintf("unknown value %q", tagValue)
+		findings = append(findings, Finding{TemplateData: m})
+		valueFailed = true
 	}
 
-	if tb.valueRe != nil && !tb.valueRe.MatchString(tagValue) {
-		findings = append(findings, Finding{TemplateData: copyMap(base)})
+	if !valueFailed && tb.valueRe != nil && !tb.valueRe.MatchString(tagValue) {
+		m := copyMap(base)
+		m["Reason"] = fmt.Sprintf("value does not match pattern %q", tb.ValueMatch)
+		findings = append(findings, Finding{TemplateData: m})
 	}
 
 	return findings
