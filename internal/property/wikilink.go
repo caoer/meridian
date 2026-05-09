@@ -142,6 +142,8 @@ func BuildResolveIndex(paths []string, mode string) map[string]bool {
 		for _, p := range paths {
 			stem := strings.TrimSuffix(filepath.Base(p), ".md")
 			idx[strings.ToLower(stem)] = true
+			rel := strings.TrimSuffix(p, ".md")
+			idx[strings.ToLower(rel)] = true
 		}
 	case "folder_exists":
 		for _, p := range paths {
@@ -164,6 +166,8 @@ func BuildResolveIndex(paths []string, mode string) map[string]bool {
 		for _, p := range paths {
 			stem := strings.TrimSuffix(filepath.Base(p), ".md")
 			idx[strings.ToLower(stem)] = true
+			rel := strings.TrimSuffix(p, ".md")
+			idx[strings.ToLower(rel)] = true
 			dir := filepath.Dir(p)
 			for dir != "." && dir != "" {
 				idx[strings.ToLower(dir)] = true

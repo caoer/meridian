@@ -584,6 +584,73 @@ func TestEvaluate_Integration(t *testing.T) {
 	}
 }
 
+func TestBuildResolveIndex_FileExists_PathQualified(t *testing.T) {
+	paths := []string{
+		"wiki/sources/alpha.md",
+		"wiki/page-b.md",
+	}
+	idx := BuildResolveIndex(paths, "file_exists")
+	// Stem lookup still works
+	if !idx["alpha"] {
+		t.Error("stem 'alpha' should resolve")
+	}
+	if !idx["page-b"] {
+		t.Error("stem 'page-b' should resolve")
+	}
+	// Path-qualified lookup (relative path minus .md)
+	if !idx["wiki/sources/alpha"] {
+		t.Error("path-qualified 'wiki/sources/alpha' should resolve")
+	}
+	if !idx["wiki/page-b"] {
+		t.Error("path-qualified 'wiki/page-b' should resolve")
+	}
+}
+
+func TestBuildResolveIndex_FileOrFolderExists_PathQualified(t *testing.T) {
+	paths := []string{
+		"wiki/sources/alpha.md",
+	}
+	idx := BuildResolveIndex(paths, "file_or_folder_exists")
+	if !idx["alpha"] {
+		t.Error("stem 'alpha' should resolve")
+	}
+	if !idx["wiki/sources/alpha"] {
+		t.Error("path-qualified 'wiki/sources/alpha' should resolve")
+	}
+	// Folder parts still indexed
+	if !idx["wiki/sources"] {
+		t.Error("folder 'wiki/sources' should resolve")
+	}
+}
+
+func TestEvaluate_ResolvePathQualifiedWikilink(t *testing.T) {
+	wb := &WikilinkBlock{Resolve: "file_exists"}
+	ctx := &EvalContext{
+		ScannedPaths: []string{"wiki/sources/alpha.md", ".repos/myapp.md"},
+		FilePath:     "wiki/index.md",
+	}
+	// Path-qualified wikilinks should resolve
+	findings := wb.Evaluate("source", "[[wiki/sources/alpha]]", ctx)
+	if len(findings) != 0 {
+		t.Errorf("path-qualified [[wiki/sources/alpha]] should resolve, got %d findings", len(findings))
+	}
+	// Dot-prefixed path-qualified
+	findings = wb.Evaluate("deploy-target", "[[.repos/myapp]]", ctx)
+	if len(findings) != 0 {
+		t.Errorf("path-qualified [[.repos/myapp]] should resolve, got %d findings", len(findings))
+	}
+	// Stem-only still works
+	findings = wb.Evaluate("source", "[[alpha]]", ctx)
+	if len(findings) != 0 {
+		t.Errorf("stem-only [[alpha]] should still resolve, got %d findings", len(findings))
+	}
+	// Non-existent path-qualified fails
+	findings = wb.Evaluate("source", "[[wiki/nonexistent]]", ctx)
+	if len(findings) != 1 {
+		t.Fatalf("[[wiki/nonexistent]] should fail, got %d findings", len(findings))
+	}
+}
+
 func TestEvaluate_BareStringTarget(t *testing.T) {
 	// Bare strings (without [[]] syntax) should be treated as wikilink targets
 	wb := &WikilinkBlock{Resolve: "file_exists"}
