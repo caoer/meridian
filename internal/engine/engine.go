@@ -21,6 +21,12 @@ type CheckFunc func(doc *Document, params map[string]any) []RawFinding
 type Engine struct {
 	checks   map[string]CheckFunc
 	warnings []types.Warning
+	skip     []string // directory names to skip during scan
+}
+
+// SetSkip configures directory names to skip during filesystem scan.
+func (e *Engine) SetSkip(patterns []string) {
+	e.skip = patterns
 }
 
 // New creates an Engine.

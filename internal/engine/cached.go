@@ -30,7 +30,7 @@ type evalResult struct {
 func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store) []types.Finding {
 	e.warnings = nil
 
-	docs, err := Scan(fsys)
+	docs, err := Scan(fsys, e.skip...)
 	if err != nil {
 		e.warnings = append(e.warnings, types.Warning{
 			Code:    "SCAN_ERROR",

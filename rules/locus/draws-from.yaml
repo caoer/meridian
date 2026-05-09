@@ -1,0 +1,7 @@
+property: draws-from
+on: "wiki/synthesis/**"
+severity: warn
+message: "Stale synthesis: {{.Target}} updated after this file"
+wikilink:
+  resolve: file_exists
+  fresh: git

@@ -387,3 +387,329 @@ on: "wiki/**"
 		t.Errorf("severity = %v, want off", rules[0].Severity)
 	}
 }
+
+// --- Property rule tests ---
+
+func TestLoader_PropertyRule_StringKey(t *testing.T) {
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "prop-title.yaml", `
+property: title
+on: "wiki/**"
+required: true
+`)
+
+	rules, _, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir error: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("got %d rules, want 1", len(rules))
+	}
+	r := rules[0]
+	if r.Check != "property" {
+		t.Errorf("Check = %q, want property", r.Check)
+	}
+	if r.Params["property"] != "title" {
+		t.Errorf("Params[property] = %v", r.Params["property"])
+	}
+}
+
+func TestLoader_PropertyRule_ArrayKeys(t *testing.T) {
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "prop-multi.yaml", `
+property: [tags, created]
+on: "wiki/**"
+`)
+
+	rules, _, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir error: %v", err)
+	}
+	r := rules[0]
+	arr, ok := r.Params["property"].([]any)
+	if !ok {
+		t.Fatalf("Params[property] type = %T, want []any", r.Params["property"])
+	}
+	if len(arr) != 2 {
+		t.Errorf("Params[property] len = %d, want 2", len(arr))
+	}
+}
+
+func TestLoader_PropertyRule_WikilinkTypeBlock(t *testing.T) {
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "prop-wikilink.yaml", `
+property: source
+on: "wiki/**"
+wikilink:
+  resolve: true
+  fresh: 30d
+`)
+
+	rules, _, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir error: %v", err)
+	}
+	r := rules[0]
+	wl, ok := r.Params["wikilink"].(map[string]any)
+	if !ok {
+		t.Fatalf("Params[wikilink] type = %T", r.Params["wikilink"])
+	}
+	if wl["resolve"] != true {
+		t.Errorf("wikilink.resolve = %v", wl["resolve"])
+	}
+}
+
+func TestLoader_PropertyRule_TagTypeBlock(t *testing.T) {
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "prop-tag.yaml", `
+property: tags
+on: "wiki/**"
+tag:
+  prefix: "type/"
+`)
+
+	rules, _, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir error: %v", err)
+	}
+	r := rules[0]
+	tg, ok := r.Params["tag"].(map[string]any)
+	if !ok {
+		t.Fatalf("Params[tag] type = %T", r.Params["tag"])
+	}
+	if tg["prefix"] != "type/" {
+		t.Errorf("tag.prefix = %v", tg["prefix"])
+	}
+}
+
+func TestLoader_PropertyRule_DateTypeBlock(t *testing.T) {
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "prop-date.yaml", `
+property: created
+on: "wiki/**"
+date: true
+`)
+
+	rules, _, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir error: %v", err)
+	}
+	r := rules[0]
+	if r.Params["date"] != true {
+		t.Errorf("Params[date] = %v (%T)", r.Params["date"], r.Params["date"])
+	}
+}
+
+func TestLoader_PropertyRule_TextTypeBlock(t *testing.T) {
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "prop-text.yaml", `
+property: title
+on: "wiki/**"
+text:
+  min_length: 1
+`)
+
+	rules, _, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir error: %v", err)
+	}
+	r := rules[0]
+	tx, ok := r.Params["text"].(map[string]any)
+	if !ok {
+		t.Fatalf("Params[text] type = %T", r.Params["text"])
+	}
+	if tx["min_length"] != 1 {
+		t.Errorf("text.min_length = %v", tx["min_length"])
+	}
+}
+
+func TestLoader_PropertyRule_NoTypeBlock_Valid(t *testing.T) {
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "prop-exist.yaml", `
+property: title
+on: "wiki/**"
+required: true
+`)
+
+	rules, _, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir error: %v", err)
+	}
+	r := rules[0]
+	if r.Check != "property" {
+		t.Errorf("Check = %q", r.Check)
+	}
+	// No type block keys in params
+	for _, tb := range []string{"wikilink", "tag", "date", "text"} {
+		if _, ok := r.Params[tb]; ok {
+			t.Errorf("unexpected type block %q in params", tb)
+		}
+	}
+}
+
+func TestLoader_PropertyRule_MultipleTypeBlocks_Error(t *testing.T) {
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "bad-prop.yaml", `
+property: source
+on: "wiki/**"
+wikilink:
+  resolve: true
+tag:
+  prefix: "type/"
+`)
+
+	_, _, err := LoadDir(dir)
+	if err == nil {
+		t.Fatal("expected error for multiple type blocks")
+	}
+	if !strings.Contains(err.Error(), "multiple type blocks") {
+		t.Errorf("error = %q, want mention of multiple type blocks", err.Error())
+	}
+}
+
+func TestLoader_BothCheckAndProperty_Error(t *testing.T) {
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "bad-both.yaml", `
+check: field-exists
+property: title
+message: "test"
+severity: warn
+on: "wiki/**"
+`)
+
+	_, _, err := LoadDir(dir)
+	if err == nil {
+		t.Fatal("expected error for both check and property")
+	}
+	if !strings.Contains(err.Error(), "both 'check' and 'property'") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestLoader_NeitherCheckNorProperty_Error(t *testing.T) {
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "bad-neither.yaml", `
+message: "test"
+severity: warn
+on: "wiki/**"
+`)
+
+	_, _, err := LoadDir(dir)
+	if err == nil {
+		t.Fatal("expected error for neither check nor property")
+	}
+	if !strings.Contains(err.Error(), "must have 'check' or 'property'") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestLoader_PropertyRule_SeverityDefault(t *testing.T) {
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "prop-default.yaml", `
+property: title
+on: "wiki/**"
+`)
+
+	rules, _, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir error: %v", err)
+	}
+	if rules[0].Severity != SeverityWarn {
+		t.Errorf("Severity = %v, want warn (default)", rules[0].Severity)
+	}
+}
+
+func TestLoader_PropertyRule_MessageDefault(t *testing.T) {
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "prop-nomsg.yaml", `
+property: title
+on: "wiki/**"
+`)
+
+	rules, _, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir error: %v", err)
+	}
+	if rules[0].Message != "{{.Message}}" {
+		t.Errorf("Message = %q, want %q (default fallback)", rules[0].Message, "{{.Message}}")
+	}
+}
+
+func TestLoader_PropertyRule_OnRequired(t *testing.T) {
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "bad-noon.yaml", `
+property: title
+required: true
+`)
+
+	_, _, err := LoadDir(dir)
+	if err == nil {
+		t.Fatal("expected error for missing on in property rule")
+	}
+}
+
+func TestLoader_PropertyRule_RequiredDefault(t *testing.T) {
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "prop-reqdef.yaml", `
+property: title
+on: "wiki/**"
+`)
+
+	rules, _, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir error: %v", err)
+	}
+	req, ok := rules[0].Params["required"]
+	if !ok {
+		t.Fatal("missing required param")
+	}
+	if req != false {
+		t.Errorf("required = %v, want false (default)", req)
+	}
+}
+
+func TestLoader_PropertyRule_CustomSeverity(t *testing.T) {
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "prop-err.yaml", `
+property: title
+on: "wiki/**"
+severity: error
+`)
+
+	rules, _, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir error: %v", err)
+	}
+	if rules[0].Severity != SeverityError {
+		t.Errorf("Severity = %v, want error", rules[0].Severity)
+	}
+}
+
+func TestLoader_CheckRuleStillWorks_Regression(t *testing.T) {
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "classic.yaml", `
+check: field-exists
+message: "Missing {{.Field}}"
+severity: error
+on: "wiki/**"
+frontmatter: [tags]
+`)
+
+	rules, _, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir error: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("got %d rules", len(rules))
+	}
+	r := rules[0]
+	if r.Check != "field-exists" {
+		t.Errorf("Check = %q", r.Check)
+	}
+	if r.Severity != SeverityError {
+		t.Errorf("Severity = %v", r.Severity)
+	}
+	if _, ok := r.Params["frontmatter"]; !ok {
+		t.Error("missing frontmatter param")
+	}
+}

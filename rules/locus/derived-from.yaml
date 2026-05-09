@@ -1,0 +1,6 @@
+property: derived-from
+on: ["wiki/outbox/skills/**", "wiki/outbox/prompts/**", "wiki/outbox/agents/**"]
+required: true
+severity: warn
+wikilink:
+  resolve: file_exists

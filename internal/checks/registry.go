@@ -19,4 +19,5 @@ var All = map[string]engine.CheckFunc{
 	"heading-structure":          headingStructureCheck,
 	"partition-date-consistency": partition.CheckDateConsistency,
 	"partition-rollup":           partition.CheckRollup,
+	"property":                   propertyCheck,
 }

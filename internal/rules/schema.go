@@ -13,7 +13,7 @@ type Rule struct {
 }
 
 // OnFilter holds parsed components of a rule's `on` field.
-// Path globs: ALL must match (AND).
+// Path globs: ANY must match (OR).
 // Tags: ALL must match (AND).
 // Excludes: ANY removes (OR).
 type OnFilter struct {

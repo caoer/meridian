@@ -1,0 +1,6 @@
+property: source
+on: "wiki/sources/**"
+required: true
+severity: warn
+wikilink:
+  resolve: file_exists

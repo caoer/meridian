@@ -44,10 +44,12 @@ Bug fixes: reproduction test -> fails -> fix -> passes -> full suite.
 | `internal/engine` | cache, rules, frontmatter, vfs | no |
 | `internal/conflict` | rules | no |
 | `internal/partition` | engine | no |
-| `internal/checks` | engine, partition | no |
+| `internal/property` | nothing | yes |
+| `internal/checks` | engine, property, partition | no |
 | `internal/hooks` | nothing | yes |
 | `internal/watch` | hooks | no |
 | `internal/config` | rules, hooks | no |
+| `internal/fix` | engine, frontmatter, property, rules, types, vfs | no |
 | `internal/cli` | types, rules, domains, conflict, config | no |
 | `internal/mv` | engine, frontmatter, rules, types, vfs | no |
 | `cmd/md` | cache, checks, cli, config, domains, engine, fix, hooks, mv, rules, vfs, watch | no |

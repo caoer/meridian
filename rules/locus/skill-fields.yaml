@@ -1,0 +1,5 @@
+property: [name, description, deploy-target]
+on: "wiki/outbox/skills/**/SKILL.md"
+required: true
+severity: error
+message: "Missing required skill field: {{.Key}}"

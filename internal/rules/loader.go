@@ -11,12 +11,29 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// metaFields are the 4 required fields every rule must have.
+// metaFields are the 4 required fields every check rule must have.
 var metaFields = map[string]bool{
 	"check":    true,
 	"message":  true,
 	"severity": true,
 	"on":       true,
+}
+
+// propertyMetaFields are top-level fields consumed by the loader for property rules.
+var propertyMetaFields = map[string]bool{
+	"property": true,
+	"on":       true,
+	"required": true,
+	"severity": true,
+	"message":  true,
+}
+
+// typeBlockNames are the recognized type block keys for property rules.
+var typeBlockNames = map[string]bool{
+	"wikilink": true,
+	"tag":      true,
+	"date":     true,
+	"text":     true,
 }
 
 // LoadDir loads all .yaml/.yml rule files from a directory.
@@ -107,6 +124,23 @@ func loadFile(path string) (Rule, []string, error) {
 		return Rule{}, nil, fmt.Errorf("YAML parse: %w", err)
 	}
 
+	_, hasCheck := raw["check"]
+	_, hasProperty := raw["property"]
+
+	switch {
+	case hasCheck && hasProperty:
+		return Rule{}, nil, fmt.Errorf("rule has both 'check' and 'property'")
+	case hasProperty:
+		return loadPropertyRule(raw, path)
+	case hasCheck:
+		return loadCheckRule(raw, path)
+	default:
+		return Rule{}, nil, fmt.Errorf("rule must have 'check' or 'property'")
+	}
+}
+
+// loadCheckRule handles the existing check-rule path (unchanged behavior).
+func loadCheckRule(raw map[string]any, path string) (Rule, []string, error) {
 	// Validate required meta fields
 	for _, field := range []string{"check", "message", "severity", "on"} {
 		if _, ok := raw[field]; !ok {
@@ -169,6 +203,92 @@ func loadFile(path string) (Rule, []string, error) {
 		On:       onFilter,
 		Params:   params,
 	}, nil, nil
+}
+
+// loadPropertyRule builds a Rule from a property-style YAML definition.
+func loadPropertyRule(raw map[string]any, path string) (Rule, []string, error) {
+	var warnings []string
+
+	// on is still required
+	if _, ok := raw["on"]; !ok {
+		return Rule{}, nil, fmt.Errorf("missing required field %q", "on")
+	}
+	onFilter, err := parseOnField(raw["on"])
+	if err != nil {
+		return Rule{}, nil, fmt.Errorf("invalid on: %w", err)
+	}
+	if err := validateGlobs(onFilter); err != nil {
+		return Rule{}, nil, err
+	}
+
+	// severity: default to warn
+	sev := SeverityWarn
+	if sv, ok := raw["severity"]; ok {
+		sevStr, ok := sv.(string)
+		if !ok {
+			return Rule{}, nil, fmt.Errorf("severity must be a string")
+		}
+		sev, err = ParseSeverity(sevStr)
+		if err != nil {
+			return Rule{}, nil, err
+		}
+	}
+
+	// message: default to "{{.Message}}" so the check function can supply contextual text.
+	message := "{{.Message}}"
+	if mv, ok := raw["message"]; ok {
+		ms, ok := mv.(string)
+		if !ok {
+			return Rule{}, nil, fmt.Errorf("message must be a string")
+		}
+		if _, err := template.New("").Parse(ms); err != nil {
+			return Rule{}, nil, fmt.Errorf("invalid template in message: %w", err)
+		}
+		message = ms
+	}
+
+	// Build params — everything not in propertyMetaFields
+	params := make(map[string]any)
+	params["property"] = raw["property"]
+
+	// required: default false
+	if rv, ok := raw["required"]; ok {
+		params["required"] = rv
+	} else {
+		params["required"] = false
+	}
+
+	// Detect type blocks — at most one allowed
+	var typeBlockCount int
+	for k, v := range raw {
+		if typeBlockNames[k] {
+			typeBlockCount++
+			params[k] = v
+		}
+	}
+	if typeBlockCount > 1 {
+		return Rule{}, nil, fmt.Errorf("property rule has multiple type blocks")
+	}
+
+	// Remaining keys that are neither propertyMeta nor type blocks → params + warning
+	for k, v := range raw {
+		if propertyMetaFields[k] || typeBlockNames[k] {
+			continue
+		}
+		warnings = append(warnings, fmt.Sprintf("unknown field %q in property rule", k))
+		params[k] = v
+	}
+
+	id := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+
+	return Rule{
+		ID:       id,
+		Check:    "property",
+		Message:  message,
+		Severity: sev,
+		On:       onFilter,
+		Params:   params,
+	}, warnings, nil
 }
 
 // parseOnField converts the raw `on` value to an OnFilter.

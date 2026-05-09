@@ -87,6 +87,9 @@ func main() {
 
 	// Register all built-in checks from checks package
 	eng := engine.New()
+	if cfg != nil {
+		eng.SetSkip(cfg.Scan.Skip)
+	}
 	registeredChecks := map[string]bool{}
 	for name, fn := range checks.All {
 		eng.RegisterCheck(name, fn)

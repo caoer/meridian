@@ -1,0 +1,5 @@
+# Body-level check — NOT a property rule
+check: heading-structure
+on: "wiki/**"
+severity: warn
+message: "{{.Issue}}"

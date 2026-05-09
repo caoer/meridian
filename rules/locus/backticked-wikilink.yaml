@@ -1,0 +1,5 @@
+# Body-level check — NOT a property rule
+check: backticked-wikilink
+on: "wiki/**"
+severity: warn
+message: "Wikilink inside backticks won't render: {{.Match}}"

@@ -83,16 +83,43 @@ func TestMatch_EmptyTags(t *testing.T) {
 	}
 }
 
-func TestMatch_MultiplePathsAND(t *testing.T) {
-	// Both path globs must match (AND)
-	f := rules.ParseOnFilter([]string{"wiki/**", "**/*.md"})
+func TestMatch_MultiplePathsOR(t *testing.T) {
+	// Any path glob can match (OR)
+	f := rules.ParseOnFilter([]string{"wiki/**", "inbox/**"})
 
 	if !Match(f, "wiki/page.md", nil) {
-		t.Error("should match both globs")
+		t.Error("should match: hits wiki/**")
 	}
-	// wiki/img.png matches wiki/** but not **/*.md
-	if Match(f, "wiki/img.png", nil) {
-		t.Error("should not match: fails *.md glob")
+	if !Match(f, "inbox/note.md", nil) {
+		t.Error("should match: hits inbox/**")
+	}
+	if Match(f, "archive/old.md", nil) {
+		t.Error("should not match: hits neither glob")
+	}
+}
+
+func TestMatch_DisjointPathsOR(t *testing.T) {
+	// Disjoint path globs — file in any of the 3 directories matches
+	f := rules.ParseOnFilter([]string{
+		"wiki/outbox/skills/**",
+		"wiki/outbox/prompts/**",
+		"wiki/outbox/agents/**",
+	})
+
+	if !Match(f, "wiki/outbox/skills/foo/SKILL.md", nil) {
+		t.Error("should match: skills path")
+	}
+	if !Match(f, "wiki/outbox/prompts/bar.md", nil) {
+		t.Error("should match: prompts path")
+	}
+	if !Match(f, "wiki/outbox/agents/baz.md", nil) {
+		t.Error("should match: agents path")
+	}
+	if Match(f, "wiki/outbox/other.md", nil) {
+		t.Error("should not match: not in any of the 3 directories")
+	}
+	if Match(f, "wiki/page.md", nil) {
+		t.Error("should not match: outside outbox")
 	}
 }
 
@@ -127,5 +154,12 @@ func TestMatch_NoFilters(t *testing.T) {
 	f := rules.OnFilter{}
 	if !Match(f, "anything.md", nil) {
 		t.Error("empty filter should match everything")
+	}
+}
+
+func TestMatch_SynthesisGlob(t *testing.T) {
+	f := rules.ParseOnFilter([]string{"wiki/synthesis/**"})
+	if !Match(f, "wiki/synthesis/cloudflare-mesh-surge-coexistence.md", nil) {
+		t.Error("wiki/synthesis/** should match wiki/synthesis/cloudflare-mesh-surge-coexistence.md")
 	}
 }

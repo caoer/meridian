@@ -1,0 +1,10 @@
+property: tags
+on: "wiki/**"
+required: true
+severity: warn
+message: "Missing or invalid tags"
+tag:
+  prefix:
+    in: [domain, type, status, topic, meta, project,
+         harvest-source, use, do, role, session, agent,
+         convention, has, plugin, round, priority]

@@ -1,0 +1,10 @@
+property: deploy-target
+on: "wiki/outbox/**"
+severity: error
+message: "Invalid deploy target: {{.Reason}}"
+wikilink:
+  resolve: file_exists
+  link_display:
+    template:
+      - when: ".repos/**"
+        format: "repos://{{.Target | trimPrefix \".repos/\"}}"

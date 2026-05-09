@@ -7,7 +7,7 @@ import (
 
 // Match checks whether a file (by path and tags) matches a rule's OnFilter.
 //
-// Path globs: ALL must match (AND).
+// Path globs: ANY must match (OR).
 // Tag filters: ALL must match (AND).
 // Excludes: ANY removes (OR).
 func Match(f rules.OnFilter, path string, tags []string) bool {
@@ -23,10 +23,16 @@ func Match(f rules.OnFilter, path string, tags []string) bool {
 		}
 	}
 
-	// All path globs must match (AND)
-	for _, p := range f.Paths {
-		matched, _ := doublestar.Match(p, path)
-		if !matched {
+	// Any path glob must match (OR)
+	if len(f.Paths) > 0 {
+		pathMatch := false
+		for _, p := range f.Paths {
+			if matched, _ := doublestar.Match(p, path); matched {
+				pathMatch = true
+				break
+			}
+		}
+		if !pathMatch {
 			return false
 		}
 	}

@@ -19,6 +19,7 @@ type FixFunc func(content []byte, params map[string]any) (changed bool, newConte
 // All is the registry of fix functions, keyed by check name.
 var All = map[string]FixFunc{
 	"field-exists": FieldExistsFix,
+	"property":     PropertyFix,
 }
 
 // FixResult describes one fix applied.
