@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -150,6 +151,78 @@ func TestParseWikilink_BoolTrue(t *testing.T) {
 	wb := tb.(*WikilinkBlock)
 	if wb.Resolve != "" || wb.Fresh != "" || wb.LinkDisplay != nil {
 		t.Errorf("bare true should produce empty block, got %+v", wb)
+	}
+}
+
+func TestParseWikilink_BoolFalse(t *testing.T) {
+	_, err := ParseWikilink(false)
+	if err == nil {
+		t.Fatal("expected error for false")
+	}
+}
+
+func TestParseLinkDisplay_TemplateMissing(t *testing.T) {
+	// No "template" key — returns empty config, no error.
+	raw := map[string]any{
+		"link_display": map[string]any{},
+	}
+	tb, err := ParseWikilink(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wb := tb.(*WikilinkBlock)
+	if wb.LinkDisplay == nil {
+		t.Fatal("LinkDisplay should be initialized even without template key")
+	}
+	if len(wb.LinkDisplay.Templates) != 0 {
+		t.Errorf("Templates len = %d, want 0", len(wb.LinkDisplay.Templates))
+	}
+}
+
+func TestParseLinkDisplay_TemplateNotList(t *testing.T) {
+	raw := map[string]any{
+		"link_display": map[string]any{
+			"template": "not-a-list",
+		},
+	}
+	_, err := ParseWikilink(raw)
+	if err == nil {
+		t.Fatal("expected error for non-list template")
+	}
+	if !strings.Contains(err.Error(), "expected list") {
+		t.Errorf("error = %v, want 'expected list'", err)
+	}
+}
+
+func TestParseLinkDisplay_TemplateItemNotMap(t *testing.T) {
+	raw := map[string]any{
+		"link_display": map[string]any{
+			"template": []any{
+				"not-a-map",
+			},
+		},
+	}
+	_, err := ParseWikilink(raw)
+	if err == nil {
+		t.Fatal("expected error for non-map template item")
+	}
+	if !strings.Contains(err.Error(), "expected map") {
+		t.Errorf("error = %v, want 'expected map'", err)
+	}
+}
+
+// --- Evaluate nil/empty value tests ---
+
+func TestEvaluate_NilValue(t *testing.T) {
+	wb := &WikilinkBlock{Resolve: "file_exists"}
+	ctx := &EvalContext{
+		ScannedPaths: []string{"wiki/page.md"},
+		FilePath:     "wiki/source.md",
+	}
+	// nil value must not panic and must produce no findings.
+	findings := wb.Evaluate("source", nil, ctx)
+	if findings != nil {
+		t.Errorf("nil value should produce nil findings, got %+v", findings)
 	}
 }
 

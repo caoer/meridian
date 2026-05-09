@@ -93,7 +93,12 @@ func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 				hadPanic = true
 				continue
 			}
-			docFindings = append(docFindings, result.findings...)
+			for _, f := range result.findings {
+				if doc.IsLineSuppressed(f.Line, ar.rule.ID) {
+					continue
+				}
+				docFindings = append(docFindings, f)
+			}
 		}
 
 		// Cache put (if store present). Skip if any rule panicked —

@@ -289,6 +289,150 @@ func TestEngine_LintIgnore_PartialSuppress(t *testing.T) {
 	}
 }
 
+// perLineCheck reports one finding per body line, using the same
+// `BodyOffset + i + 1` line formula as production checks (e.g. backticked-wikilink).
+func perLineCheck(doc *Document, params map[string]any) []RawFinding {
+	var out []RawFinding
+	for i := range splitLines(doc.Body) {
+		out = append(out, RawFinding{
+			Line:         doc.BodyOffset + i + 1,
+			TemplateData: map[string]string{},
+		})
+	}
+	return out
+}
+
+func TestEngine_InlineSuppress_HTMLComment(t *testing.T) {
+	// `<!-- md-disable-next-line rule-x -->` should suppress findings whose
+	// line number matches the next body line as reported by checks.
+	fs := makeFS(map[string]string{
+		"wiki/page.md": "---\ncreated: 2026-05-05\n---\nfine line\n<!-- md-disable-next-line rule-x -->\nbad line here\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("per-line", perLineCheck)
+
+	rule := rules.Rule{
+		ID: "rule-x", Check: "per-line", Message: "x",
+		Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}),
+		Params: map[string]any{},
+	}
+
+	results := eng.Run(fs, []rules.Rule{rule})
+
+	// BodyOffset = 4. Body lines: i=0 "fine" → reported line 5,
+	// i=1 directive → reported line 6, i=2 "bad" → reported line 7.
+	// Directive at i=1 suppresses i=2 → suppresses reported line 7.
+	for _, f := range results {
+		if f.Line == 7 {
+			t.Errorf("finding on reported line 7 should be suppressed, got %+v", f)
+		}
+	}
+	// Other lines still fire.
+	var sawOther bool
+	for _, f := range results {
+		if f.Line == 5 {
+			sawOther = true
+		}
+	}
+	if !sawOther {
+		t.Error("expected non-suppressed finding on line 5")
+	}
+}
+
+func TestEngine_InlineSuppress_ObsidianComment(t *testing.T) {
+	// `%% md-disable-next-line rule-x %%` should also work.
+	fs := makeFS(map[string]string{
+		"wiki/page.md": "---\ncreated: 2026-05-05\n---\n%% md-disable-next-line rule-x %%\nbad line\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("per-line", perLineCheck)
+
+	rule := rules.Rule{
+		ID: "rule-x", Check: "per-line", Message: "x",
+		Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}),
+		Params: map[string]any{},
+	}
+
+	results := eng.Run(fs, []rules.Rule{rule})
+	// BodyOffset=4. Directive at i=0 → reported line 5.
+	// Suppresses i=1 "bad line" → reported line 6.
+	for _, f := range results {
+		if f.Line == 6 {
+			t.Errorf("Obsidian-style suppress should hide reported line 6, got %+v", f)
+		}
+	}
+}
+
+func TestEngine_InlineSuppress_OnlySuppressesNamedRule(t *testing.T) {
+	// Directive only suppresses listed rule; other rules still fire.
+	fs := makeFS(map[string]string{
+		"wiki/page.md": "---\ncreated: 2026-05-05\n---\n<!-- md-disable-next-line rule-a -->\nbad line\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("per-line", perLineCheck)
+
+	ruleA := rules.Rule{ID: "rule-a", Check: "per-line", Message: "a", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
+	ruleB := rules.Rule{ID: "rule-b", Check: "per-line", Message: "b", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
+
+	results := eng.Run(fs, []rules.Rule{ruleA, ruleB})
+
+	for _, f := range results {
+		if f.Line == 6 && f.RuleID == "rule-a" {
+			t.Error("rule-a on reported line 6 should be suppressed")
+		}
+	}
+	var sawB bool
+	for _, f := range results {
+		if f.Line == 6 && f.RuleID == "rule-b" {
+			sawB = true
+		}
+	}
+	if !sawB {
+		t.Error("rule-b should still fire on reported line 6")
+	}
+}
+
+func TestEngine_InlineSuppress_MultipleRules(t *testing.T) {
+	// Comma-separated rule IDs in one directive.
+	fs := makeFS(map[string]string{
+		"wiki/page.md": "---\ncreated: 2026-05-05\n---\n<!-- md-disable-next-line rule-a, rule-b -->\nbad\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("per-line", perLineCheck)
+
+	ruleA := rules.Rule{ID: "rule-a", Check: "per-line", Message: "a", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
+	ruleB := rules.Rule{ID: "rule-b", Check: "per-line", Message: "b", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
+
+	results := eng.Run(fs, []rules.Rule{ruleA, ruleB})
+	for _, f := range results {
+		if f.Line == 6 {
+			t.Errorf("both rules on reported line 6 should be suppressed, got %+v", f)
+		}
+	}
+}
+
+func splitLines(s string) []string {
+	if s == "" {
+		return nil
+	}
+	out := []string{}
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			out = append(out, s[start:i])
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		out = append(out, s[start:])
+	}
+	return out
+}
+
 func TestEngine_InjectsScannedPaths(t *testing.T) {
 	fs := makeFS(map[string]string{
 		"wiki/page-a.md": "---\nsource: \"[[page-b]]\"\n---\n# A\n",

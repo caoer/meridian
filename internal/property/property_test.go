@@ -1,6 +1,7 @@
 package property
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -226,5 +227,31 @@ func TestResolveType_UnknownParser(t *testing.T) {
 	_, err := c.ResolveType(map[string]TypeBlockParser{})
 	if err == nil {
 		t.Fatal("expected error for missing parser")
+	}
+}
+
+func TestResolveType_ParserError(t *testing.T) {
+	// When the parser rejects the raw config, ResolveType wraps the error
+	// with the type block name so callers can identify which block failed.
+	c := &Config{
+		Keys:     []string{"x"},
+		TypeName: "wikilink",
+		TypeRaw:  42, // ParseWikilink rejects non-bool/map input
+	}
+	parsers := map[string]TypeBlockParser{
+		"wikilink": ParseWikilink,
+	}
+	_, err := c.ResolveType(parsers)
+	if err == nil {
+		t.Fatal("expected error for invalid type block config")
+	}
+	// Error must reference the failing block name so it can be surfaced as
+	// a "type block error" in callers (e.g., fix.fixLinkDisplay).
+	msg := err.Error()
+	if !strings.Contains(msg, "wikilink") {
+		t.Errorf("error %q should reference type block name 'wikilink'", msg)
+	}
+	if !strings.Contains(msg, "parsing type block") {
+		t.Errorf("error %q should contain 'parsing type block' prefix", msg)
 	}
 }

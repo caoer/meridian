@@ -685,6 +685,43 @@ severity: error
 	}
 }
 
+func TestLoader_PropertyRule_UnknownField_Warning(t *testing.T) {
+	// Unknown top-level fields on a property rule should emit a warning
+	// (still pass through to params for forward compat) and not fail load.
+	dir := tempRuleDir(t)
+	writeRuleFile(t, dir, "prop-unknown.yaml", `
+property: title
+on: "wiki/**"
+required: true
+mystery_field: "something"
+`)
+
+	rules, warnings, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir error: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("got %d rules, want 1", len(rules))
+	}
+
+	// Warning emitted, naming the unknown field.
+	var found bool
+	for _, w := range warnings {
+		if strings.Contains(w, "unknown field") && strings.Contains(w, "mystery_field") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected warning naming 'mystery_field', got %v", warnings)
+	}
+
+	// Pass-through: unknown field should still appear in params.
+	if rules[0].Params["mystery_field"] != "something" {
+		t.Errorf("Params[mystery_field] = %v, want 'something'", rules[0].Params["mystery_field"])
+	}
+}
+
 func TestLoader_CheckRuleStillWorks_Regression(t *testing.T) {
 	dir := tempRuleDir(t)
 	writeRuleFile(t, dir, "classic.yaml", `
