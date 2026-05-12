@@ -299,6 +299,70 @@ func TestRouter_WhitespaceOnlyStdin(t *testing.T) {
 	}
 }
 
+func TestRouter_NoArgs_DispatchesHelp(t *testing.T) {
+	r, buf := newTestRouter()
+
+	called := false
+	r.Handle("help", func(req *Request) *Response {
+		called = true
+		if req.Command != "help" {
+			t.Errorf("req.Command = %q, want %q", req.Command, "help")
+		}
+		return &Response{Version: ResponseVersion, Data: json.RawMessage(`{"commands":[]}`)}
+	})
+
+	code := r.Run([]string{}, nil)
+
+	if !called {
+		t.Fatal("help handler was not called for empty args")
+	}
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	_ = decodeResponse(t, buf)
+}
+
+func TestRouter_HelpFlag(t *testing.T) {
+	for _, flag := range []string{"--help", "-h"} {
+		t.Run(flag, func(t *testing.T) {
+			r, buf := newTestRouter()
+
+			called := false
+			r.Handle("help", func(req *Request) *Response {
+				called = true
+				return &Response{Version: ResponseVersion, Data: json.RawMessage(`{"commands":[]}`)}
+			})
+
+			code := r.Run([]string{flag}, nil)
+
+			if !called {
+				t.Fatalf("help handler was not called for %s", flag)
+			}
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0", code)
+			}
+			_ = decodeResponse(t, buf)
+		})
+	}
+}
+
+func TestRouter_NoArgs_NoHelpHandler(t *testing.T) {
+	r, buf := newTestRouter()
+
+	code := r.Run([]string{}, nil)
+
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	resp := decodeResponse(t, buf)
+	if resp.Error == nil {
+		t.Fatal("expected error in response, got nil")
+	}
+	if resp.Error.Code != ErrUnknownCommand {
+		t.Fatalf("error code = %q, want %q", resp.Error.Code, ErrUnknownCommand)
+	}
+}
+
 func TestRouter_HandlerVersionDefault(t *testing.T) {
 	r, buf := newTestRouter()
 

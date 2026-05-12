@@ -95,6 +95,29 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 				"scope":  {Type: "string", Required: false},
 			},
 		},
+		"fix": {
+			Description: "Auto-fix frontmatter violations",
+			Params: map[string]paramHelp{
+				"scope":  {Type: "string", Required: false},
+				"rules":  {Type: "array", Required: false},
+				"dry-run": {Type: "bool", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "clean", "2": "error"},
+		},
+		"mv": {
+			Description: "Move/rename files, update frontmatter domains",
+			Params: map[string]paramHelp{
+				"source": {Type: "string", Required: true},
+				"dest":   {Type: "string", Required: true},
+				"dry-run": {Type: "bool", Required: false},
+			},
+		},
+		"watch": {
+			Description: "Start filesystem watcher daemon",
+		},
+		"status": {
+			Description: "Query running watch daemon status",
+		},
 	}
 
 	return func(req *Request) *Response {

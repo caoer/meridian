@@ -51,7 +51,14 @@ func (r *Router) SetOutput(w io.Writer) {
 // Run parses args, dispatches to a handler, writes JSON to stdout,
 // and returns an exit code.
 func (r *Router) Run(args []string, stdin io.Reader) int {
-	if len(args) == 0 {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		if h, ok := r.handlers["help"]; ok {
+			resp := h(&Request{Command: "help"})
+			if resp.Version == "" {
+				resp.Version = ResponseVersion
+			}
+			return r.respondWith(resp, r.format)
+		}
 		return r.respond(ErrorResponse(ErrUnknownCommand, "no subcommand provided"))
 	}
 
