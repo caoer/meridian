@@ -197,15 +197,15 @@ func TestLocusProperty_PromptDeployTarget_Clean(t *testing.T) {
 
 // --- deploy-target.yaml ---
 
-func TestLocusProperty_DeployTarget_Fires(t *testing.T) {
+func TestLocusProperty_DeployTarget_BadDisplay(t *testing.T) {
 	allRules := loadLocusRules(t)
 	rule := findRule(t, allRules, "deploy-target")
 	eng := newEngine()
 
-	// deploy-target wikilink pointing to nonexistent file
+	// deploy-target wikilink with wrong link_display
 	fs := testkit.Wiki(
 		testkit.FM("wiki/outbox/foo.md", map[string]any{
-			"deploy-target": "[[nonexistent]]",
+			"deploy-target": "[[.repos/cc-continuity/skills/infra/foo|wrong-display]]",
 			"tags":          []any{"type/skill"},
 			"created":       "2026-01-15",
 		}, "# Foo\n"),
@@ -222,21 +222,47 @@ func TestLocusProperty_DeployTarget_Clean(t *testing.T) {
 	rule := findRule(t, allRules, "deploy-target")
 	eng := newEngine()
 
-	// deploy-target wikilink pointing to existing file
+	// deploy-target wikilink with correct link_display
 	fs := testkit.Wiki(
 		testkit.FM("wiki/outbox/foo.md", map[string]any{
-			"deploy-target": "[[existing-file]]",
+			"deploy-target": "[[.repos/cc-continuity/skills/infra/foo|cc-continuity/skills/infra/foo]]",
 			"tags":          []any{"type/skill"},
 			"created":       "2026-01-15",
 		}, "# Foo\n"),
-		testkit.FM("wiki/outbox/existing-file.md", map[string]any{
-			"tags":    []any{"type/reference"},
-			"created": "2026-01-15",
-		}, "# Existing\n"),
 	)
 
 	results := eng.Run(fs, []rules.Rule{rule})
 	testkit.AssertNoFinding(t, results, "deploy-target", "wiki/outbox/foo.md")
+}
+
+func TestLocusProperty_DeployMethod(t *testing.T) {
+	allRules := loadLocusRules(t)
+	rule := findRule(t, allRules, "deploy-method")
+	eng := newEngine()
+
+	// valid deploy-method
+	fs := testkit.Wiki(
+		testkit.FM("wiki/outbox/foo.md", map[string]any{
+			"deploy-method": "cp",
+			"tags":          []any{"type/skill"},
+			"created":       "2026-01-15",
+		}, "# Foo\n"),
+	)
+	results := eng.Run(fs, []rules.Rule{rule})
+	testkit.AssertNoFinding(t, results, "deploy-method", "wiki/outbox/foo.md")
+
+	// invalid deploy-method
+	fs2 := testkit.Wiki(
+		testkit.FM("wiki/outbox/bar.md", map[string]any{
+			"deploy-method": "ftp",
+			"tags":          []any{"type/skill"},
+			"created":       "2026-01-15",
+		}, "# Bar\n"),
+	)
+	results2 := eng.Run(fs2, []rules.Rule{rule})
+	testkit.AssertFindings(t, results2,
+		testkit.Finding("deploy-method", "wiki/outbox/bar.md", "warn"),
+	)
 }
 
 // --- derived-from.yaml ---

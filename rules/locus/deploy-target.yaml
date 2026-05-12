@@ -1,6 +1,13 @@
 property: deploy-target
 on: "wiki/outbox/**"
 severity: error
-message: "Invalid deploy target: {{.Value}}"
-text:
-  match: "^(cp-repos|cp-dist|cp|archive)://.+"
+message: "Invalid deploy target: {{.Reason}}"
+wikilink:
+  link_display:
+    template:
+      - when: ".repos/**"
+        format: "{{.Target | trimPrefix \".repos/\"}}"
+      - when: ".dist/**"
+        format: "{{.Target | trimPrefix \".dist/\"}}"
+      - when: ".claude/**"
+        format: "{{.Target | trimPrefix \".claude/\"}}"

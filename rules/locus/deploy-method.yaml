@@ -1,0 +1,6 @@
+property: deploy-method
+on: "wiki/outbox/**"
+severity: warn
+message: "Unknown deploy method: {{.Value}}"
+text:
+  in: [cp, cp-dist, archive]

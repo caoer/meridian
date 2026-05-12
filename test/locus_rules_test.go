@@ -23,9 +23,9 @@ func TestLocusRules_Load(t *testing.T) {
 		t.Errorf("unexpected warning: %s", w)
 	}
 
-	// Expect exactly 11 rules
-	if len(loaded) != 11 {
-		t.Fatalf("got %d rules, want 11", len(loaded))
+	// Expect exactly 12 rules
+	if len(loaded) != 12 {
+		t.Fatalf("got %d rules, want 12", len(loaded))
 	}
 
 	// No duplicate IDs
@@ -37,6 +37,7 @@ func TestLocusRules_Load(t *testing.T) {
 	expectedIDs := []string{
 		"backticked-wikilink",
 		"created",
+		"deploy-method",
 		"deploy-target",
 		"derived-from",
 		"draws-from",
@@ -67,6 +68,7 @@ func TestLocusRules_Load(t *testing.T) {
 	propertyIDs := map[string]bool{
 		"tags": true, "created": true, "skill-fields": true,
 		"prompt-deploy-target": true, "deploy-target": true,
+		"deploy-method": true,
 		"derived-from": true, "source": true, "draws-from": true,
 	}
 	// Check rules have their specific check type
