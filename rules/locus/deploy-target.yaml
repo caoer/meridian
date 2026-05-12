@@ -7,7 +7,7 @@ wikilink:
     template:
       - when: ".repos/**"
         format: "{{.Target | trimPrefix \".repos/\"}}"
-      - when: ".dist/**"
-        format: "{{.Target | trimPrefix \".dist/\"}}"
+      - when: "dist/**"
+        format: "{{.Target | trimPrefix \"dist/\"}}"
       - when: ".claude/**"
         format: "{{.Target | trimPrefix \".claude/\"}}"
