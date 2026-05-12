@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -29,6 +30,17 @@ func exitError(code, message string) {
 	resp := cli.ErrorResponse(code, message)
 	json.NewEncoder(os.Stderr).Encode(resp)
 	os.Exit(2)
+}
+
+func stdinIfPiped() io.Reader {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return nil
+	}
+	if info.Mode()&os.ModeCharDevice != 0 {
+		return nil
+	}
+	return os.Stdin
 }
 
 func main() {
@@ -120,7 +132,7 @@ func main() {
 	router.Handle("watch", watchHandler(cfg, cfgErr, cfgPath))
 	router.Handle("status", statusHandler(cfgPath, cfgErr))
 
-	os.Exit(router.Run(os.Args[1:], os.Stdin))
+	os.Exit(router.Run(os.Args[1:], stdinIfPiped()))
 }
 
 func buildRegistry(cfg *config.Config, cfgErr error) (*domains.Registry, *cli.Response) {
