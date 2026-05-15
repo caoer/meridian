@@ -158,3 +158,86 @@ func TestHeadingStructure_ExactFenceCloses(t *testing.T) {
 		t.Fatalf("want 1 finding (skipped level), got %d", len(findings))
 	}
 }
+
+func TestHeadingStructure_SevenHashes_Ignored(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "# Title\n## Section\n####### Not a heading",
+		BodyOffset: 1,
+	}
+	findings := headingStructureCheck(doc, nil)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings (7 hashes ignored as non-heading), got %d", len(findings))
+	}
+}
+
+func TestHeadingStructure_HashTag_NotAHeading(t *testing.T) {
+	// #tag without space is not a heading
+	doc := &engine.Document{
+		Body:       "# Title\n#notaheading\n## Section",
+		BodyOffset: 1,
+	}
+	findings := headingStructureCheck(doc, nil)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings (#tag is not a heading), got %d", len(findings))
+	}
+}
+
+func TestHeadingStructure_DecreasingLevel_NoSkip(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "# Title\n## Section\n### Sub\n## Back to two",
+		BodyOffset: 1,
+	}
+	findings := headingStructureCheck(doc, nil)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for decreasing level, got %d", len(findings))
+	}
+}
+
+func TestHeadingStructure_BareHashOnly(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "#",
+		BodyOffset: 1,
+	}
+	findings := headingStructureCheck(doc, nil)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for bare #, got %d", len(findings))
+	}
+}
+
+func TestHeadingStructure_H6Valid(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6",
+		BodyOffset: 1,
+	}
+	findings := headingStructureCheck(doc, nil)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for valid H1-H6, got %d", len(findings))
+	}
+}
+
+func TestHeadingStructure_MultipleH1_ThreeH1s(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "# First\n# Second\n# Third",
+		BodyOffset: 1,
+	}
+	findings := headingStructureCheck(doc, nil)
+	if len(findings) != 2 {
+		t.Fatalf("want 2 findings for 3 H1s, got %d", len(findings))
+	}
+}
+
+func TestHeadingStructure_MultipleSkips(t *testing.T) {
+	// H1 → H4 skips both H2 and H3
+	doc := &engine.Document{
+		Body:       "# Title\n#### Deep",
+		BodyOffset: 1,
+	}
+	findings := headingStructureCheck(doc, nil)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding, got %d", len(findings))
+	}
+	want := "skipped level: expected H2, got H4"
+	if findings[0].TemplateData["Issue"] != want {
+		t.Errorf("Issue = %q, want %q", findings[0].TemplateData["Issue"], want)
+	}
+}

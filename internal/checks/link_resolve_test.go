@@ -276,3 +276,89 @@ func TestLinkResolve_RootsFiltersPaths(t *testing.T) {
 		t.Fatalf("want 1 finding (inbox-page not in roots), got %d", len(findings))
 	}
 }
+
+func TestLinkResolve_RootsAsStringSlice(t *testing.T) {
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"source": "see [[page-a]]",
+		},
+	}
+	params := map[string]any{
+		"frontmatter":     "source",
+		"roots":           []string{"wiki/**"},
+		"__scanned_paths": []string{"wiki/page-a.md"},
+	}
+	findings := linkResolveCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for []string roots, got %d", len(findings))
+	}
+}
+
+func TestLinkResolve_EmptyRoots(t *testing.T) {
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"source": "[[anything]]",
+		},
+	}
+	params := map[string]any{
+		"frontmatter":     "source",
+		"roots":           []any{},
+		"__scanned_paths": []string{"wiki/anything.md"},
+	}
+	findings := linkResolveCheck(doc, params)
+	// Empty roots + non-empty paths → falls through to fallback → empty index
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding with empty roots, got %d", len(findings))
+	}
+}
+
+func TestLinkResolve_HeadingAnchorInFrontmatter(t *testing.T) {
+	// Wikilinks in frontmatter don't strip heading anchors like broken-wikilink does.
+	// [[page-a#section]] should look up "page-a#section" as-is.
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"source": "[[page-a#section]]",
+		},
+	}
+	params := map[string]any{
+		"frontmatter":    "source",
+		"resolved_index": map[string]bool{"page-a#section": true},
+	}
+	findings := linkResolveCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for target with heading anchor in resolved index, got %d", len(findings))
+	}
+}
+
+func TestLinkResolve_EmptyTargetInWikilink(t *testing.T) {
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"source": "see [[]] here",
+		},
+	}
+	params := map[string]any{
+		"frontmatter": "source",
+	}
+	findings := linkResolveCheck(doc, params)
+	// [[]] doesn't match regex (requires 1+ chars), so 0 findings
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for empty wikilink in frontmatter, got %d", len(findings))
+	}
+}
+
+func TestLinkResolve_WhitespaceOnlyTarget(t *testing.T) {
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"source": "see [[ ]] here",
+		},
+	}
+	params := map[string]any{
+		"frontmatter": "source",
+	}
+	findings := linkResolveCheck(doc, params)
+	// Space matches regex, but TrimSpace makes it empty → skipped
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for whitespace-only wikilink, got %d", len(findings))
+	}
+}
+

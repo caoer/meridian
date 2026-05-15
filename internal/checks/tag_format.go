@@ -12,11 +12,16 @@ func tagFormatCheck(doc *engine.Document, params map[string]any) []engine.RawFin
 		return nil
 	}
 	known := map[string]bool{}
-	if arr, ok := prefixesRaw.([]any); ok {
+	switch arr := prefixesRaw.(type) {
+	case []any:
 		for _, p := range arr {
 			if s, ok := p.(string); ok {
 				known[s] = true
 			}
+		}
+	case []string:
+		for _, s := range arr {
+			known[s] = true
 		}
 	}
 

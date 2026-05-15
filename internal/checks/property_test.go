@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/caoer/meridian/internal/engine"
+	"github.com/caoer/meridian/internal/property"
 )
 
 func TestPropertyCheck_RequiredMissing(t *testing.T) {
@@ -435,5 +436,166 @@ func TestPropertyCheck_DefaultMessage(t *testing.T) {
 	msg := findings[0].TemplateData["Message"]
 	if msg == "" {
 		t.Error("Message should not be empty")
+	}
+}
+
+func TestBuildDefaultMessage_ReasonKeyTarget(t *testing.T) {
+	msg := buildDefaultMessage("source", map[string]string{
+		"Reason": "not found",
+		"Target": "page-a",
+	})
+	want := "source: page-a — not found"
+	if msg != want {
+		t.Errorf("got %q, want %q", msg, want)
+	}
+}
+
+func TestBuildDefaultMessage_ReasonKeyNoTarget(t *testing.T) {
+	msg := buildDefaultMessage("source", map[string]string{
+		"Reason": "missing required field",
+	})
+	want := "source: missing required field"
+	if msg != want {
+		t.Errorf("got %q, want %q", msg, want)
+	}
+}
+
+func TestBuildDefaultMessage_ReasonOnly(t *testing.T) {
+	msg := buildDefaultMessage("", map[string]string{
+		"Reason": "something wrong",
+	})
+	want := "something wrong"
+	if msg != want {
+		t.Errorf("got %q, want %q", msg, want)
+	}
+}
+
+func TestBuildDefaultMessage_TargetExpectedDisplay(t *testing.T) {
+	msg := buildDefaultMessage("source", map[string]string{
+		"Target":   "page-a",
+		"Expected": "Page A",
+		"Display":  "wrong-display",
+	})
+	want := "source: [[page-a|wrong-display]] display should be Page A"
+	if msg != want {
+		t.Errorf("got %q, want %q", msg, want)
+	}
+}
+
+func TestBuildDefaultMessage_TargetExpectedNoDisplay(t *testing.T) {
+	msg := buildDefaultMessage("source", map[string]string{
+		"Target":   "page-a",
+		"Expected": "Page A",
+	})
+	want := "source: [[page-a]] should have display Page A"
+	if msg != want {
+		t.Errorf("got %q, want %q", msg, want)
+	}
+}
+
+func TestBuildDefaultMessage_TargetValue(t *testing.T) {
+	msg := buildDefaultMessage("source", map[string]string{
+		"Target": "page-a",
+		"Value":  "[[page-a]]",
+	})
+	want := "source: [[page-a]] target not found"
+	if msg != want {
+		t.Errorf("got %q, want %q", msg, want)
+	}
+}
+
+func TestBuildDefaultMessage_TargetOnly(t *testing.T) {
+	msg := buildDefaultMessage("source", map[string]string{
+		"Target": "page-a",
+	})
+	want := "source: page-a check failed"
+	if msg != want {
+		t.Errorf("got %q, want %q", msg, want)
+	}
+}
+
+func TestBuildDefaultMessage_ValueOnly(t *testing.T) {
+	msg := buildDefaultMessage("status", map[string]string{
+		"Value": "INVALID",
+	})
+	want := "status: invalid value INVALID"
+	if msg != want {
+		t.Errorf("got %q, want %q", msg, want)
+	}
+}
+
+func TestBuildDefaultMessage_Fallback(t *testing.T) {
+	msg := buildDefaultMessage("field", map[string]string{})
+	want := "field: check failed"
+	if msg != want {
+		t.Errorf("got %q, want %q", msg, want)
+	}
+}
+
+func TestConvertFindings_NilTemplateData(t *testing.T) {
+	findings := convertFindings("key", []property.Finding{
+		{Line: 1, TemplateData: nil},
+	})
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding, got %d", len(findings))
+	}
+	if findings[0].TemplateData == nil {
+		t.Fatal("TemplateData should not be nil after conversion")
+	}
+	if findings[0].TemplateData["Message"] == "" {
+		t.Error("Message should be populated by buildDefaultMessage")
+	}
+}
+
+func TestConvertFindings_PreserveExistingMessage(t *testing.T) {
+	findings := convertFindings("key", []property.Finding{
+		{Line: 1, TemplateData: map[string]string{"Message": "custom msg"}},
+	})
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding, got %d", len(findings))
+	}
+	if findings[0].TemplateData["Message"] != "custom msg" {
+		t.Errorf("Message = %q, want 'custom msg'", findings[0].TemplateData["Message"])
+	}
+}
+
+func TestConvertFindings_EmptySlice(t *testing.T) {
+	findings := convertFindings("key", nil)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings, got %d", len(findings))
+	}
+}
+
+func TestPropertyCheck_TypeResolveError(t *testing.T) {
+	doc := &engine.Document{
+		Path:        "wiki/page.md",
+		Frontmatter: map[string]any{"source": "value"},
+	}
+	// Invalid type block config triggers resolve error
+	params := map[string]any{
+		"property": "source",
+		"wikilink": "not-a-map",
+	}
+	findings := propertyCheck(doc, params)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding for type resolve error, got %d", len(findings))
+	}
+	if findings[0].TemplateData["Reason"] == "" {
+		t.Error("expected Reason in type resolve error")
+	}
+}
+
+func TestPropertyCheck_ExistsButNoTypeBlock(t *testing.T) {
+	doc := &engine.Document{
+		Path:        "wiki/page.md",
+		Frontmatter: map[string]any{"source": "any-value"},
+	}
+	params := map[string]any{
+		"property": "source",
+		"required": true,
+	}
+	findings := propertyCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings (exists, no type block to validate), got %d", len(findings))
 	}
 }

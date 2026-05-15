@@ -98,3 +98,48 @@ func TestBacktickedWikilink_LineNumberAccuracy(t *testing.T) {
 		t.Errorf("Line = %d, want 13", findings[0].Line)
 	}
 }
+
+func TestBacktickedWikilink_LongFenceNotClosedByShort(t *testing.T) {
+	// ```` opened, ``` should NOT close it
+	doc := &engine.Document{
+		Body:       "text\n````\n```\n`[[inside]]`\n```\nstill fenced\n````\nafter",
+		BodyOffset: 1,
+	}
+	findings := backtickWikilinkCheck(doc, nil)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings (backticked wikilink inside long fence), got %d", len(findings))
+	}
+}
+
+func TestBacktickedWikilink_BacktickFenceNotClosedByTilde(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "text\n```\n~~~\n`[[inside]]`\n~~~\nstill fenced\n```\nafter",
+		BodyOffset: 1,
+	}
+	findings := backtickWikilinkCheck(doc, nil)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings (inside backtick fence, tilde doesn't close), got %d", len(findings))
+	}
+}
+
+func TestBacktickedWikilink_OnlyNormalText_NoFindings(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "just plain text\nno backticks or wikilinks\nanother line",
+		BodyOffset: 1,
+	}
+	findings := backtickWikilinkCheck(doc, nil)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for plain text, got %d", len(findings))
+	}
+}
+
+func TestBacktickedWikilink_BacktickWithoutWikilink_NoFinding(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "some `code span` without wikilinks",
+		BodyOffset: 1,
+	}
+	findings := backtickWikilinkCheck(doc, nil)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for backtick span without wikilink, got %d", len(findings))
+	}
+}

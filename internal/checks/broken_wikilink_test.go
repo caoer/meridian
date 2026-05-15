@@ -216,3 +216,119 @@ func TestBrokenWikilink_CaseInsensitive(t *testing.T) {
 		t.Fatalf("want 0 findings for case-insensitive match, got %d", len(findings))
 	}
 }
+
+func TestBrokenWikilink_MultipleSkipPrefixes(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "see [[http://example.com]] and [[inbox/item]] and [[archive/old]]",
+		BodyOffset: 1,
+	}
+	params := map[string]any{
+		"skip-prefixes": []any{"http", "inbox/", "archive/"},
+	}
+	findings := brokenWikilinkCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings with multiple skip-prefixes, got %d", len(findings))
+	}
+}
+
+func TestBrokenWikilink_EmptyTarget(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "see [[]] here",
+		BodyOffset: 1,
+	}
+	findings := brokenWikilinkCheck(doc, nil)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for empty wikilink target, got %d", len(findings))
+	}
+}
+
+func TestBrokenWikilink_NoWikilinks(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "This is a plain document.\nNo wikilinks anywhere.\nJust text.",
+		BodyOffset: 1,
+	}
+	findings := brokenWikilinkCheck(doc, nil)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for body with no wikilinks, got %d", len(findings))
+	}
+}
+
+func TestBrokenWikilink_InlineCodeNotSkipped(t *testing.T) {
+	// broken-wikilink does NOT skip inline code spans — only fenced blocks.
+	// Wikilinks inside backtick spans are still checked.
+	doc := &engine.Document{
+		Body:       "see `[[missing-in-code]]` here",
+		BodyOffset: 1,
+	}
+	findings := brokenWikilinkCheck(doc, nil)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding (inline code not skipped by broken-wikilink), got %d", len(findings))
+	}
+}
+
+func TestBrokenWikilink_TrailingSlash_Stripped(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "see [[folder/page/]] here",
+		BodyOffset: 1,
+	}
+	params := map[string]any{
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/page.md"},
+	}
+	findings := brokenWikilinkCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for trailing-slash link resolved by basename, got %d", len(findings))
+	}
+}
+
+func TestBrokenWikilink_WhitespaceOnlyTarget(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "see [[  ]] here",
+		BodyOffset: 1,
+	}
+	findings := brokenWikilinkCheck(doc, nil)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for whitespace-only target, got %d", len(findings))
+	}
+}
+
+func TestBrokenWikilink_NestedFenceNotClosedByShort(t *testing.T) {
+	// ```` opened, ``` should NOT close it
+	doc := &engine.Document{
+		Body:       "text\n````\n```\n[[inside-long-fence]]\n```\nstill fenced\n````\nafter",
+		BodyOffset: 1,
+	}
+	findings := brokenWikilinkCheck(doc, nil)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings (wikilink inside long fence), got %d", len(findings))
+	}
+}
+
+func TestBrokenWikilink_SkipPrefixCaseInsensitive(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "see [[HTTP://example.com]] here",
+		BodyOffset: 1,
+	}
+	params := map[string]any{
+		"skip-prefixes": []any{"http"},
+	}
+	findings := brokenWikilinkCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for case-insensitive skip prefix, got %d", len(findings))
+	}
+}
+
+func TestBrokenWikilink_EmptyResolvedIndex(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "see [[some-page]] here",
+		BodyOffset: 1,
+	}
+	params := map[string]any{
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{},
+	}
+	findings := brokenWikilinkCheck(doc, params)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding with empty scanned paths, got %d", len(findings))
+	}
+}

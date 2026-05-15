@@ -1,9 +1,9 @@
 check: broken-wikilink
-on: "wiki/**"
-not-on:
-  - "wiki/outbox/starters/**"
-  - "wiki/outbox/agents/**"
-  - "wiki/outbox/skills/locus-cloudflare/skills/**"
+on:
+  - "wiki/**"
+  - "!wiki/outbox/starters/**"
+  - "!wiki/outbox/agents/**"
+  - "!wiki/outbox/skills/locus-cloudflare/skills/**"
 severity: warn
 message: "Broken wikilink: [[{{.Target}}]]"
 roots: ["wiki/**"]
