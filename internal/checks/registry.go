@@ -20,4 +20,5 @@ var All = map[string]engine.CheckFunc{
 	"partition-date-consistency": partition.CheckDateConsistency,
 	"partition-rollup":           partition.CheckRollup,
 	"property":                   propertyCheck,
+	"broken-wikilink":            brokenWikilinkCheck,
 }
