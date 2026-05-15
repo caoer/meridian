@@ -4,8 +4,9 @@ on:
   - "!wiki/outbox/starters/**"
   - "!wiki/outbox/agents/**"
   - "!wiki/outbox/skills/locus-cloudflare/skills/**"
+  - "!wiki/sources/**"
 severity: warn
-message: "Broken wikilink: [[{{.Target}}]]"
+message: "{{.Type}} wikilink: [[{{.Target}}]]"
 roots: ["wiki/**"]
 skip-prefixes:
   - "inbox/"

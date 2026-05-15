@@ -2,18 +2,29 @@ package checks
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/caoer/meridian/internal/engine"
 )
+
+var inlineCodeRe = regexp.MustCompile("`[^`]+`")
 
 func brokenWikilinkCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
 	if doc.Body == "" {
 		return nil
 	}
 
-	resolved := buildResolvedIndex(params)
+	fullIndex := buildResolvedIndex(params)
 	skipPrefixes := toStringSlice(params["skip-prefixes"])
+
+	// Build scope index if scope param present.
+	scope := toStringSlice(params["scope"])
+	paths, _ := params["__scanned_paths"].([]string)
+	var scopeIndex map[string]bool
+	if len(scope) > 0 && len(paths) > 0 {
+		scopeIndex = buildGlobIndex(scope, paths)
+	}
 
 	lines := strings.Split(doc.Body, "\n")
 	var out []engine.RawFinding
@@ -40,44 +51,64 @@ func brokenWikilinkCheck(doc *engine.Document, params map[string]any) []engine.R
 			continue
 		}
 
-		matches := wikilinkRe.FindAllStringSubmatch(line, -1)
+		stripped := inlineCodeRe.ReplaceAllString(line, "")
+		matches := wikilinkRe.FindAllStringSubmatch(stripped, -1)
 		for _, match := range matches {
 			target := strings.TrimSpace(match[1])
 			if target == "" {
 				continue
 			}
 
-			// Strip heading anchor — resolve the page part only.
 			if idx := strings.IndexByte(target, '#'); idx != -1 {
 				target = target[:idx]
 				if target == "" {
-					continue // heading-only link like [[#section]]
+					continue
 				}
 			}
 
-			// Strip trailing backslashes (escaped wikilinks).
 			target = strings.TrimRight(target, "\\")
-			// Strip trailing slashes (directory-style links).
 			target = strings.TrimRight(target, "/")
 
 			if shouldSkip(target, skipPrefixes) {
 				continue
 			}
 
-			// Resolve by basename — Obsidian resolves wikilinks by
-			// filename regardless of path prefix.
-			stem := filepath.Base(target)
-			if !resolved[strings.ToLower(stem)] {
+			findingType := classifyWikilink(target, fullIndex, scopeIndex)
+			if findingType != "" {
 				out = append(out, engine.RawFinding{
 					Line: doc.BodyOffset + i + 1,
 					TemplateData: map[string]string{
 						"Target": target,
+						"Type":   findingType,
 					},
 				})
 			}
 		}
 	}
 	return out
+}
+
+func resolveInIndex(target string, index map[string]bool) bool {
+	if index[strings.ToLower(target)] {
+		return true
+	}
+	return index[strings.ToLower(filepath.Base(target))]
+}
+
+func classifyWikilink(target string, fullIndex, scopeIndex map[string]bool) string {
+	if scopeIndex != nil {
+		if resolveInIndex(target, scopeIndex) {
+			return ""
+		}
+		if resolveInIndex(target, fullIndex) {
+			return "ESCAPE"
+		}
+		return "BROKEN"
+	}
+	if resolveInIndex(target, fullIndex) {
+		return ""
+	}
+	return "BROKEN"
 }
 
 func shouldSkip(target string, prefixes []string) bool {

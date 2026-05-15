@@ -577,6 +577,7 @@ func TestYAMLPipeline_BrokenWikilink_ExcludesNotNotOn(t *testing.T) {
 		"wiki/outbox/starters/**",
 		"wiki/outbox/agents/**",
 		"wiki/outbox/skills/locus-cloudflare/skills/**",
+		"wiki/sources/**",
 	}
 	if len(r.On.Excludes) != len(wantExcludes) {
 		t.Fatalf("Excludes len = %d, want %d: %+v", len(r.On.Excludes), len(wantExcludes), r.On.Excludes)

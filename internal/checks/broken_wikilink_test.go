@@ -142,7 +142,6 @@ func TestBrokenWikilink_MultipleOnSameLine(t *testing.T) {
 }
 
 func TestBrokenWikilink_HeadingAnchor_ResolvesTarget(t *testing.T) {
-	// [[page-a#section]] should resolve the page-a part
 	doc := &engine.Document{
 		Body:       "see [[page-a#section]] here",
 		BodyOffset: 1,
@@ -253,16 +252,14 @@ func TestBrokenWikilink_NoWikilinks(t *testing.T) {
 	}
 }
 
-func TestBrokenWikilink_InlineCodeNotSkipped(t *testing.T) {
-	// broken-wikilink does NOT skip inline code spans — only fenced blocks.
-	// Wikilinks inside backtick spans are still checked.
+func TestBrokenWikilink_InlineCodeSkipped(t *testing.T) {
 	doc := &engine.Document{
 		Body:       "see `[[missing-in-code]]` here",
 		BodyOffset: 1,
 	}
 	findings := brokenWikilinkCheck(doc, nil)
-	if len(findings) != 1 {
-		t.Fatalf("want 1 finding (inline code not skipped by broken-wikilink), got %d", len(findings))
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings (inline code skipped), got %d", len(findings))
 	}
 }
 
@@ -293,7 +290,6 @@ func TestBrokenWikilink_WhitespaceOnlyTarget(t *testing.T) {
 }
 
 func TestBrokenWikilink_NestedFenceNotClosedByShort(t *testing.T) {
-	// ```` opened, ``` should NOT close it
 	doc := &engine.Document{
 		Body:       "text\n````\n```\n[[inside-long-fence]]\n```\nstill fenced\n````\nafter",
 		BodyOffset: 1,
@@ -330,5 +326,218 @@ func TestBrokenWikilink_EmptyResolvedIndex(t *testing.T) {
 	findings := brokenWikilinkCheck(doc, params)
 	if len(findings) != 1 {
 		t.Fatalf("want 1 finding with empty scanned paths, got %d", len(findings))
+	}
+}
+
+// --- Feature 2: Richer resolution ---
+
+func TestBrokenWikilink_FullRelativePath_Resolves(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "see [[wiki/tools/page]] here",
+		BodyOffset: 1,
+	}
+	params := map[string]any{
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/tools/page.md"},
+	}
+	findings := brokenWikilinkCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for full relative path resolution, got %d", len(findings))
+	}
+}
+
+func TestBrokenWikilink_IndexMD_DirectoryResolves(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "see [[wiki/tools]] and [[tools]] here",
+		BodyOffset: 1,
+	}
+	params := map[string]any{
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/tools/INDEX.md"},
+	}
+	findings := brokenWikilinkCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for INDEX.md directory resolution, got %d", len(findings))
+	}
+}
+
+func TestBrokenWikilink_IndexMD_BasenameOnly(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "see [[tools]] here",
+		BodyOffset: 1,
+	}
+	params := map[string]any{
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/tools/INDEX.md"},
+	}
+	findings := brokenWikilinkCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for INDEX.md basename resolution, got %d", len(findings))
+	}
+}
+
+// --- Feature 3: ESCAPE detection ---
+
+func TestBrokenWikilink_TypeField_AlwaysSet(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "see [[missing]] here",
+		BodyOffset: 1,
+	}
+	findings := brokenWikilinkCheck(doc, nil)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding, got %d", len(findings))
+	}
+	if findings[0].TemplateData["Type"] != "BROKEN" {
+		t.Errorf("Type = %q, want BROKEN", findings[0].TemplateData["Type"])
+	}
+}
+
+func TestBrokenWikilink_NoScope_AlwaysBroken(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "see [[nonexistent]] here",
+		BodyOffset: 1,
+	}
+	params := map[string]any{
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/page-a.md"},
+	}
+	findings := brokenWikilinkCheck(doc, params)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding, got %d", len(findings))
+	}
+	if findings[0].TemplateData["Type"] != "BROKEN" {
+		t.Errorf("Type = %q, want BROKEN (no scope)", findings[0].TemplateData["Type"])
+	}
+}
+
+func TestBrokenWikilink_Scope_ResolvesInScope(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "see [[page-a]] here",
+		BodyOffset: 1,
+	}
+	params := map[string]any{
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/scope/page-a.md", "wiki/other/page-b.md"},
+		"scope":           []any{"wiki/scope/**"},
+	}
+	findings := brokenWikilinkCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for link resolving in scope, got %d", len(findings))
+	}
+}
+
+func TestBrokenWikilink_Scope_Escape(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "see [[page-b]] here",
+		BodyOffset: 1,
+	}
+	params := map[string]any{
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/scope/page-a.md", "wiki/other/page-b.md"},
+		"scope":           []any{"wiki/scope/**"},
+	}
+	findings := brokenWikilinkCheck(doc, params)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding, got %d", len(findings))
+	}
+	if findings[0].TemplateData["Type"] != "ESCAPE" {
+		t.Errorf("Type = %q, want ESCAPE", findings[0].TemplateData["Type"])
+	}
+	if findings[0].TemplateData["Target"] != "page-b" {
+		t.Errorf("Target = %q, want page-b", findings[0].TemplateData["Target"])
+	}
+}
+
+func TestBrokenWikilink_Scope_Broken(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "see [[nonexistent]] here",
+		BodyOffset: 1,
+	}
+	params := map[string]any{
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/scope/page-a.md"},
+		"scope":           []any{"wiki/scope/**"},
+	}
+	findings := brokenWikilinkCheck(doc, params)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding, got %d", len(findings))
+	}
+	if findings[0].TemplateData["Type"] != "BROKEN" {
+		t.Errorf("Type = %q, want BROKEN", findings[0].TemplateData["Type"])
+	}
+}
+
+func TestBrokenWikilink_Scope_MixedFindings(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "[[in-scope]] [[escaped]] [[broken]]",
+		BodyOffset: 1,
+	}
+	params := map[string]any{
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/scope/in-scope.md", "wiki/other/escaped.md"},
+		"scope":           []any{"wiki/scope/**"},
+	}
+	findings := brokenWikilinkCheck(doc, params)
+	if len(findings) != 2 {
+		t.Fatalf("want 2 findings (escape + broken), got %d", len(findings))
+	}
+	types := map[string]string{}
+	for _, f := range findings {
+		types[f.TemplateData["Target"]] = f.TemplateData["Type"]
+	}
+	if types["escaped"] != "ESCAPE" {
+		t.Errorf("escaped Type = %q, want ESCAPE", types["escaped"])
+	}
+	if types["broken"] != "BROKEN" {
+		t.Errorf("broken Type = %q, want BROKEN", types["broken"])
+	}
+}
+
+func TestBrokenWikilink_Scope_FullPathEscape(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "see [[wiki/other/page-b]] here",
+		BodyOffset: 1,
+	}
+	params := map[string]any{
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/scope/page-a.md", "wiki/other/page-b.md"},
+		"scope":           []any{"wiki/scope/**"},
+	}
+	findings := brokenWikilinkCheck(doc, params)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding, got %d", len(findings))
+	}
+	if findings[0].TemplateData["Type"] != "ESCAPE" {
+		t.Errorf("Type = %q, want ESCAPE", findings[0].TemplateData["Type"])
+	}
+}
+
+// --- Feature 1: Inline code regression ---
+
+func TestBrokenWikilink_InlineCodeMixed(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "`[[code-link]]` and [[real-missing]]",
+		BodyOffset: 1,
+	}
+	findings := brokenWikilinkCheck(doc, nil)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding (only real-missing), got %d", len(findings))
+	}
+	if findings[0].TemplateData["Target"] != "real-missing" {
+		t.Errorf("Target = %q, want real-missing", findings[0].TemplateData["Target"])
+	}
+}
+
+func TestBrokenWikilink_MultipleInlineCodeSpans(t *testing.T) {
+	doc := &engine.Document{
+		Body:       "`[[a]]` then `[[b]]` then [[real]]",
+		BodyOffset: 1,
+	}
+	findings := brokenWikilinkCheck(doc, nil)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding, got %d", len(findings))
+	}
+	if findings[0].TemplateData["Target"] != "real" {
+		t.Errorf("Target = %q, want real", findings[0].TemplateData["Target"])
 	}
 }

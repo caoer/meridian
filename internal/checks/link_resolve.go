@@ -71,31 +71,45 @@ func linkResolveCheck(doc *engine.Document, params map[string]any) []engine.RawF
 	return out
 }
 
-// buildResolvedIndex constructs a case-insensitive stem lookup map.
+// buildGlobIndex builds a case-insensitive lookup from paths matching globs.
+// Stores: basename stems, full relative paths (without .md), and directory
+// entries for INDEX.md files.
+func buildGlobIndex(globs []string, paths []string) map[string]bool {
+	resolved := make(map[string]bool, len(paths)*2)
+	for _, p := range paths {
+		for _, glob := range globs {
+			if matched, _ := doublestar.Match(glob, p); matched {
+				stem := strings.TrimSuffix(filepath.Base(p), ".md")
+				resolved[strings.ToLower(stem)] = true
+				rel := strings.TrimSuffix(p, ".md")
+				resolved[strings.ToLower(rel)] = true
+				if strings.EqualFold(filepath.Base(p), "INDEX.md") {
+					dir := filepath.Dir(p)
+					if dir != "." && dir != "" {
+						resolved[strings.ToLower(dir)] = true
+						resolved[strings.ToLower(filepath.Base(dir))] = true
+					}
+				}
+				break
+			}
+		}
+	}
+	return resolved
+}
+
+// buildResolvedIndex constructs a case-insensitive lookup map.
 // Prefers roots + __scanned_paths (engine-injected). Falls back to
 // resolved_index for backward compatibility.
 func buildResolvedIndex(params map[string]any) map[string]bool {
-	// Try roots + __scanned_paths first.
 	roots := toStringSlice(params["roots"])
 	paths, _ := params["__scanned_paths"].([]string)
 
 	if len(roots) > 0 && len(paths) > 0 {
-		resolved := make(map[string]bool, len(paths))
-		for _, p := range paths {
-			for _, root := range roots {
-				if matched, _ := doublestar.Match(root, p); matched {
-					stem := strings.TrimSuffix(filepath.Base(p), ".md")
-					resolved[strings.ToLower(stem)] = true
-					break
-				}
-			}
-		}
-		return resolved
+		return buildGlobIndex(roots, paths)
 	}
 
 	// Fallback: resolved_index param (backward compat).
 	if idx, ok := params["resolved_index"].(map[string]bool); ok {
-		// Pre-lower keys for O(1) lookup.
 		resolved := make(map[string]bool, len(idx))
 		for k := range idx {
 			resolved[strings.ToLower(k)] = true
