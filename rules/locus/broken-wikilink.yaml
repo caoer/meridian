@@ -6,9 +6,8 @@ not-on:
   - "wiki/outbox/skills/locus-cloudflare/skills/**"
 severity: warn
 message: "Broken wikilink: [[{{.Target}}]]"
-params:
-  roots: ["wiki/**"]
-  skip-prefixes:
-    - "inbox/"
-    - ".repos/"
-    - "http"
+roots: ["wiki/**"]
+skip-prefixes:
+  - "inbox/"
+  - ".repos/"
+  - "http"
