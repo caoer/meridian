@@ -461,5 +461,265 @@ func TestEngine_InjectsScannedPaths(t *testing.T) {
 	}
 }
 
+// --- md:ignore integration tests ---
+
+func TestEngine_MdIgnore_NextLine(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"wiki/page.md": "---\ncreated: 2026-05-05\n---\nfine line\n<!-- md:ignore rule-x -->\nbad line\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("per-line", perLineCheck)
+
+	rule := rules.Rule{
+		ID: "rule-x", Check: "per-line", Message: "x",
+		Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}),
+		Params: map[string]any{},
+	}
+
+	results := eng.Run(fs, []rules.Rule{rule})
+	// BodyOffset=4. fine=i0→line5, directive=i1→line6, bad=i2→line7.
+	// Standalone directive at i1 suppresses next line → line 7.
+	for _, f := range results {
+		if f.Line == 7 {
+			t.Errorf("md:ignore should suppress line 7, got %+v", f)
+		}
+	}
+	var sawLine5 bool
+	for _, f := range results {
+		if f.Line == 5 {
+			sawLine5 = true
+		}
+	}
+	if !sawLine5 {
+		t.Error("line 5 should still have finding")
+	}
+}
+
+func TestEngine_MdIgnore_SameLine(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"wiki/page.md": "---\ncreated: 2026-05-05\n---\nbad line <!-- md:ignore rule-x -->\nnext line\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("per-line", perLineCheck)
+
+	rule := rules.Rule{
+		ID: "rule-x", Check: "per-line", Message: "x",
+		Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}),
+		Params: map[string]any{},
+	}
+
+	results := eng.Run(fs, []rules.Rule{rule})
+	// Inline at i0 → suppress same line 5.
+	for _, f := range results {
+		if f.Line == 5 {
+			t.Errorf("same-line md:ignore should suppress line 5, got %+v", f)
+		}
+	}
+	var sawLine6 bool
+	for _, f := range results {
+		if f.Line == 6 {
+			sawLine6 = true
+		}
+	}
+	if !sawLine6 {
+		t.Error("line 6 should still have finding")
+	}
+}
+
+func TestEngine_MdIgnore_Wildcard(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"wiki/page.md": "---\ncreated: 2026-05-05\n---\n<!-- md:ignore -->\nbad line\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("per-line", perLineCheck)
+
+	ruleA := rules.Rule{ID: "rule-a", Check: "per-line", Message: "a", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
+	ruleB := rules.Rule{ID: "rule-b", Check: "per-line", Message: "b", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
+
+	results := eng.Run(fs, []rules.Rule{ruleA, ruleB})
+	for _, f := range results {
+		if f.Line == 6 {
+			t.Errorf("wildcard md:ignore should suppress all rules on line 6, got %+v", f)
+		}
+	}
+}
+
+func TestEngine_MdIgnore_SameLine_Wildcard(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"wiki/page.md": "---\ncreated: 2026-05-05\n---\nbad line <!-- md:ignore -->\nnext line\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("per-line", perLineCheck)
+
+	ruleA := rules.Rule{ID: "rule-a", Check: "per-line", Message: "a", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
+	ruleB := rules.Rule{ID: "rule-b", Check: "per-line", Message: "b", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
+
+	results := eng.Run(fs, []rules.Rule{ruleA, ruleB})
+	for _, f := range results {
+		if f.Line == 5 {
+			t.Errorf("same-line wildcard should suppress line 5, got %+v", f)
+		}
+	}
+	var sawLine6 bool
+	for _, f := range results {
+		if f.Line == 6 {
+			sawLine6 = true
+		}
+	}
+	if !sawLine6 {
+		t.Error("line 6 should still have findings")
+	}
+}
+
+func TestEngine_MdIgnore_OnlyNamedRule(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"wiki/page.md": "---\ncreated: 2026-05-05\n---\n<!-- md:ignore rule-a -->\nbad line\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("per-line", perLineCheck)
+
+	ruleA := rules.Rule{ID: "rule-a", Check: "per-line", Message: "a", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
+	ruleB := rules.Rule{ID: "rule-b", Check: "per-line", Message: "b", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
+
+	results := eng.Run(fs, []rules.Rule{ruleA, ruleB})
+	for _, f := range results {
+		if f.Line == 6 && f.RuleID == "rule-a" {
+			t.Error("rule-a on line 6 should be suppressed")
+		}
+	}
+	var sawB bool
+	for _, f := range results {
+		if f.Line == 6 && f.RuleID == "rule-b" {
+			sawB = true
+		}
+	}
+	if !sawB {
+		t.Error("rule-b on line 6 should still fire")
+	}
+}
+
+func TestEngine_MdIgnoreFile(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"wiki/page.md": "---\ncreated: 2026-05-05\n---\n<!-- md:ignore-file rule-x -->\nbad line\nanother line\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("per-line", perLineCheck)
+
+	ruleX := rules.Rule{ID: "rule-x", Check: "per-line", Message: "x", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
+	ruleY := rules.Rule{ID: "rule-y", Check: "per-line", Message: "y", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
+
+	results := eng.Run(fs, []rules.Rule{ruleX, ruleY})
+	for _, f := range results {
+		if f.RuleID == "rule-x" {
+			t.Errorf("md:ignore-file should suppress rule-x, got %+v", f)
+		}
+	}
+	var sawY bool
+	for _, f := range results {
+		if f.RuleID == "rule-y" {
+			sawY = true
+		}
+	}
+	if !sawY {
+		t.Error("rule-y should still fire")
+	}
+}
+
+func TestEngine_MdIgnoreFile_Wildcard(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"wiki/page.md": "---\ncreated: 2026-05-05\n---\n<!-- md:ignore-file -->\nbad line\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("per-line", perLineCheck)
+
+	rule := rules.Rule{ID: "rule-a", Check: "per-line", Message: "a", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
+
+	results := eng.Run(fs, []rules.Rule{rule})
+	if len(results) != 0 {
+		t.Errorf("md:ignore-file wildcard should suppress all, got %d findings", len(results))
+	}
+}
+
+func TestEngine_MdIgnore_ObsidianComment(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"wiki/page.md": "---\ncreated: 2026-05-05\n---\n%% md:ignore rule-x %%\nbad line\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("per-line", perLineCheck)
+
+	rule := rules.Rule{
+		ID: "rule-x", Check: "per-line", Message: "x",
+		Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}),
+		Params: map[string]any{},
+	}
+
+	results := eng.Run(fs, []rules.Rule{rule})
+	for _, f := range results {
+		if f.Line == 6 {
+			t.Errorf("Obsidian md:ignore should suppress line 6, got %+v", f)
+		}
+	}
+}
+
+func TestEngine_MdIgnore_MultipleRulesCSV(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"wiki/page.md": "---\ncreated: 2026-05-05\n---\n<!-- md:ignore rule-a, rule-b -->\nbad\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("per-line", perLineCheck)
+
+	ruleA := rules.Rule{ID: "rule-a", Check: "per-line", Message: "a", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
+	ruleB := rules.Rule{ID: "rule-b", Check: "per-line", Message: "b", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
+
+	results := eng.Run(fs, []rules.Rule{ruleA, ruleB})
+	for _, f := range results {
+		if f.Line == 6 {
+			t.Errorf("both rules on line 6 should be suppressed, got %+v", f)
+		}
+	}
+}
+
+func TestEngine_MdIgnore_CoexistsWithLegacy(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"wiki/page.md": "---\ncreated: 2026-05-05\n---\n<!-- md-disable-next-line rule-a -->\nlegacy suppressed\n<!-- md:ignore rule-a -->\nnew suppressed\nnot suppressed\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("per-line", perLineCheck)
+
+	rule := rules.Rule{ID: "rule-a", Check: "per-line", Message: "a", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
+
+	results := eng.Run(fs, []rules.Rule{rule})
+	// BodyOffset=4. Body lines: i0=legacy-directive→5, i1=legacy-suppressed→6,
+	// i2=new-directive→7, i3=new-suppressed→8, i4=not-suppressed→9.
+	// Legacy suppresses line 6. New suppresses line 8.
+	for _, f := range results {
+		if f.Line == 6 {
+			t.Error("legacy suppression on line 6 should work")
+		}
+		if f.Line == 8 {
+			t.Error("md:ignore suppression on line 8 should work")
+		}
+	}
+	var sawLine9 bool
+	for _, f := range results {
+		if f.Line == 9 {
+			sawLine9 = true
+		}
+	}
+	if !sawLine9 {
+		t.Error("line 9 should not be suppressed")
+	}
+}
+
 // Verify types.Finding is the return type (compile-time check)
 var _ []types.Finding = New().Run(vfs.NewMemFS(), nil)

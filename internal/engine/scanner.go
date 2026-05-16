@@ -14,39 +14,132 @@ var inlineSuppressHTMLRe = regexp.MustCompile(`<!--\s*md-disable-next-line\s+([^
 // inlineSuppressObsidianRe matches `%% md-disable-next-line rule-a, rule-b %%`.
 var inlineSuppressObsidianRe = regexp.MustCompile(`%%\s*md-disable-next-line\s+([^%]+?)\s*%%`)
 
-// parseInlineSuppress scans body for `md-disable-next-line <rule>[, <rule>]` directives.
-// Each directive on body line i suppresses listed rules on file line BodyOffset+i+2.
-func parseInlineSuppress(body string, bodyOffset int) map[int]map[string]bool {
+// mdIgnoreHTMLRe matches `<!-- md:ignore [rule-a, rule-b] -->`.
+// Optional rule list: when absent, suppresses all rules (wildcard).
+var mdIgnoreHTMLRe = regexp.MustCompile(`<!--\s*md:ignore(?:\s+([^>]+?))?\s*-->`)
+
+// mdIgnoreObsidianRe matches `%% md:ignore [rule-a, rule-b] %%`.
+var mdIgnoreObsidianRe = regexp.MustCompile(`%%\s*md:ignore(?:\s+([^%]+?))?\s*%%`)
+
+// mdIgnoreFileHTMLRe matches `<!-- md:ignore-file [rule-a, rule-b] -->`.
+var mdIgnoreFileHTMLRe = regexp.MustCompile(`<!--\s*md:ignore-file(?:\s+([^>]+?))?\s*-->`)
+
+// mdIgnoreFileObsidianRe matches `%% md:ignore-file [rule-a, rule-b] %%`.
+var mdIgnoreFileObsidianRe = regexp.MustCompile(`%%\s*md:ignore-file(?:\s+([^%]+?))?\s*%%`)
+
+// parseInlineSuppress scans body for suppression directives.
+// Returns line-level suppressions and file-level rule ignores.
+//
+// Supported directives:
+//   - md-disable-next-line <rules>: suppress next line (legacy)
+//   - md:ignore [rules]: suppress next line (standalone) or same line (inline)
+//   - md:ignore-file [rules]: suppress entire file
+//
+// When no rules are listed, all rules are suppressed (wildcard "*").
+func parseInlineSuppress(body string, bodyOffset int) (map[int]map[string]bool, []string) {
 	if body == "" {
-		return nil
+		return nil, nil
 	}
+
 	out := make(map[int]map[string]bool)
+	var fileIgnores []string
+
 	for i, line := range strings.Split(body, "\n") {
-		var matches [][]string
-		matches = append(matches, inlineSuppressHTMLRe.FindAllStringSubmatch(line, -1)...)
-		matches = append(matches, inlineSuppressObsidianRe.FindAllStringSubmatch(line, -1)...)
-		if len(matches) == 0 {
-			continue
+		// Legacy md-disable-next-line — always next-line.
+		var legacyMatches [][]string
+		legacyMatches = append(legacyMatches, inlineSuppressHTMLRe.FindAllStringSubmatch(line, -1)...)
+		legacyMatches = append(legacyMatches, inlineSuppressObsidianRe.FindAllStringSubmatch(line, -1)...)
+		for _, m := range legacyMatches {
+			addRulesByCSV(out, bodyOffset+i+2, m[1])
 		}
-		targetLine := bodyOffset + i + 2 // suppress applies to NEXT file line
-		set := out[targetLine]
-		if set == nil {
-			set = make(map[string]bool)
-			out[targetLine] = set
+
+		// md:ignore-file — whole-file suppression.
+		var fileMatches [][]string
+		fileMatches = append(fileMatches, mdIgnoreFileHTMLRe.FindAllStringSubmatch(line, -1)...)
+		fileMatches = append(fileMatches, mdIgnoreFileObsidianRe.FindAllStringSubmatch(line, -1)...)
+		for _, m := range fileMatches {
+			ruleStr := ""
+			if len(m) > 1 {
+				ruleStr = strings.TrimSpace(m[1])
+			}
+			if ruleStr == "" {
+				fileIgnores = append(fileIgnores, "*")
+			} else {
+				for _, id := range strings.Split(ruleStr, ",") {
+					id = strings.TrimSpace(id)
+					if id != "" {
+						fileIgnores = append(fileIgnores, id)
+					}
+				}
+			}
 		}
-		for _, m := range matches {
-			for _, id := range strings.Split(m[1], ",") {
-				id = strings.TrimSpace(id)
-				if id != "" {
-					set[id] = true
+
+		// md:ignore — same-line or next-line depending on context.
+		// Standalone directive (only directives on the line) → next-line.
+		// Inline with other content → same-line.
+		var ignoreMatches [][]string
+		ignoreMatches = append(ignoreMatches, mdIgnoreHTMLRe.FindAllStringSubmatch(line, -1)...)
+		ignoreMatches = append(ignoreMatches, mdIgnoreObsidianRe.FindAllStringSubmatch(line, -1)...)
+		if len(ignoreMatches) > 0 {
+			standalone := isMdIgnoreStandalone(line)
+			targetLine := bodyOffset + i + 1
+			if standalone {
+				targetLine = bodyOffset + i + 2
+			}
+
+			for _, m := range ignoreMatches {
+				ruleStr := ""
+				if len(m) > 1 {
+					ruleStr = strings.TrimSpace(m[1])
+				}
+				if ruleStr == "" {
+					addWildcard(out, targetLine)
+				} else {
+					addRulesByCSV(out, targetLine, ruleStr)
 				}
 			}
 		}
 	}
+
 	if len(out) == 0 {
-		return nil
+		out = nil
 	}
-	return out
+	return out, fileIgnores
+}
+
+// isMdIgnoreStandalone reports whether a line contains only md:ignore
+// directives and no other content. Standalone directives suppress the
+// next line; inline directives suppress the current line.
+func isMdIgnoreStandalone(line string) bool {
+	cleaned := mdIgnoreHTMLRe.ReplaceAllString(line, "")
+	cleaned = mdIgnoreObsidianRe.ReplaceAllString(cleaned, "")
+	return strings.TrimSpace(cleaned) == ""
+}
+
+// addRulesByCSV parses a comma-separated rule ID list and adds each
+// to the suppression set for the given line.
+func addRulesByCSV(out map[int]map[string]bool, line int, csv string) {
+	set := out[line]
+	if set == nil {
+		set = make(map[string]bool)
+		out[line] = set
+	}
+	for _, id := range strings.Split(csv, ",") {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			set[id] = true
+		}
+	}
+}
+
+// addWildcard adds the wildcard sentinel "*" to suppress all rules on a line.
+func addWildcard(out map[int]map[string]bool, line int) {
+	set := out[line]
+	if set == nil {
+		set = make(map[string]bool)
+		out[line] = set
+	}
+	set["*"] = true
 }
 
 // Scan walks the filesystem and parses each .md file into a Document.
@@ -97,7 +190,9 @@ func Scan(fsys fs.FS, skip ...string) ([]*Document, error) {
 			doc.BodyOffset = parsed.BodyOffset
 			doc.LintIgnore = parsed.StringListField("lint-ignore")
 		}
-		doc.InlineSuppress = parseInlineSuppress(doc.Body, doc.BodyOffset)
+		lineSuppress, fileIgnores := parseInlineSuppress(doc.Body, doc.BodyOffset)
+		doc.InlineSuppress = lineSuppress
+		doc.LintIgnore = append(doc.LintIgnore, fileIgnores...)
 
 		docs = append(docs, doc)
 		return nil

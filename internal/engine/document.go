@@ -19,18 +19,20 @@ type Document struct {
 }
 
 // IsIgnored returns true if the given rule ID is in LintIgnore.
-// Trims whitespace from entries to handle YAML formatting variations.
+// A wildcard entry ("*") ignores all rules.
 func (d *Document) IsIgnored(ruleID string) bool {
 	for _, id := range d.LintIgnore {
-		if strings.TrimSpace(id) == ruleID {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == ruleID || trimmed == "*" {
 			return true
 		}
 	}
 	return false
 }
 
-// IsLineSuppressed reports whether an inline `md-disable-next-line` directive
+// IsLineSuppressed reports whether an inline suppression directive
 // suppresses the given rule on the given file line.
+// A wildcard entry ("*") suppresses all rules on that line.
 func (d *Document) IsLineSuppressed(line int, ruleID string) bool {
 	if d.InlineSuppress == nil {
 		return false
@@ -39,5 +41,5 @@ func (d *Document) IsLineSuppressed(line int, ruleID string) bool {
 	if !ok {
 		return false
 	}
-	return set[ruleID]
+	return set[ruleID] || set["*"]
 }
