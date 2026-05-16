@@ -208,6 +208,29 @@ func TestParseInlineSuppress_EmptyBody(t *testing.T) {
 	}
 }
 
+func TestScan_NoFrontmatter_BodyAndSuppression(t *testing.T) {
+	fs := vfs.NewMemFS()
+	fs.AddFile("wiki/page.md", "<!-- md:ignore-file rule-a -->\n\n# No frontmatter\nSome content\n")
+
+	docs, err := Scan(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("expected 1 doc, got %d", len(docs))
+	}
+	doc := docs[0]
+	if doc.Body == "" {
+		t.Fatal("expected non-empty body for file without frontmatter")
+	}
+	if doc.BodyOffset != 1 {
+		t.Errorf("expected BodyOffset=1 for no-frontmatter file, got %d", doc.BodyOffset)
+	}
+	if !doc.IsIgnored("rule-a") {
+		t.Error("expected rule-a to be file-ignored via md:ignore-file directive")
+	}
+}
+
 func TestScan_NoSkipPatternsIncludesAll(t *testing.T) {
 	fs := vfs.NewMemFS()
 	fs.AddFile("wiki/page.md", "---\ntitle: page\n---\n")

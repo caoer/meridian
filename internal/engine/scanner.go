@@ -189,6 +189,9 @@ func Scan(fsys fs.FS, skip ...string) ([]*Document, error) {
 			doc.Body = parsed.Body
 			doc.BodyOffset = parsed.BodyOffset
 			doc.LintIgnore = parsed.StringListField("lint-ignore")
+		} else {
+			doc.Body = string(data)
+			doc.BodyOffset = 1
 		}
 		lineSuppress, fileIgnores := parseInlineSuppress(doc.Body, doc.BodyOffset)
 		doc.InlineSuppress = lineSuppress
