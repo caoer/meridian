@@ -79,6 +79,60 @@ func TestLocusProperty_Tags_Clean(t *testing.T) {
 	testkit.AssertNoFinding(t, results, "tags", "wiki/page.md")
 }
 
+// source/ is a recognized convention (tournament provenance, e.g.
+// source/team-b), mirroring how harvest-source/ was added. A page with valid
+// domain/type tags PLUS a source/ provenance tag must not warn.
+func TestLocusProperty_Tags_SourcePrefix_Clean(t *testing.T) {
+	allRules := loadLocusRules(t)
+	rule := findRule(t, allRules, "tags")
+	eng := newEngine()
+
+	fs := testkit.Wiki(
+		testkit.FM("wiki/page.md", map[string]any{
+			"tags":    []any{"domain/mano", "type/reference", "source/team-b"},
+			"created": "2026-01-15",
+		}, "# Page\n"),
+	)
+
+	results := eng.Run(fs, []rules.Rule{rule})
+	testkit.AssertNoFinding(t, results, "tags", "wiki/page.md")
+}
+
+// Generated files (*.generated.md) are machine-written; hand-editing them is
+// false-success, so the tags rule must not require tags on them.
+func TestLocusProperty_Tags_GeneratedExcluded(t *testing.T) {
+	allRules := loadLocusRules(t)
+	rule := findRule(t, allRules, "tags")
+	eng := newEngine()
+
+	fs := testkit.Wiki(
+		testkit.FM("wiki/outbox/skills/foo/index.generated.md", map[string]any{
+			"created": "2026-01-15",
+		}, "# Generated\n"),
+	)
+
+	results := eng.Run(fs, []rules.Rule{rule})
+	testkit.AssertNoFinding(t, results, "tags", "wiki/outbox/skills/foo/index.generated.md")
+}
+
+// Obsidian Kanban boards (kanban-plugin: board) are UI artifacts, not knowledge
+// pages. The two boards that currently warn are excluded by path.
+func TestLocusProperty_Tags_KanbanBoardExcluded(t *testing.T) {
+	allRules := loadLocusRules(t)
+	rule := findRule(t, allRules, "tags")
+	eng := newEngine()
+
+	fs := testkit.Wiki(
+		testkit.FM("wiki/markup/network-ip-ranges.md", map[string]any{
+			"kanban-plugin": "board",
+			"topic":         "Network IP Range Inventory",
+		}, "## Clean\n"),
+	)
+
+	results := eng.Run(fs, []rules.Rule{rule})
+	testkit.AssertNoFinding(t, results, "tags", "wiki/markup/network-ip-ranges.md")
+}
+
 // --- created.yaml ---
 
 func TestLocusProperty_Created_Fires(t *testing.T) {
