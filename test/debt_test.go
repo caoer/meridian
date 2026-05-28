@@ -2,6 +2,7 @@ package test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/caoer/meridian/internal/cli"
 	"github.com/caoer/meridian/internal/engine"
@@ -13,16 +14,19 @@ import (
 // selects wiki/sources/** docs tagged do/incorporate, newest-first.
 func TestDebt_EndToEnd_VFS(t *testing.T) {
 	fsys := testkit.Wiki(
-		testkit.FM("wiki/sources/compound/new.md",
-			map[string]any{"tags": []any{"type/source", "do/incorporate"}, "created": "2026-05-10"}, "body"),
-		testkit.FM("wiki/sources/compound/old.md",
-			map[string]any{"tags": []any{"do/incorporate"}, "created": "2026-04-01"}, "body"),
+		// BARE (unquoted) YAML date → decodes to time.Time. Routing through
+		// cli.NewDebtSource (the production adaptation) proves the time.Time→
+		// string path, not a .(string) cast that would silently drop it.
+		testkit.F("wiki/sources/compound/new.md",
+			"---\ntags: [type/source, do/incorporate]\ncreated: 2026-05-10\n---\nbody"),
+		testkit.F("wiki/sources/compound/old.md",
+			"---\ntags: [do/incorporate]\ncreated: 2026-04-01\n---\nbody"),
 		// under wiki/sources but NOT flagged → excluded
-		testkit.FM("wiki/sources/compound/untagged.md",
-			map[string]any{"tags": []any{"type/source"}, "created": "2026-05-20"}, "body"),
+		testkit.F("wiki/sources/compound/untagged.md",
+			"---\ntags: [type/source]\ncreated: 2026-05-20\n---\nbody"),
 		// flagged but OUTSIDE wiki/sources → excluded
-		testkit.FM("wiki/locus/elsewhere.md",
-			map[string]any{"tags": []any{"do/incorporate"}, "created": "2026-05-20"}, "body"),
+		testkit.F("wiki/locus/elsewhere.md",
+			"---\ntags: [do/incorporate]\ncreated: 2026-05-20\n---\nbody"),
 	)
 
 	docs, err := engine.Scan(fsys)
@@ -30,14 +34,11 @@ func TestDebt_EndToEnd_VFS(t *testing.T) {
 		t.Fatalf("engine.Scan error: %v", err)
 	}
 
+	// Use the SAME adaptation production uses (cli.NewDebtSource), so the test
+	// exercises real created-extraction rather than a string shortcut.
 	sources := make([]cli.DebtSource, 0, len(docs))
 	for _, d := range docs {
-		created, _ := d.Frontmatter["created"].(string)
-		sources = append(sources, cli.DebtSource{
-			Path:    d.Path,
-			Tags:    d.Tags,
-			Created: created,
-		})
+		sources = append(sources, cli.NewDebtSource(d.Path, d.Tags, d.Frontmatter, time.Time{}))
 	}
 
 	data := cli.FilterDebt(sources, "wiki/sources/", "do/incorporate")
@@ -47,6 +48,10 @@ func TestDebt_EndToEnd_VFS(t *testing.T) {
 	}
 	if data.Entries[0].Source != "wiki/sources/compound/new.md" {
 		t.Errorf("Entries[0].Source = %q, want new.md (newest-first)", data.Entries[0].Source)
+	}
+	// Proves bare-date (time.Time) is formatted to ISO string by NewDebtSource.
+	if data.Entries[0].Created != "2026-05-10" {
+		t.Errorf("Entries[0].Created = %q, want 2026-05-10 (bare-date path)", data.Entries[0].Created)
 	}
 	if data.Entries[0].Where != "wiki/sources/compound" {
 		t.Errorf("Where = %q, want wiki/sources/compound", data.Entries[0].Where)

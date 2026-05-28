@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -30,6 +31,33 @@ type DebtEntry struct {
 type DebtData struct {
 	Entries []DebtEntry `json:"entries"`
 	Total   int         `json:"total"`
+}
+
+// NewDebtSource adapts a scanned document's fields into a DebtSource. Shared by
+// the `md debt` handler and tests so both exercise the same created-extraction
+// path (in particular, bare YAML dates that decode to time.Time).
+func NewDebtSource(path string, tags []string, fm map[string]any, mod time.Time) DebtSource {
+	return DebtSource{
+		Path:    path,
+		Tags:    tags,
+		Created: createdString(fm["created"]),
+		ModTime: mod,
+	}
+}
+
+// createdString renders a frontmatter `created` value as a string. YAML decodes
+// a bare ISO date (created: 2026-04-29) to time.Time and a quoted one to string.
+func createdString(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	case time.Time:
+		return t.Format("2006-01-02")
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 // FilterDebt selects sources under pathPrefix whose tags include tag, sorted

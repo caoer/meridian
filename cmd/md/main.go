@@ -180,33 +180,11 @@ func debtHandler(cfg *config.Config, cfgErr error) cli.Handler {
 			if info, statErr := fs.Stat(fsys, d.Path); statErr == nil {
 				mt = info.ModTime()
 			}
-			sources = append(sources, cli.DebtSource{
-				Path:    d.Path,
-				Tags:    d.Tags,
-				Created: frontmatterString(d.Frontmatter, "created"),
-				ModTime: mt,
-			})
+			sources = append(sources, cli.NewDebtSource(d.Path, d.Tags, d.Frontmatter, mt))
 		}
 
 		data := cli.FilterDebt(sources, "wiki/sources/", "do/incorporate")
 		return &cli.Response{Version: cli.ResponseVersion, Data: data}
-	}
-}
-
-// frontmatterString reads a frontmatter field as a string. YAML may decode a
-// bare ISO date (created: 2026-04-29) as either a string or time.Time.
-func frontmatterString(fm map[string]any, key string) string {
-	v, ok := fm[key]
-	if !ok {
-		return ""
-	}
-	switch t := v.(type) {
-	case string:
-		return t
-	case time.Time:
-		return t.Format("2006-01-02")
-	default:
-		return fmt.Sprintf("%v", v)
 	}
 }
 

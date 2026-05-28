@@ -110,6 +110,35 @@ func TestFilterDebt_EmptyCreated_SortsLast(t *testing.T) {
 	}
 }
 
+func TestFilterDebt_TagExactMatch_NoSubstring(t *testing.T) {
+	// Guard against a future substring-match regression: a tag that merely
+	// contains "do/incorporate" as a prefix must NOT count.
+	sources := []DebtSource{
+		src("wiki/sources/a.md", "2026-05-01", time.Time{}, "do/incorporate-later"),
+		src("wiki/sources/b.md", "2026-05-01", time.Time{}, "do/incorporate-soon", "type/source"),
+	}
+	data := FilterDebt(sources, "wiki/sources/", "do/incorporate")
+	if data.Total != 0 {
+		t.Fatalf("Total = %d, want 0 (only exact tag matches)", data.Total)
+	}
+}
+
+func TestNewDebtSource_BareDate_TimeToString(t *testing.T) {
+	// Bare YAML date decodes to time.Time; NewDebtSource must render it as ISO.
+	fm := map[string]any{"created": time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)}
+	s := NewDebtSource("wiki/sources/x.md", []string{"do/incorporate"}, fm, time.Time{})
+	if s.Created != "2026-05-10" {
+		t.Errorf("Created = %q, want 2026-05-10 (time.Time formatted)", s.Created)
+	}
+}
+
+func TestNewDebtSource_MissingCreated_Empty(t *testing.T) {
+	s := NewDebtSource("wiki/sources/x.md", []string{"do/incorporate"}, map[string]any{}, time.Time{})
+	if s.Created != "" {
+		t.Errorf("Created = %q, want empty for missing field", s.Created)
+	}
+}
+
 func TestFilterDebt_None(t *testing.T) {
 	data := FilterDebt(nil, "wiki/sources/", "do/incorporate")
 	if data.Total != 0 || data.Entries == nil {
