@@ -186,6 +186,16 @@ func formatData(w io.Writer, data any) {
 		}
 		fmt.Fprintf(w, "\n%d fixed, %d unfixable\n", d.FixedCount, d.UnfixableCount)
 
+	case DebtData:
+		if len(d.Entries) == 0 {
+			fmt.Fprintln(w, "no incorporation debt")
+			return
+		}
+		for _, e := range d.Entries {
+			fmt.Fprintf(w, "  %-10s  %-22s  %s\n", e.Created, e.Where, e.Source)
+		}
+		fmt.Fprintf(w, "\n%d sources\n", d.Total)
+
 	case RulesCheckData:
 		if len(d.Conflicts) > 0 {
 			fmt.Fprintln(w, "Conflicts:")

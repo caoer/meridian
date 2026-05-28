@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -125,6 +126,7 @@ func main() {
 	router.Handle("rules check", cli.RulesCheckHandler(allRules, profiles))
 	router.Handle("debug", cli.DebugHandler(loadedRules, registeredChecks))
 	router.Handle("check", checkHandler(eng, loadedRules, cfg, cfgErr))
+	router.Handle("debt", debtHandler(cfg, cfgErr))
 	router.Handle("domains tree", domainsTreeHandler(cfg, cfgErr))
 	router.Handle("domains show", domainsShowHandler(cfg, cfgErr))
 	router.Handle("fix", fixHandler(eng, loadedRules, cfg, cfgErr))
@@ -153,6 +155,59 @@ func buildRegistry(cfg *config.Config, cfgErr error) (*domains.Registry, *cli.Re
 		reg.Add(doc.Tags)
 	}
 	return reg, nil
+}
+
+// debtHandler outputs the incorporation-debt list: wiki/sources/** documents
+// whose frontmatter tags include `do/incorporate`. On-disk/agent-readable
+// complement to DIGEST.md's Obsidian-live Dataview query — always fresh.
+func debtHandler(cfg *config.Config, cfgErr error) cli.Handler {
+	return func(req *cli.Request) *cli.Response {
+		if cfgErr != nil {
+			return cli.ErrorResponseWithHint(cli.ErrNoConfig,
+				cfgErr.Error(),
+				"create meridian.yaml or set MERIDIAN_CONFIG env var")
+		}
+
+		fsys := os.DirFS(cfg.Scan.Root)
+		docs, err := engine.Scan(fsys, cfg.Scan.Skip...)
+		if err != nil {
+			return cli.ErrorResponse("SCAN_ERROR", "scan failed: "+err.Error())
+		}
+
+		sources := make([]cli.DebtSource, 0, len(docs))
+		for _, d := range docs {
+			var mt time.Time
+			if info, statErr := fs.Stat(fsys, d.Path); statErr == nil {
+				mt = info.ModTime()
+			}
+			sources = append(sources, cli.DebtSource{
+				Path:    d.Path,
+				Tags:    d.Tags,
+				Created: frontmatterString(d.Frontmatter, "created"),
+				ModTime: mt,
+			})
+		}
+
+		data := cli.FilterDebt(sources, "wiki/sources/", "do/incorporate")
+		return &cli.Response{Version: cli.ResponseVersion, Data: data}
+	}
+}
+
+// frontmatterString reads a frontmatter field as a string. YAML may decode a
+// bare ISO date (created: 2026-04-29) as either a string or time.Time.
+func frontmatterString(fm map[string]any, key string) string {
+	v, ok := fm[key]
+	if !ok {
+		return ""
+	}
+	switch t := v.(type) {
+	case string:
+		return t
+	case time.Time:
+		return t.Format("2006-01-02")
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 func domainsTreeHandler(cfg *config.Config, cfgErr error) cli.Handler {

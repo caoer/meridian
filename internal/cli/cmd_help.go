@@ -82,6 +82,9 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 		"version": {
 			Description: "Show version information",
 		},
+		"debt": {
+			Description: "List incorporation debt (wiki/sources flagged do/incorporate, not yet incorporated)",
+		},
 		"domains tree": {
 			Description: "Show domain hierarchy from scanned wiki",
 			Params: map[string]paramHelp{
