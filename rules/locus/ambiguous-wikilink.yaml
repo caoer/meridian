@@ -1,0 +1,19 @@
+check: ambiguous-wikilink
+on:
+  - "wiki/**"
+  - "!wiki/outbox/starters/**"
+  - "!wiki/outbox/agents/**"
+  - "!wiki/outbox/skills/locus-cloudflare/skills/**"
+  - "!wiki/sources/**"
+severity: warn
+message: "ambiguous wikilink [[{{.Target}}]] resolves to {{.Count}} files: {{.Paths}}"
+roots:
+  - "wiki/**"
+  - "!wiki/outbox/starters/**"
+  - "!wiki/outbox/agents/**"
+  - "!wiki/outbox/skills/locus-cloudflare/skills/**"
+  - "!wiki/sources/**"
+skip-prefixes:
+  - "inbox/"
+  - ".repos/"
+  - "http"

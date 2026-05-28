@@ -1,6 +1,11 @@
 # Meridian
 
-Wiki health checker. YAML rules, JSON CLI. `md <subcommand> [json]`.
+Wiki health checker. YAML rules, JSON CLI. `md <subcommand> [json-params]`.
+
+The optional argument is a **JSON object**, not a literal `json` token. No flags.
+- Text output by default; JSON output via the `format` param: `md check '{"format":"json"}'`.
+- Params can also be piped via stdin: `echo '{"scope":"wiki/"}' | md check`.
+- Per-command help via `md help '{"command":"check"}'` (bare `md help check` is **not** valid — `check` would be parsed as JSON).
 
 ## Module
 

@@ -23,9 +23,9 @@ func TestLocusRules_Load(t *testing.T) {
 		t.Errorf("unexpected warning: %s", w)
 	}
 
-	// Expect exactly 13 rules
-	if len(loaded) != 13 {
-		t.Fatalf("got %d rules, want 13", len(loaded))
+	// Expect exactly 14 rules
+	if len(loaded) != 14 {
+		t.Fatalf("got %d rules, want 14", len(loaded))
 	}
 
 	// No duplicate IDs
@@ -35,6 +35,7 @@ func TestLocusRules_Load(t *testing.T) {
 
 	// Verify each rule has expected ID (filename stem)
 	expectedIDs := []string{
+		"ambiguous-wikilink",
 		"backticked-wikilink",
 		"broken-wikilink",
 		"created",
@@ -74,6 +75,7 @@ func TestLocusRules_Load(t *testing.T) {
 	}
 	// Check rules have their specific check type
 	checkTypes := map[string]string{
+		"ambiguous-wikilink":      "ambiguous-wikilink",
 		"backticked-wikilink":     "backticked-wikilink",
 		"broken-wikilink":        "broken-wikilink",
 		"filename-lowercase-dash": "pattern",

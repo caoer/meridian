@@ -21,4 +21,5 @@ var All = map[string]engine.CheckFunc{
 	"partition-rollup":           partition.CheckRollup,
 	"property":                   propertyCheck,
 	"broken-wikilink":            brokenWikilinkCheck,
+	"ambiguous-wikilink":         ambiguousWikilinkCheck,
 }

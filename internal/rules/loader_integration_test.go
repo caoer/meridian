@@ -19,8 +19,8 @@ func TestLoader_LocusRulePack(t *testing.T) {
 		t.Fatalf("LoadDir(rules/locus) error: %v", err)
 	}
 
-	if len(rules) != 13 {
-		t.Fatalf("got %d rules, want 13", len(rules))
+	if len(rules) != 14 {
+		t.Fatalf("got %d rules, want 14", len(rules))
 	}
 
 	// Verify no duplicates
@@ -37,6 +37,7 @@ func TestLoader_LocusRulePack(t *testing.T) {
 		"tags", "created", "skill-fields", "prompt-deploy-target",
 		"deploy-target", "deploy-method", "derived-from", "source", "draws-from",
 		"backticked-wikilink", "broken-wikilink", "filename-lowercase-dash", "heading-structure",
+		"ambiguous-wikilink",
 	} {
 		if !ids[want] {
 			t.Errorf("missing rule ID %q", want)
