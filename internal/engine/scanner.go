@@ -143,11 +143,20 @@ func addWildcard(out map[int]map[string]bool, line int) {
 }
 
 // Scan walks the filesystem and parses each .md file into a Document.
-// Optional skip patterns cause directories with matching names to be skipped.
+// Optional skip patterns cause directories to be skipped. An entry without
+// a slash matches directories by name at any depth (e.g. "node_modules").
+// An entry containing a slash is path-scoped: it matches the directory whose
+// path relative to the scan root equals the entry with leading/trailing
+// slashes trimmed (e.g. "/repos" skips only top-level repos/, not wiki/repos/).
 func Scan(fsys fs.FS, skip ...string) ([]*Document, error) {
-	skipSet := make(map[string]bool, len(skip))
+	skipNames := make(map[string]bool, len(skip))
+	skipPaths := make(map[string]bool, len(skip))
 	for _, s := range skip {
-		skipSet[s] = true
+		if strings.Contains(s, "/") {
+			skipPaths[strings.Trim(s, "/")] = true
+		} else {
+			skipNames[s] = true
+		}
 	}
 
 	var docs []*Document
@@ -157,7 +166,7 @@ func Scan(fsys fs.FS, skip ...string) ([]*Document, error) {
 			return err
 		}
 		if d.IsDir() {
-			if path != "." && skipSet[d.Name()] {
+			if path != "." && (skipNames[d.Name()] || skipPaths[path]) {
 				return fs.SkipDir
 			}
 			return nil

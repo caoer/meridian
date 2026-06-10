@@ -80,6 +80,62 @@ func TestScan_RootNeverSkipped(t *testing.T) {
 	}
 }
 
+func TestScan_PathScopedSkip(t *testing.T) {
+	fs := vfs.NewMemFS()
+	fs.AddFile("repos/sub/readme.md", "---\ntitle: sub\n---\n")
+	fs.AddFile("wiki/repos/starbase.md", "---\ntitle: starbase\n---\n")
+	fs.AddFile("wiki/page.md", "---\ntitle: page\n---\n")
+
+	// "/repos" is root-anchored: skips top-level repos/, NOT wiki/repos/
+	docs, err := Scan(fs, "/repos")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	paths := make(map[string]bool)
+	for _, d := range docs {
+		paths[d.Path] = true
+	}
+
+	if paths["repos/sub/readme.md"] {
+		t.Error("top-level repos/ should be skipped by /repos")
+	}
+	if !paths["wiki/repos/starbase.md"] {
+		t.Error("wiki/repos/starbase.md should be included — /repos is root-anchored")
+	}
+	if !paths["wiki/page.md"] {
+		t.Error("wiki/page.md should be included")
+	}
+}
+
+func TestScan_PathScopedSkip_Nested(t *testing.T) {
+	fs := vfs.NewMemFS()
+	fs.AddFile("wiki/drafts/wip.md", "---\ntitle: wip\n---\n")
+	fs.AddFile("wiki/page.md", "---\ntitle: page\n---\n")
+	fs.AddFile("drafts/other.md", "---\ntitle: other\n---\n")
+
+	// Entry with a slash matches the exact relative path, not the name
+	docs, err := Scan(fs, "wiki/drafts")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	paths := make(map[string]bool)
+	for _, d := range docs {
+		paths[d.Path] = true
+	}
+
+	if paths["wiki/drafts/wip.md"] {
+		t.Error("wiki/drafts should be skipped by path entry")
+	}
+	if !paths["drafts/other.md"] {
+		t.Error("top-level drafts/ should be included — entry is path-scoped to wiki/drafts")
+	}
+	if !paths["wiki/page.md"] {
+		t.Error("wiki/page.md should be included")
+	}
+}
+
 // --- parseInlineSuppress unit tests ---
 
 func TestParseInlineSuppress_MdIgnore_NextLine(t *testing.T) {
