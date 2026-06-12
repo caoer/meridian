@@ -30,7 +30,9 @@ func Interpreter(lang string) (argv []string, ext string, err error) {
 
 // ExecBlock materializes a fence block to a temp file and executes it as a
 // script: interpreter + file + args (argv). The process inherits the
-// environment; cwd is set by the caller. Returns the script's exit code.
+// environment; cwd is set by the caller. stdin is /dev/null — a task that
+// prompts for input fails or reads EOF instead of hanging an agent pipeline.
+// Returns the script's exit code.
 func ExecBlock(b Block, args []string, cwd string, stdout, stderr io.Writer) (int, error) {
 	if !b.Fence {
 		return 0, fmt.Errorf("block ^%s is not a fenced code block", b.ID)
@@ -59,7 +61,6 @@ func ExecBlock(b Block, args []string, cwd string, stdout, stderr io.Writer) (in
 	cmd.Dir = cwd
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.Stdin = os.Stdin
 
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError

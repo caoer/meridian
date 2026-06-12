@@ -13,17 +13,17 @@ var ErrAmbiguous = errors.New("ambiguous target")
 
 // ReadMatch is one resolved document (or extracted fragment).
 type ReadMatch struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
+	Path    string
+	Content string
 }
 
 // ReadResult is the payload of `md read`: the resolution base and every
 // matched path are always reported so automation can verify what was read.
 type ReadResult struct {
-	Base     string      `json:"base"`
-	Target   string      `json:"target"`
-	Matches  []ReadMatch `json:"matches"`
-	Warnings []string    `json:"warnings,omitempty"`
+	Base     string
+	Target   string
+	Matches  []ReadMatch
+	Warnings []string
 }
 
 // Read resolves a target — a relative path or an Obsidian wikilink
@@ -37,9 +37,13 @@ func Read(fsys fs.FS, base, target string, expectUnique bool) (ReadResult, error
 		return res, fmt.Errorf("empty target")
 	}
 
-	// Plain path target → whole file.
+	// Plain path target → whole file. Resolution is rooted at the cwd, so
+	// only cwd-relative paths are resolvable.
 	if !strings.HasPrefix(target, "[[") {
-		rel := path.Clean(strings.TrimPrefix(target, "./"))
+		rel := path.Clean(target)
+		if path.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, "../") {
+			return res, fmt.Errorf("target %q must be a cwd-relative path — absolute and ../ paths are not resolvable (resolution is rooted at %s)", target, base)
+		}
 		data, err := fs.ReadFile(fsys, rel)
 		if err != nil {
 			return res, fmt.Errorf("read %s: %w", rel, err)
@@ -58,7 +62,7 @@ func Read(fsys fs.FS, base, target string, expectUnique bool) (ReadResult, error
 
 	paths, err := ResolveNote(fsys, link.Target)
 	if err != nil {
-		return res, err
+		return res, fmt.Errorf("%w (resolution base: %s)", err, base)
 	}
 	if expectUnique && len(paths) > 1 {
 		return res, fmt.Errorf("%w: %q resolves to %d notes: %s",

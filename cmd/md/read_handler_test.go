@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -10,7 +11,7 @@ import (
 )
 
 var readTestFS = fstest.MapFS{
-	"notes/abc.md": {Data: []byte("# ABC\n\ncontent here\n")},
+	"notes/abc.md": {Data: []byte("# ABC\n\ncontent here\n\n```bash\necho hi\n```\n\n^blk\n")},
 	"other/abc.md": {Data: []byte("second\n")},
 	"plain.md":     {Data: []byte("plain content\n")},
 }
@@ -81,7 +82,38 @@ func TestReadHandlerExpectCwd(t *testing.T) {
 	if resp.Error == nil || resp.Error.Code != cli.ErrWrongCwd {
 		t.Errorf("want %s error, got %+v", cli.ErrWrongCwd, resp.Error)
 	}
-	_ = out
+}
+
+func TestReadHandlerPartialWarningOnMetaChannel(t *testing.T) {
+	// ^blk resolves in notes/abc.md but not other/abc.md — text mode must
+	// surface the partial resolution on the meta channel, not swallow it.
+	r, out, meta := newReadRouter("/base")
+	code := r.Run([]string{"read", `{"target":"[[abc#^blk]]"}`}, nil)
+	if code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	if !bytes.Contains(meta.Bytes(), []byte("warn:")) {
+		t.Errorf("partial multi-match must emit warn: lines on the meta channel, got %q", meta.String())
+	}
+	if !bytes.Contains(meta.Bytes(), []byte("other/abc.md")) {
+		t.Errorf("warning should name the unresolved match, got %q", meta.String())
+	}
+}
+
+func TestReadHandlerNotFoundHint(t *testing.T) {
+	r, out, _ := newReadRouter("/base")
+	code := r.Run([]string{"read", `{"target":"[[zzz-missing]]","format":"json"}`}, nil)
+	if code != 2 {
+		t.Fatalf("missing note must exit 2, got %d: %s", code, out.String())
+	}
+	var resp cli.Response
+	json.Unmarshal(out.Bytes(), &resp)
+	if resp.Error == nil || !strings.Contains(resp.Error.Hint, "cwd") {
+		t.Errorf("not-found error should hint at cwd-based resolution, got %+v", resp.Error)
+	}
+	if !strings.Contains(resp.Error.Message, "/base") {
+		t.Errorf("not-found error should report the resolution base, got %+v", resp.Error)
+	}
 }
 
 func TestReadHandlerExpectCwdMatch(t *testing.T) {

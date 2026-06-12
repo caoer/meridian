@@ -3,7 +3,9 @@ package run
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -58,7 +60,7 @@ exit 3
 func TestRunTasksComposite(t *testing.T) {
 	md := writeRepo(t, "inbox/note.md", runDoc)
 	var stdout, stderr bytes.Buffer
-	results, err := RunTasks(md, []string{"all"}, []string{"x"}, &stdout, &stderr)
+	results, cwd, err := RunTasks(md, []string{"all"}, []string{"x"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("RunTasks: %v (stderr: %s)", err, stderr.String())
 	}
@@ -67,6 +69,9 @@ func TestRunTasksComposite(t *testing.T) {
 	}
 	if results[0].Name != "check" || results[1].Name != "demo" {
 		t.Errorf("order = %s,%s want check,demo", results[0].Name, results[1].Name)
+	}
+	if want := filepath.Dir(filepath.Dir(md)); cwd != want {
+		t.Errorf("cwd = %q, want git toplevel %q", cwd, want)
 	}
 	out := stdout.String()
 	if !strings.Contains(out, "check ok: at git toplevel") {
@@ -80,7 +85,7 @@ func TestRunTasksComposite(t *testing.T) {
 func TestRunTasksFailFast(t *testing.T) {
 	md := writeRepo(t, "note.md", runDoc)
 	var stdout, stderr bytes.Buffer
-	results, err := RunTasks(md, []string{"fail", "demo"}, nil, &stdout, &stderr)
+	results, _, err := RunTasks(md, []string{"fail", "demo"}, nil, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("RunTasks: %v", err)
 	}
@@ -97,7 +102,7 @@ func TestRunTasksFailFast(t *testing.T) {
 
 func TestRunTasksUnknownName(t *testing.T) {
 	md := writeRepo(t, "note.md", runDoc)
-	_, err := RunTasks(md, []string{"nope"}, nil, nil, nil)
+	_, _, err := RunTasks(md, []string{"nope"}, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "demo") {
 		t.Fatalf("unknown task should fail loud listing available, got: %v", err)
 	}
@@ -105,7 +110,7 @@ func TestRunTasksUnknownName(t *testing.T) {
 
 func TestRunTasksDanglingRef(t *testing.T) {
 	md := writeRepo(t, "note.md", runDoc)
-	_, err := RunTasks(md, []string{"dangling"}, nil, nil, nil)
+	_, _, err := RunTasks(md, []string{"dangling"}, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "[[note#^ghost]]") {
 		t.Fatalf("dangling ref should fail loud with the unresolved wikilink, got: %v", err)
 	}
@@ -113,9 +118,36 @@ func TestRunTasksDanglingRef(t *testing.T) {
 
 func TestRunTasksCrossFileRejected(t *testing.T) {
 	md := writeRepo(t, "note.md", runDoc)
-	_, err := RunTasks(md, []string{"cross"}, nil, nil, nil)
+	_, _, err := RunTasks(md, []string{"cross"}, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "same-file") {
 		t.Fatalf("cross-file ref should be rejected, got: %v", err)
+	}
+}
+
+func TestRunTasksSameStemOtherDirRejected(t *testing.T) {
+	// [[elsewhere/note#^demo]] from /repo/note.md shares the basename stem but
+	// addresses a different note — must be rejected, not silently run locally.
+	doc := strings.Replace(runDoc, `md-cross: "[[elsewhere#^x]]"`,
+		`md-cross: "[[elsewhere/note#^demo]]"`, 1)
+	md := writeRepo(t, "note.md", doc)
+	_, _, err := RunTasks(md, []string{"cross"}, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "same-file") {
+		t.Fatalf("stem-suffix ref into another dir should be rejected, got: %v", err)
+	}
+}
+
+func TestRunTasksPathQualifiedSameFileAccepted(t *testing.T) {
+	// [[inbox/note#^demo]] from /repo/inbox/note.md addresses this file.
+	doc := strings.Replace(runDoc, `md-demo: "[[note#^demo]]"`,
+		`md-demo: "[[inbox/note#^demo]]"`, 1)
+	md := writeRepo(t, "inbox/note.md", doc)
+	var stdout bytes.Buffer
+	results, _, err := RunTasks(md, []string{"demo"}, nil, &stdout, nil)
+	if err != nil {
+		t.Fatalf("path-qualified same-file ref should resolve, got: %v", err)
+	}
+	if len(results) != 1 || results[0].ExitCode != 0 {
+		t.Fatalf("results = %+v", results)
 	}
 }
 
@@ -123,12 +155,100 @@ func TestRunTasksResolveBeforeExecute(t *testing.T) {
 	// demo is valid, dangling is not — nothing must execute.
 	md := writeRepo(t, "note.md", runDoc)
 	var stdout bytes.Buffer
-	_, err := RunTasks(md, []string{"demo", "dangling"}, nil, &stdout, nil)
+	_, _, err := RunTasks(md, []string{"demo", "dangling"}, nil, &stdout, nil)
 	if err == nil {
 		t.Fatal("expected resolution error")
 	}
 	if strings.Contains(stdout.String(), "demo argv") {
 		t.Error("blocks executed despite resolution failure — resolve-all must precede exec")
+	}
+}
+
+const interpDoc = `---
+md-shell: "[[note#^shell]]"
+md-typed: "[[note#^typed]]"
+---
+
+` + "```bash" + `
+echo "shell ran"
+` + "```" + `
+
+^shell
+
+` + "```ts" + `
+console.log("typed ran")
+` + "```" + `
+
+^typed
+`
+
+func TestRunTasksMissingInterpreterPreflight(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH/symlink manipulation is unix-only")
+	}
+	bashPath, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not on PATH")
+	}
+	md := writeRepo(t, "note.md", interpDoc)
+
+	// PATH holds bash only — bun is absent. The ts task's interpreter check
+	// must fail before the bash task executes anything.
+	binDir := t.TempDir()
+	if err := os.Symlink(bashPath, filepath.Join(binDir, "bash")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	var stdout bytes.Buffer
+	results, _, err := RunTasks(md, []string{"shell", "typed"}, nil, &stdout, nil)
+	if err == nil {
+		t.Fatal("missing interpreter must fail at preflight")
+	}
+	if !strings.Contains(err.Error(), "bun") || !strings.Contains(err.Error(), "not found on PATH") {
+		t.Errorf("error should name the missing interpreter, got: %v", err)
+	}
+	if len(results) != 0 || stdout.Len() != 0 {
+		t.Errorf("nothing must execute on preflight failure: results=%+v stdout=%q", results, stdout.String())
+	}
+}
+
+const nukeDoc = `---
+md-nuke: "[[note#^nuke]]"
+md-after: "[[note#^after]]"
+---
+
+` + "```bash" + `
+echo "nuking"
+cd / && rm -rf "$OLDPWD"
+` + "```" + `
+
+^nuke
+
+` + "```bash" + `
+echo "after"
+` + "```" + `
+
+^after
+`
+
+func TestRunTasksPartialResultsOnExecError(t *testing.T) {
+	// Task 1 removes the execution cwd; task 2's exec then fails with a real
+	// error (not an exit code). The results so far must come back with it.
+	md := writeRepo(t, "note.md", nukeDoc)
+	var stdout, stderr bytes.Buffer
+	results, cwd, err := RunTasks(md, []string{"nuke", "after"}, nil, &stdout, &stderr)
+	if err == nil {
+		t.Fatalf("expected exec error after cwd removal, results=%+v", results)
+	}
+	if len(results) != 1 || results[0].Name != "nuke" {
+		t.Fatalf("partial results lost on exec error: %+v", results)
+	}
+	if cwd == "" {
+		t.Error("cwd must be reported alongside partial results")
+	}
+	if !strings.Contains(stdout.String(), "nuking") {
+		t.Errorf("captured output lost: %q", stdout.String())
 	}
 }
 

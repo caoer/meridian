@@ -8,13 +8,14 @@ import (
 
 func TestResolveNote(t *testing.T) {
 	fsys := fstest.MapFS{
-		"notes/abc.md":         {Data: []byte("a")},
-		"other/abc.md":         {Data: []byte("b")},
-		"unique.md":            {Data: []byte("c")},
-		"deep/dir/special.md":  {Data: []byte("d")},
-		".obsidian/skipme.md":  {Data: []byte("x")},
-		".git/abc.md":          {Data: []byte("x")},
-		"notes/.hidden/abc.md": {Data: []byte("x")},
+		"notes/abc.md":            {Data: []byte("a")},
+		"other/abc.md":            {Data: []byte("b")},
+		"unique.md":               {Data: []byte("c")},
+		"deep/dir/special.md":     {Data: []byte("d")},
+		".obsidian/skipme.md":     {Data: []byte("x")},
+		".git/abc.md":             {Data: []byte("x")},
+		"notes/.hidden/abc.md":    {Data: []byte("x")},
+		"node_modules/pkg/abc.md": {Data: []byte("x")},
 	}
 
 	t.Run("multiple matches sorted", func(t *testing.T) {

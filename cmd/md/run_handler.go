@@ -16,6 +16,12 @@ import (
 // required — the markdown file is the unit of configuration; cwd is its git
 // toplevel.
 func runHandler() cli.Handler {
+	return runHandlerWith(os.Stdout, os.Stderr)
+}
+
+// runHandlerWith is the injectable core: in text mode child output streams
+// live to the given writers; in JSON mode it is captured into the envelope.
+func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 	return func(req *cli.Request) *cli.Response {
 		var params struct {
 			File   string          `json:"file"`
@@ -58,19 +64,15 @@ func runHandler() cli.Handler {
 
 		// Text mode streams child output live; JSON mode captures it so the
 		// stdout envelope stays parseable.
-		var stdout, stderr io.Writer = os.Stdout, os.Stderr
+		outW, errW := stdout, stderr
 		var outBuf, errBuf bytes.Buffer
 		captured := strings.EqualFold(params.Format, "json")
 		if captured {
-			stdout, stderr = &outBuf, &errBuf
+			outW, errW = &outBuf, &errBuf
 		}
 
-		results, err := run.RunTasks(params.File, names, params.Args, stdout, stderr)
-		if err != nil {
-			return cli.ErrorResponse(cli.ErrInvalidInput, err.Error())
-		}
+		results, cwd, runErr := run.RunTasks(params.File, names, params.Args, outW, errW)
 
-		cwd, _ := run.GitToplevel(params.File)
 		data := cli.RunData{File: params.File, Cwd: cwd}
 		var findings []cli.Finding
 		for _, r := range results {
@@ -89,6 +91,16 @@ func runHandler() cli.Handler {
 		if captured {
 			data.Stdout = outBuf.String()
 			data.Stderr = errBuf.String()
+		}
+
+		if runErr != nil {
+			// Side effects already happened: ship the partial results and any
+			// captured output alongside the error (exit code stays 2).
+			resp := cli.ErrorResponse(cli.ErrInvalidInput, runErr.Error())
+			if len(data.Tasks) > 0 || data.Stdout != "" || data.Stderr != "" {
+				resp.Data = data
+			}
+			return resp
 		}
 
 		return &cli.Response{Version: cli.ResponseVersion, Data: data, Findings: findings}

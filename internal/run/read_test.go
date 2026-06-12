@@ -52,6 +52,46 @@ func TestReadPathMissing(t *testing.T) {
 	}
 }
 
+func TestReadAbsolutePathRejected(t *testing.T) {
+	_, err := Read(readFS, "/base", "/etc/passwd", false)
+	if err == nil {
+		t.Fatal("absolute target must be rejected")
+	}
+	if !strings.Contains(err.Error(), "cwd-relative") {
+		t.Errorf("error should explain the cwd-relative contract, got: %v", err)
+	}
+}
+
+func TestReadParentEscapeRejected(t *testing.T) {
+	_, err := Read(readFS, "/base", "../outside.md", false)
+	if err == nil {
+		t.Fatal("../ target must be rejected")
+	}
+	if !strings.Contains(err.Error(), "cwd-relative") {
+		t.Errorf("error should explain the cwd-relative contract, got: %v", err)
+	}
+}
+
+func TestReadSameFileLinkRejected(t *testing.T) {
+	_, err := Read(readFS, "/base", "[[#Prompt]]", false)
+	if err == nil {
+		t.Fatal("same-file link without a note target must be rejected")
+	}
+	if !strings.Contains(err.Error(), "file context") {
+		t.Errorf("error should explain the missing file context, got: %v", err)
+	}
+}
+
+func TestReadNoteNotFoundReportsBase(t *testing.T) {
+	_, err := Read(readFS, "/base", "[[missing-note]]", false)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "/base") {
+		t.Errorf("not-found error should report the resolution base, got: %v", err)
+	}
+}
+
 func TestReadWikilinkWholeNote(t *testing.T) {
 	res, err := Read(readFS, "/base", "[[plain]]", false)
 	if err != nil {

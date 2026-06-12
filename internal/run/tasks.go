@@ -88,9 +88,15 @@ func NormalizeNames(raw json.RawMessage) ([]string, error) {
 	return nil, fmt.Errorf("name must be a string or array of strings")
 }
 
+// maxExpandedLeaves caps composition fan-out: cycles are caught separately,
+// but a DAG of doubling compositions re-expands shared members into 2^N
+// leaves and can exhaust memory before anything executes.
+const maxExpandedLeaves = 256
+
 // ExpandNames resolves requested names into an ordered list of leaf
 // (block-ref) task names, expanding compositions depth-first with cycle
-// detection. Unknown names fail loud, listing available tasks.
+// detection. Unknown names fail loud, listing available tasks; expansions
+// past maxExpandedLeaves fail loud naming the cap.
 func ExpandNames(tasks map[string]Task, names []string) ([]string, error) {
 	var out []string
 	seen := make(map[string]bool)
@@ -101,6 +107,9 @@ func ExpandNames(tasks map[string]Task, names []string) ([]string, error) {
 			return fmt.Errorf("unknown task %q — available: %s", name, strings.Join(TaskNames(tasks), ", "))
 		}
 		if task.Ref != "" {
+			if len(out) >= maxExpandedLeaves {
+				return fmt.Errorf("task expansion exceeds the %d-leaf cap at %q — compositions fan out too widely", maxExpandedLeaves, name)
+			}
 			out = append(out, name)
 			return nil
 		}

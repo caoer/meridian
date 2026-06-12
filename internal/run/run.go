@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/caoer/meridian/internal/frontmatter"
@@ -13,29 +13,30 @@ import (
 
 // TaskResult is the outcome of one executed task.
 type TaskResult struct {
-	Name     string `json:"name"`
-	BlockID  string `json:"block_id"`
-	Lang     string `json:"lang"`
-	ExitCode int    `json:"exit_code"`
+	Name     string
+	BlockID  string
+	Lang     string
+	ExitCode int
 }
 
 // TaskInfo is one row of `md run` list-mode introspection.
 type TaskInfo struct {
-	Name        string   `json:"name"`
-	Ref         string   `json:"ref,omitempty"`
-	Composition []string `json:"composition,omitempty"`
-	Language    string   `json:"language,omitempty"`
-	Error       string   `json:"error,omitempty"`
+	Name        string
+	Ref         string
+	Composition []string
+	Language    string
+	Error       string
 }
 
 // loadTasks parses the markdown file and extracts its md-* task table.
+// One read serves both the frontmatter and the block content — task table
+// and block resolution must never see different bytes.
 func loadTasks(mdPath string) (map[string]Task, string, error) {
-	f, err := os.Open(mdPath)
+	data, err := os.ReadFile(mdPath)
 	if err != nil {
-		return nil, "", fmt.Errorf("open %s: %w", mdPath, err)
+		return nil, "", fmt.Errorf("read %s: %w", mdPath, err)
 	}
-	defer f.Close()
-	doc, err := frontmatter.ParseReader(f)
+	doc, err := frontmatter.ParseBytes(data)
 	if err != nil {
 		return nil, "", fmt.Errorf("parse %s: %w", mdPath, err)
 	}
@@ -49,15 +50,12 @@ func loadTasks(mdPath string) (map[string]Task, string, error) {
 	if len(tasks) == 0 {
 		return nil, "", fmt.Errorf("%s declares no md-* tasks in frontmatter", mdPath)
 	}
-	data, err := os.ReadFile(mdPath)
-	if err != nil {
-		return nil, "", fmt.Errorf("read %s: %w", mdPath, err)
-	}
 	return tasks, string(data), nil
 }
 
 // resolveTaskBlock resolves one leaf task's wikilink ref to its fence block,
-// enforcing the same-file-refs-only contract.
+// enforcing the same-file-refs-only contract: the ref target must be the
+// file's stem, or a path suffix of the file's actual path.
 func resolveTaskBlock(mdPath, content string, task Task) (Block, error) {
 	link, err := ParseWikilink(task.Ref)
 	if err != nil {
@@ -67,8 +65,15 @@ func resolveTaskBlock(mdPath, content string, task Task) (Block, error) {
 		return Block{}, fmt.Errorf("task %s: ref %s must point at a block (^id), not a heading", task.Name, task.Ref)
 	}
 	stem := strings.TrimSuffix(filepath.Base(mdPath), ".md")
-	if link.Target != "" && link.Target != stem && !strings.HasSuffix(link.Target, "/"+stem) {
-		return Block{}, fmt.Errorf("task %s: ref %s targets another note — only same-file refs are supported", task.Name, task.Ref)
+	if link.Target != "" && link.Target != stem {
+		abs, absErr := filepath.Abs(mdPath)
+		if absErr != nil {
+			return Block{}, fmt.Errorf("task %s: resolve %s: %w", task.Name, mdPath, absErr)
+		}
+		fullStem := strings.TrimSuffix(filepath.ToSlash(abs), ".md")
+		if !strings.HasSuffix(fullStem, "/"+link.Target) {
+			return Block{}, fmt.Errorf("task %s: ref %s targets another note — only same-file refs are supported", task.Name, task.Ref)
+		}
 	}
 	b, err := FindBlock(content, link.BlockID)
 	if err != nil {
@@ -78,52 +83,66 @@ func resolveTaskBlock(mdPath, content string, task Task) (Block, error) {
 }
 
 // RunTasks executes the named tasks declared in mdPath's frontmatter.
-// All names are expanded and all blocks resolved before anything executes;
-// execution is sequential and fail-fast (a non-zero exit aborts the chain and
-// is reported in the last TaskResult). cwd is the file's git toplevel.
-func RunTasks(mdPath string, names, args []string, stdout, stderr io.Writer) ([]TaskResult, error) {
+// All names are expanded, every distinct leaf's block is resolved once, and
+// every required interpreter is verified on PATH before anything executes —
+// no side effects on a chain that cannot complete. Execution is sequential
+// and fail-fast (a non-zero exit aborts the chain and is reported in the
+// last TaskResult). cwd is the file's git toplevel and is returned so
+// callers report the directory tasks actually ran in. On a mid-chain
+// execution error the results so far are returned alongside the error.
+func RunTasks(mdPath string, names, args []string, stdout, stderr io.Writer) ([]TaskResult, string, error) {
 	tasks, content, err := loadTasks(mdPath)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	leaves, err := ExpandNames(tasks, names)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	// Resolve everything before executing anything — no side effects on a
-	// chain that cannot complete resolution.
-	blocks := make([]Block, len(leaves))
-	for i, name := range leaves {
+	blocks := make(map[string]Block, len(leaves))
+	onPath := make(map[string]bool)
+	for _, name := range leaves {
+		if _, done := blocks[name]; done {
+			continue
+		}
 		b, err := resolveTaskBlock(mdPath, content, tasks[name])
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
-		if _, _, err := Interpreter(b.Lang); err != nil {
-			return nil, fmt.Errorf("task %s: %w", name, err)
+		interp, _, err := Interpreter(b.Lang)
+		if err != nil {
+			return nil, "", fmt.Errorf("task %s: %w", name, err)
 		}
-		blocks[i] = b
+		if !onPath[interp[0]] {
+			if _, err := exec.LookPath(interp[0]); err != nil {
+				return nil, "", fmt.Errorf("task %s needs %s — not found on PATH", name, interp[0])
+			}
+			onPath[interp[0]] = true
+		}
+		blocks[name] = b
 	}
 
 	cwd, err := GitToplevel(mdPath)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	var results []TaskResult
-	for i, name := range leaves {
-		code, err := ExecBlock(blocks[i], args, cwd, stdout, stderr)
+	for _, name := range leaves {
+		b := blocks[name]
+		code, err := ExecBlock(b, args, cwd, stdout, stderr)
 		if err != nil {
-			return results, fmt.Errorf("task %s: %w", name, err)
+			return results, cwd, fmt.Errorf("task %s: %w", name, err)
 		}
 		results = append(results, TaskResult{
-			Name: name, BlockID: blocks[i].ID, Lang: blocks[i].Lang, ExitCode: code,
+			Name: name, BlockID: b.ID, Lang: b.Lang, ExitCode: code,
 		})
 		if code != 0 {
 			break // fail-fast
 		}
 	}
-	return results, nil
+	return results, cwd, nil
 }
 
 // ListTasks introspects mdPath's md-* tasks without executing: names, refs,
@@ -147,6 +166,5 @@ func ListTasks(mdPath string) ([]TaskInfo, error) {
 		}
 		infos = append(infos, info)
 	}
-	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
 	return infos, nil
 }

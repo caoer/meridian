@@ -58,6 +58,10 @@ func readHandlerWith(fsys fs.FS, base string, metaW io.Writer) cli.Handler {
 				return cli.ErrorResponseWithHint(cli.ErrAmbiguousTarget, err.Error(),
 					"qualify the target with a path ([[dir/note]]) or drop expect-unique")
 			}
+			if errors.Is(err, run.ErrNotFound) {
+				return cli.ErrorResponseWithHint(cli.ErrInvalidInput, err.Error(),
+					"resolution is cwd-based — check the cwd or use expect-cwd")
+			}
 			return cli.ErrorResponse(cli.ErrInvalidInput, err.Error())
 		}
 
@@ -70,11 +74,15 @@ func readHandlerWith(fsys fs.FS, base string, metaW io.Writer) cli.Handler {
 			warnings = append(warnings, cli.Warning{Code: "READ_PARTIAL", Message: w})
 		}
 
-		// Text mode: verification metadata on the side channel, content on stdout.
+		// Text mode: verification metadata (and partial-resolution warnings)
+		// on the side channel, content on stdout.
 		if !strings.EqualFold(params.Format, "json") && metaW != nil {
 			fmt.Fprintf(metaW, "base: %s\n", result.Base)
 			for _, m := range result.Matches {
 				fmt.Fprintf(metaW, "match: %s\n", m.Path)
+			}
+			for _, w := range result.Warnings {
+				fmt.Fprintf(metaW, "warn: %s\n", w)
 			}
 		}
 

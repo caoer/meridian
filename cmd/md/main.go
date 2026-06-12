@@ -61,15 +61,15 @@ func main() {
 	var allRules []rules.Rule
 	var cfg *config.Config
 
+	// Config load failures are captured, not fatal: commands that need no
+	// config (run, read, version, help) must keep working; config-needing
+	// handlers surface cfgErr themselves.
 	if cfgErr == nil {
 		data, err := os.ReadFile(cfgPath)
 		if err != nil {
-			exitError(cli.ErrInvalidConfig, "cannot read config: "+err.Error())
-		}
-		cfgDir := filepath.Dir(cfgPath)
-		cfg, err = config.Parse(data, cfgDir)
-		if err != nil {
-			exitError(cli.ErrInvalidConfig, err.Error())
+			cfgErr = fmt.Errorf("cannot read config: %w", err)
+		} else if cfg, err = config.Parse(data, filepath.Dir(cfgPath)); err != nil {
+			cfgErr = err
 		}
 	}
 

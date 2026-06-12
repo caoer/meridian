@@ -142,6 +142,74 @@ func TestRunHandlerList(t *testing.T) {
 	}
 }
 
+const runHandlerNukeDoc = `---
+md-nuke: "[[note#^nuke]]"
+md-after: "[[note#^after]]"
+---
+
+` + "```bash" + `
+echo "nuking"
+cd / && rm -rf "$OLDPWD"
+` + "```" + `
+
+^nuke
+
+` + "```bash" + `
+echo "after"
+` + "```" + `
+
+^after
+`
+
+func TestRunHandlerPartialDataOnExecError(t *testing.T) {
+	// Task 1 succeeds (with side effects), task 2's exec fails hard. The
+	// envelope must carry the partial results and captured output alongside
+	// the error — not just the error string.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	md := filepath.Join(root, "note.md")
+	if err := os.WriteFile(md, []byte(runHandlerNukeDoc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"nuke,after","format":"json"}`
+	code := r.Run([]string{"run", params}, nil)
+	if code != 2 {
+		t.Fatalf("exec failure is a tool failure (exit 2), got %d: %s", code, out.String())
+	}
+	resp, data := decodeRunData(t, out)
+	if resp.Error == nil {
+		t.Fatal("envelope must carry the error")
+	}
+	if len(data.Tasks) != 1 || data.Tasks[0].Name != "nuke" {
+		t.Errorf("partial results lost: %+v", data.Tasks)
+	}
+	if !strings.Contains(data.Stdout, "nuking") {
+		t.Errorf("captured stdout lost: %q", data.Stdout)
+	}
+}
+
+func TestRunHandlerTextModeStreams(t *testing.T) {
+	md := writeRunRepo(t)
+	var childOut, childErr bytes.Buffer
+	var envelope bytes.Buffer
+	r := cli.NewRouter()
+	r.SetOutput(&envelope)
+	r.Handle("run", runHandlerWith(&childOut, &childErr))
+	code := r.Run([]string{"run", `{"file":"` + md + `","name":"demo","args":["x"]}`}, nil)
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, envelope.String())
+	}
+	if !strings.Contains(childOut.String(), "demo argv: x") {
+		t.Errorf("text mode must stream child stdout live, got %q", childOut.String())
+	}
+	if !strings.Contains(envelope.String(), "TASK") || !strings.Contains(envelope.String(), "demo") {
+		t.Errorf("text envelope should render the task row, got %q", envelope.String())
+	}
+}
+
 func TestRunHandlerMissingFile(t *testing.T) {
 	r, _ := newRunRouter()
 	if code := r.Run([]string{"run", `{"name":"x"}`}, nil); code != 2 {

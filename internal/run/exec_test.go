@@ -3,6 +3,7 @@ package run
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -111,10 +112,42 @@ func TestGitToplevelGitFile(t *testing.T) {
 }
 
 func TestGitToplevelMissing(t *testing.T) {
-	dir := t.TempDir() // no .git anywhere up to /tmp — but parents may have one;
-	// use a path guaranteed clean by checking error OR a root outside any repo.
-	if top, err := GitToplevel(filepath.Join(dir, "note.md")); err == nil {
-		// TempDir on macOS lives under /var/folders — no repo expected there.
-		t.Logf("unexpected toplevel %q (environment has repo above tempdir?)", top)
+	dir := t.TempDir()
+	// The walk inspects every ancestor — a pre-existing .git above the temp
+	// root would legitimately resolve. Skip in that environment.
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			t.Skipf(".git exists at %s — cannot test the missing-toplevel branch here", d)
+		}
+		if filepath.Dir(d) == d {
+			break
+		}
+	}
+	_, err := GitToplevel(filepath.Join(dir, "note.md"))
+	if err == nil {
+		t.Fatal("no .git above the file must fail loud")
+	}
+	if !strings.Contains(err.Error(), "cwd contract") {
+		t.Errorf("error should state the cwd contract, got: %v", err)
+	}
+}
+
+func TestExecBlockPythonArgv(t *testing.T) {
+	// Covers the single-element interpreter slice (interp[1:] empty).
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not on PATH")
+	}
+	b := Block{ID: "py", Fence: true, Lang: "python",
+		Code: "import sys\nprint(\"argv:\", \" \".join(sys.argv[1:]))\nsys.exit(7)\n"}
+	var stdout, stderr bytes.Buffer
+	code, err := ExecBlock(b, []string{"a", "b"}, t.TempDir(), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("ExecBlock: %v (stderr: %s)", err, stderr.String())
+	}
+	if code != 7 {
+		t.Errorf("exit = %d, want 7", code)
+	}
+	if !strings.Contains(stdout.String(), "argv: a b") {
+		t.Errorf("argv not passed through: %q", stdout.String())
 	}
 }

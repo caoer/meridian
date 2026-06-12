@@ -9,9 +9,9 @@ type helpParams struct {
 
 // commandHelp stores help text for a command.
 type commandHelp struct {
-	Description string              `json:"description"`
+	Description string               `json:"description"`
 	Params      map[string]paramHelp `json:"params,omitempty"`
-	ExitCodes   map[string]string   `json:"exit_codes,omitempty"`
+	ExitCodes   map[string]string    `json:"exit_codes,omitempty"`
 }
 
 type paramHelp struct {
@@ -32,10 +32,10 @@ type HelpListEntry struct {
 
 // HelpCommandData is the data payload for help (single command info).
 type HelpCommandData struct {
-	Command     string              `json:"command"`
-	Description string              `json:"description"`
+	Command     string               `json:"command"`
+	Description string               `json:"description"`
 	Params      map[string]paramHelp `json:"params,omitempty"`
-	ExitCodes   map[string]string   `json:"exit_codes,omitempty"`
+	ExitCodes   map[string]string    `json:"exit_codes,omitempty"`
 }
 
 // SearchFunc is a function that searches rules/checks by query string.
@@ -101,8 +101,8 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 		"fix": {
 			Description: "Auto-fix frontmatter violations",
 			Params: map[string]paramHelp{
-				"scope":  {Type: "string", Required: false},
-				"rules":  {Type: "array", Required: false},
+				"scope":   {Type: "string", Required: false},
+				"rules":   {Type: "array", Required: false},
 				"dry-run": {Type: "bool", Required: false},
 			},
 			ExitCodes: map[string]string{"0": "clean", "2": "error"},
@@ -110,27 +110,29 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 		"mv": {
 			Description: "Move/rename files, update frontmatter domains",
 			Params: map[string]paramHelp{
-				"source": {Type: "string", Required: true},
-				"dest":   {Type: "string", Required: true},
+				"source":  {Type: "string", Required: true},
+				"dest":    {Type: "string", Required: true},
 				"dry-run": {Type: "bool", Required: false},
 			},
 		},
 		"run": {
-			Description: "Execute frontmatter-addressed task blocks (md-<name> keys → ^id fences)",
+			Description: "Execute frontmatter-addressed task blocks (md-<name> keys → ^id fences); format json captures task stdout/stderr into the envelope, text streams it live",
 			Params: map[string]paramHelp{
-				"file": {Type: "string", Required: true},
-				"name": {Type: "string|array", Required: false},
-				"args": {Type: "array", Required: false},
-				"list": {Type: "bool", Required: false},
+				"file":   {Type: "string", Required: true},
+				"name":   {Type: "string|array", Required: false},
+				"args":   {Type: "array", Required: false},
+				"list":   {Type: "bool", Required: false},
+				"format": {Type: "string", Required: false},
 			},
 			ExitCodes: map[string]string{"0": "all tasks succeeded", "1": "a task exited non-zero", "2": "resolution or tool failure"},
 		},
 		"read": {
-			Description: "Read vault-addressed content: path, [[note]], [[note#Heading]], or [[note#^block]]",
+			Description: "Read vault-addressed content: path, [[note]], [[note#Heading]], or [[note#^block]]; text mode prints verification metadata (base, matches, warnings) to stderr, stdout stays pure content",
 			Params: map[string]paramHelp{
 				"target":        {Type: "string", Required: true},
 				"expect-unique": {Type: "bool", Required: false},
 				"expect-cwd":    {Type: "string", Required: false},
+				"format":        {Type: "string", Required: false},
 			},
 			ExitCodes: map[string]string{"0": "content resolved", "2": "not found, ambiguous (expect-unique), or wrong cwd"},
 		},
@@ -197,7 +199,7 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 
 		return &Response{
 			Version: ResponseVersion,
-			Data: HelpListData{Commands: cmdList},
+			Data:    HelpListData{Commands: cmdList},
 		}
 	}
 }

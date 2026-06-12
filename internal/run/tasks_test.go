@@ -2,6 +2,7 @@ package run
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -93,5 +94,24 @@ func TestExpandNamesCycle(t *testing.T) {
 	}
 	if _, err := ExpandNames(tasks, []string{"a"}); err == nil {
 		t.Fatal("composition cycle should fail loud")
+	}
+}
+
+func TestExpandNamesFanOutCapped(t *testing.T) {
+	// Doubling DAG: aN expands to 2^N leaves. Acyclic, so cycle detection
+	// never fires — the leaf cap must stop it fast, before memory blows up.
+	tasks := map[string]Task{"a0": {Name: "a0", Ref: "[[x#^a]]"}}
+	prev := "a0"
+	for i := 1; i <= 30; i++ {
+		name := fmt.Sprintf("a%d", i)
+		tasks[name] = Task{Name: name, Composition: []string{prev, prev}}
+		prev = name
+	}
+	_, err := ExpandNames(tasks, []string{prev})
+	if err == nil {
+		t.Fatal("2^30-leaf expansion must fail at the cap")
+	}
+	if !strings.Contains(err.Error(), "256") {
+		t.Errorf("error should name the cap, got: %v", err)
 	}
 }
