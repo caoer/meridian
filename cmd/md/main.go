@@ -133,6 +133,8 @@ func main() {
 	router.Handle("mv", mvHandler(eng, loadedRules, cfg, cfgErr))
 	router.Handle("watch", watchHandler(cfg, cfgErr, cfgPath))
 	router.Handle("status", statusHandler(cfgPath, cfgErr))
+	router.Handle("run", runHandler())
+	router.Handle("read", readHandler())
 
 	os.Exit(router.Run(os.Args[1:], stdinIfPiped()))
 }

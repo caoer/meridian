@@ -57,7 +57,8 @@ Bug fixes: reproduction test -> fails -> fix -> passes -> full suite.
 | `internal/fix` | engine, frontmatter, property, rules, types, vfs | no |
 | `internal/cli` | types, rules, domains, conflict, config | no |
 | `internal/mv` | engine, frontmatter, rules, types, vfs | no |
-| `cmd/md` | cache, checks, cli, config, domains, engine, fix, hooks, mv, rules, vfs, watch | no |
+| `internal/run` | frontmatter | no |
+| `cmd/md` | cache, checks, cli, config, domains, engine, fix, hooks, mv, rules, run, vfs, watch | no |
 
 Leaf packages import nothing from meridian. No circular deps.
 
@@ -69,6 +70,7 @@ Leaf packages import nothing from meridian. No circular deps.
 - **VFS for tests.** MemFS wraps `fstest.MapFS`. No mocks of engine/scanner/frontmatter
 - **Text default, JSON via format param.** No flags
 - **Exit codes:** 0 = clean, 1 = error-severity findings, 2 = tool failure
+- **`run`/`read` need no meridian.yaml.** `md run` executes frontmatter-addressed task blocks (`md-<name>: "[[note#^id]]"`, same-file refs only, cwd = file's git toplevel); `md read` resolves vault-addressed content (path / `[[note]]` / `[[note#Heading]]` / `[[note#^block]]`) under the process cwd. Spec: locus `inbox/_unstaged/md-deploy.md`
 
 ## Session Specs
 

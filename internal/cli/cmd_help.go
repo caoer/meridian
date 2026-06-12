@@ -115,6 +115,25 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 				"dry-run": {Type: "bool", Required: false},
 			},
 		},
+		"run": {
+			Description: "Execute frontmatter-addressed task blocks (md-<name> keys → ^id fences)",
+			Params: map[string]paramHelp{
+				"file": {Type: "string", Required: true},
+				"name": {Type: "string|array", Required: false},
+				"args": {Type: "array", Required: false},
+				"list": {Type: "bool", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "all tasks succeeded", "1": "a task exited non-zero", "2": "resolution or tool failure"},
+		},
+		"read": {
+			Description: "Read vault-addressed content: path, [[note]], [[note#Heading]], or [[note#^block]]",
+			Params: map[string]paramHelp{
+				"target":        {Type: "string", Required: true},
+				"expect-unique": {Type: "bool", Required: false},
+				"expect-cwd":    {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "content resolved", "2": "not found, ambiguous (expect-unique), or wrong cwd"},
+		},
 		"watch": {
 			Description: "Start filesystem watcher daemon",
 		},

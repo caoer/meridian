@@ -19,6 +19,8 @@ const (
 	ErrWatchFailed       = "WATCH_FAILED"
 	ErrNoDaemon          = "NO_DAEMON"
 	ErrStatusFailed      = "STATUS_FAILED"
+	ErrAmbiguousTarget   = "AMBIGUOUS_TARGET"
+	ErrWrongCwd          = "WRONG_CWD"
 )
 
 // ErrorResponse creates an error response with exit code 2.

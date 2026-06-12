@@ -216,6 +216,44 @@ func formatData(w io.Writer, data any) {
 			fmt.Fprintln(w, "no conflicts or overlaps detected")
 		}
 
+	case ReadData:
+		// stdout carries pure content (automation reads it); base/match
+		// metadata goes to stderr from the handler. Separators only on
+		// multi-match.
+		if len(d.Matches) == 1 {
+			io.WriteString(w, d.Matches[0].Content)
+			return
+		}
+		for i, m := range d.Matches {
+			if i > 0 {
+				fmt.Fprintln(w)
+			}
+			fmt.Fprintf(w, "--- %s ---\n", m.Path)
+			io.WriteString(w, m.Content)
+		}
+
+	case RunData:
+		for _, task := range d.Tasks {
+			status := "ok"
+			if task.ExitCode != 0 {
+				status = fmt.Sprintf("FAILED (exit %d)", task.ExitCode)
+			}
+			fmt.Fprintf(w, "TASK  %-15s ^%-15s %-7s %s\n", task.Name, task.BlockID, task.Lang, status)
+		}
+
+	case RunListData:
+		for _, task := range d.Tasks {
+			target := task.Ref
+			if len(task.Composition) > 0 {
+				target = strings.Join(task.Composition, ",")
+			}
+			fmt.Fprintf(w, "  %-15s %-40s %s\n", task.Name, target, task.Language)
+			if task.Error != "" {
+				fmt.Fprintf(w, "    ERROR: %s\n", task.Error)
+			}
+		}
+		fmt.Fprintf(w, "\n%d tasks\n", len(d.Tasks))
+
 	default:
 		// Fallback — just print
 		fmt.Fprintf(w, "%v\n", data)
