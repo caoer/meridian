@@ -115,3 +115,28 @@ func TestExpandNamesFanOutCapped(t *testing.T) {
 		t.Errorf("error should name the cap, got: %v", err)
 	}
 }
+
+func TestExpandNamesCapBoundary(t *testing.T) {
+	// Exactly maxExpandedLeaves succeeds; one more fails. Pins the >= check
+	// so an off-by-one or distinct-counting regression cannot slip in.
+	mk := func(n int) map[string]Task {
+		comp := make([]string, n)
+		for i := range comp {
+			comp[i] = "leaf"
+		}
+		return map[string]Task{
+			"leaf": {Name: "leaf", Ref: "[[x#^l]]"},
+			"wide": {Name: "wide", Composition: comp},
+		}
+	}
+	got, err := ExpandNames(mk(maxExpandedLeaves), []string{"wide"})
+	if err != nil {
+		t.Fatalf("exactly %d leaves must succeed: %v", maxExpandedLeaves, err)
+	}
+	if len(got) != maxExpandedLeaves {
+		t.Fatalf("len = %d, want %d", len(got), maxExpandedLeaves)
+	}
+	if _, err := ExpandNames(mk(maxExpandedLeaves+1), []string{"wide"}); err == nil {
+		t.Fatalf("%d leaves must exceed the cap", maxExpandedLeaves+1)
+	}
+}

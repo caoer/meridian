@@ -130,3 +130,29 @@ func TestReadHandlerMissingTarget(t *testing.T) {
 		t.Fatal("missing target must fail")
 	}
 }
+
+func TestReadHandlerPartialWarningJSONEnvelope(t *testing.T) {
+	// JSON mode: READ_PARTIAL rides the envelope Warnings; the stderr meta
+	// channel stays silent (text-mode-only). Pins both halves of the split.
+	r, out, meta := newReadRouter("/base")
+	code := r.Run([]string{"read", `{"target":"[[abc#^blk]]","format":"json"}`}, nil)
+	if code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	var resp cli.Response
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v\n%s", err, out.String())
+	}
+	found := false
+	for _, w := range resp.Warnings {
+		if w.Code == "READ_PARTIAL" && strings.Contains(w.Message, "other/abc.md") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("want READ_PARTIAL warning naming other/abc.md, got %+v", resp.Warnings)
+	}
+	if meta.Len() != 0 {
+		t.Errorf("meta channel must stay empty in JSON mode, got %q", meta.String())
+	}
+}

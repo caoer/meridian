@@ -73,18 +73,26 @@ func main() {
 		}
 	}
 
-	// Load rules from all packs
+	// Load rules from all packs. Failures are deferred like config failures:
+	// run/read/version/help must keep working beside a broken rule pack.
 	if cfg != nil {
 		for _, pack := range cfg.RulePacks {
 			rs, _, err := rules.LoadDir(pack.Path)
 			if err != nil {
-				exitError("INVALID_RULE", err.Error())
+				cfgErr = fmt.Errorf("invalid rule pack %s: %w", pack.Path, err)
+				break
 			}
 			loadedRules = append(loadedRules, rs...)
 		}
 
-		if err := rules.DetectDuplicates(loadedRules); err != nil {
-			exitError("DUPLICATE_RULE", err.Error())
+		if cfgErr == nil {
+			if err := rules.DetectDuplicates(loadedRules); err != nil {
+				cfgErr = fmt.Errorf("duplicate rule: %w", err)
+			}
+		}
+
+		if cfgErr != nil {
+			loadedRules = nil
 		}
 
 		// Capture unfiltered rules for rules check (needs all rules).
@@ -122,9 +130,9 @@ func main() {
 
 	// Register commands
 	router.Handle("help", cli.NewHelpHandler(router.Commands, searchFn))
-	router.Handle("rules ls", cli.RulesLsHandler(loadedRules))
-	router.Handle("rules check", cli.RulesCheckHandler(allRules, profiles))
-	router.Handle("debug", cli.DebugHandler(loadedRules, registeredChecks))
+	router.Handle("rules ls", requireConfig(cfgErr, cli.RulesLsHandler(loadedRules)))
+	router.Handle("rules check", requireConfig(cfgErr, cli.RulesCheckHandler(allRules, profiles)))
+	router.Handle("debug", requireConfig(cfgErr, cli.DebugHandler(loadedRules, registeredChecks)))
 	router.Handle("check", checkHandler(eng, loadedRules, cfg, cfgErr))
 	router.Handle("debt", debtHandler(cfg, cfgErr))
 	router.Handle("domains tree", domainsTreeHandler(cfg, cfgErr))
@@ -137,6 +145,20 @@ func main() {
 	router.Handle("read", readHandler())
 
 	os.Exit(router.Run(os.Args[1:], stdinIfPiped()))
+}
+
+// requireConfig gates handlers whose data is silently empty under a broken
+// config (rules ls/check, debug) — without it they report false success
+// ("no conflicts detected", exit 0) when meridian.yaml or a rule pack failed
+// to load.
+func requireConfig(cfgErr error, h cli.Handler) cli.Handler {
+	if cfgErr == nil {
+		return h
+	}
+	return func(req *cli.Request) *cli.Response {
+		return cli.ErrorResponseWithHint(cli.ErrInvalidConfig, cfgErr.Error(),
+			"fix meridian.yaml (or MERIDIAN_CONFIG) — this command needs a loadable config")
+	}
 }
 
 func buildRegistry(cfg *config.Config, cfgErr error) (*domains.Registry, *cli.Response) {
