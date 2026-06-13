@@ -1,6 +1,6 @@
 # Path-level check — NOT a property rule
 check: pattern
-on: ["wiki/**", "!wiki/**/SCHEMA.md", "!wiki/**/SYSTEM_CARD.md"]
+on: ["wiki/**", "!wiki/**/SCHEMA.md", "!wiki/**/SYSTEM_CARD.md", "!wiki/**/*.generated.md"]
 severity: warn
 target: filename
 match: "^[a-z0-9][a-z0-9-]*\\.md$|^[A-Z][A-Z0-9_-]*\\.md$"

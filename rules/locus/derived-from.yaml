@@ -1,5 +1,5 @@
 property: derived-from
-on: ["wiki/outbox/skills/**", "wiki/outbox/prompts/**", "wiki/outbox/agents/**"]
+on: ["wiki/outbox/skills/**", "wiki/outbox/prompts/**", "wiki/outbox/agents/**", "!wiki/**/*.generated.md"]
 required: true
 severity: warn
 wikilink:

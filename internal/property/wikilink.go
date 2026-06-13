@@ -3,6 +3,7 @@ package property
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -240,7 +241,7 @@ func (wb *WikilinkBlock) Evaluate(key string, value any, ctx *EvalContext) []Fin
 	var findings []Finding
 	for _, link := range links {
 		if wb.Resolve != "" {
-			if !resolveCheck(link.Target, resolveIdx, wb.Resolve) {
+			if !resolveCheck(link.Target, resolveIdx, wb.Resolve) && !resolveFS(link.Target, wb.Resolve, ctx.GitRoot) {
 				findings = append(findings, Finding{
 					Line: 1,
 					TemplateData: map[string]string{
@@ -277,6 +278,46 @@ func resolveCheck(target string, idx map[string]bool, mode string) bool {
 	default:
 		return idx[strings.ToLower(target)]
 	}
+}
+
+// resolveFS verifies a path-style wikilink target on the filesystem, relative to
+// the repo root. The index-based resolveCheck only knows files inside the scanned
+// wiki tree; source:/draws-from: links routinely point outside it (inbox/, .ucc/,
+// .repos/). For those, fall back to an os.Stat so the check verifies the real raw
+// input still exists — and still fires when it is genuinely gone. Bare note-names
+// (no slash) are left to index resolution; absolute paths are not resolved.
+func resolveFS(target, mode, gitRoot string) bool {
+	if gitRoot == "" || !strings.Contains(target, "/") {
+		return false
+	}
+	t := target
+	if i := strings.IndexByte(t, '#'); i >= 0 {
+		t = t[:i]
+	}
+	t = strings.TrimSpace(strings.TrimPrefix(t, "./"))
+	if t == "" || filepath.IsAbs(t) {
+		return false
+	}
+	if mode == "parent_exists" {
+		parent := filepath.Dir(t)
+		if parent == "." || parent == "" {
+			return true
+		}
+		info, err := os.Stat(filepath.Join(gitRoot, parent))
+		return err == nil && info.IsDir()
+	}
+	full := filepath.Join(gitRoot, t)
+	info, err := os.Stat(full) // follows symlinks (e.g. .ucc/sessions → inbox/sessions)
+	if err != nil && !strings.HasSuffix(t, ".md") {
+		info, err = os.Stat(full + ".md")
+	}
+	if err != nil {
+		return false
+	}
+	if mode == "folder_exists" {
+		return info.IsDir()
+	}
+	return true
 }
 
 func (wb *WikilinkBlock) checkFresh(key string, link Wikilink, ctx *EvalContext) []Finding {

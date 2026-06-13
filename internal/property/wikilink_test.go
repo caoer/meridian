@@ -347,6 +347,49 @@ func TestEvaluate_ResolveCaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestEvaluate_ResolveFSFallbackForOutOfWikiPath(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "inbox", "sessions")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "00-BRIEFING.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	wb := &WikilinkBlock{Resolve: "file_exists"}
+	ctx := &EvalContext{
+		ScannedPaths: []string{"wiki/other.md"}, // index does NOT contain the target
+		FilePath:     "wiki/sources/s.md",
+		GitRoot:      root,
+	}
+
+	cases := []struct {
+		name   string
+		target string
+		want   int // expected finding count
+	}{
+		{"existing out-of-wiki file", "[[inbox/sessions/00-BRIEFING.md]]", 0},
+		{"existing out-of-wiki dir", "[[inbox/sessions]]", 0},
+		{"missing out-of-wiki file still fires", "[[inbox/sessions/gone.md]]", 1},
+		{"bare missing note never touches fs", "[[missing-note]]", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := wb.Evaluate("source", tc.target, ctx)
+			if len(got) != tc.want {
+				t.Errorf("Evaluate(%q) = %d findings, want %d: %+v", tc.target, len(got), tc.want, got)
+			}
+		})
+	}
+
+	// Without a GitRoot, the fallback is inert — out-of-wiki paths cannot be verified.
+	noRoot := &EvalContext{ScannedPaths: []string{"wiki/other.md"}, FilePath: "wiki/sources/s.md"}
+	if got := wb.Evaluate("source", "[[inbox/sessions/00-BRIEFING.md]]", noRoot); len(got) != 1 {
+		t.Errorf("no GitRoot should leave path-style target unresolved, got %d findings", len(got))
+	}
+}
+
 func TestEvaluate_ListValue(t *testing.T) {
 	wb := &WikilinkBlock{Resolve: "file_exists"}
 	ctx := &EvalContext{
