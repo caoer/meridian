@@ -11,9 +11,12 @@ import (
 )
 
 var readTestFS = fstest.MapFS{
-	"notes/abc.md": {Data: []byte("# ABC\n\ncontent here\n\n```bash\necho hi\n```\n\n^blk\n")},
-	"other/abc.md": {Data: []byte("second\n")},
-	"plain.md":     {Data: []byte("plain content\n")},
+	"notes/abc.md":     {Data: []byte("# ABC\n\ncontent here\n\n```bash\necho hi\n```\n\n^blk\n")},
+	"other/abc.md":     {Data: []byte("second\n")},
+	"plain.md":         {Data: []byte("plain content\n")},
+	"fm.md":            {Data: []byte("---\ntags: [t]\n---\n\nbody only\n")},
+	"partial/intro.md": {Data: []byte("---\ntags: [t]\n---\n\nYou are an agent.\n")},
+	"final.md":         {Data: []byte("---\nx: 1\n---\n\n![[partial/intro]]\n\n# Tail\n")},
 }
 
 func newReadRouter(base string) (*cli.Router, *bytes.Buffer, *bytes.Buffer) {
@@ -128,6 +131,48 @@ func TestReadHandlerMissingTarget(t *testing.T) {
 	r, _, _ := newReadRouter("/base")
 	if code := r.Run([]string{"read", `{}`}, nil); code == 0 {
 		t.Fatal("missing target must fail")
+	}
+}
+
+func TestReadHandlerStripFrontmatter(t *testing.T) {
+	r, out, _ := newReadRouter("/base")
+	code := r.Run([]string{"read", `{"target":"[[fm]]","strip-frontmatter":true}`}, nil)
+	if code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	if strings.Contains(out.String(), "tags:") || strings.Contains(out.String(), "---") {
+		t.Errorf("frontmatter not stripped: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "body only") {
+		t.Errorf("body missing after strip: %q", out.String())
+	}
+}
+
+func TestReadHandlerEmbedsInlined(t *testing.T) {
+	r, out, _ := newReadRouter("/base")
+	code := r.Run([]string{"read", `{"target":"[[final]]","embeds":true,"expect-unique":true}`}, nil)
+	if code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "You are an agent.") || !strings.Contains(out.String(), "# Tail") {
+		t.Errorf("embed not inlined: %q", out.String())
+	}
+	if strings.Contains(out.String(), "![[") {
+		t.Errorf("unresolved embed token remains: %q", out.String())
+	}
+}
+
+func TestReadHandlerEmbedsAndStripFrontmatter(t *testing.T) {
+	r, out, _ := newReadRouter("/base")
+	code := r.Run([]string{"read", `{"target":"[[final]]","embeds":true,"strip-frontmatter":true,"expect-unique":true}`}, nil)
+	if code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	if strings.Contains(out.String(), "x: 1") || strings.Contains(out.String(), "---") {
+		t.Errorf("top frontmatter not stripped: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "You are an agent.") {
+		t.Errorf("embed not inlined: %q", out.String())
 	}
 }
 

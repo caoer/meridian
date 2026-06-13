@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/caoer/meridian/internal/cli"
+	"github.com/caoer/meridian/internal/frontmatter"
 	"github.com/caoer/meridian/internal/run"
 )
 
@@ -32,10 +33,12 @@ func readHandler() cli.Handler {
 func readHandlerWith(fsys fs.FS, base string, metaW io.Writer) cli.Handler {
 	return func(req *cli.Request) *cli.Response {
 		var params struct {
-			Target       string `json:"target"`
-			ExpectUnique bool   `json:"expect-unique"`
-			ExpectCwd    string `json:"expect-cwd"`
-			Format       string `json:"format"`
+			Target           string `json:"target"`
+			ExpectUnique     bool   `json:"expect-unique"`
+			ExpectCwd        string `json:"expect-cwd"`
+			Embeds           bool   `json:"embeds"`
+			StripFrontmatter bool   `json:"strip-frontmatter"`
+			Format           string `json:"format"`
 		}
 		if req.Params != nil {
 			if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -63,6 +66,32 @@ func readHandlerWith(fsys fs.FS, base string, metaW io.Writer) cli.Handler {
 					"resolution is cwd-based — check the cwd or use expect-cwd")
 			}
 			return cli.ErrorResponse(cli.ErrInvalidInput, err.Error())
+		}
+
+		// Embed expansion: inline ![[...]] embeds (Obsidian-style) so the
+		// resolved content is self-contained. Each embed must resolve uniquely;
+		// missing or ambiguous embeds fail loud (exit 2).
+		if params.Embeds {
+			for i := range result.Matches {
+				expanded, eerr := run.ExpandEmbeds(fsys, result.Matches[i].Content)
+				if eerr != nil {
+					return cli.ErrorResponseWithHint(cli.ErrInvalidInput,
+						fmt.Sprintf("%s: %v", result.Matches[i].Path, eerr),
+						"every ![[embed]] must resolve uniquely — check the embed target exists and is unambiguous")
+				}
+				result.Matches[i].Content = expanded
+			}
+		}
+
+		// strip-frontmatter: return the deployable body only. Applied after
+		// embed expansion so the matched file's own frontmatter is dropped
+		// while embedded whole-note frontmatter is already handled by Expand.
+		if params.StripFrontmatter {
+			for i := range result.Matches {
+				if doc, perr := frontmatter.ParseBytes([]byte(result.Matches[i].Content)); perr == nil && doc != nil {
+					result.Matches[i].Content = doc.Body
+				}
+			}
 		}
 
 		data := cli.ReadData{Base: result.Base, Target: result.Target}

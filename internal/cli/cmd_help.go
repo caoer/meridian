@@ -127,14 +127,16 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 			ExitCodes: map[string]string{"0": "all tasks succeeded", "1": "a task exited non-zero", "2": "resolution or tool failure"},
 		},
 		"read": {
-			Description: "Read vault-addressed content: path, [[note]], [[note#Heading]], or [[note#^block]]; text mode prints verification metadata (base, matches, warnings) to stderr, stdout stays pure content",
+			Description: "Read vault-addressed content: path, [[note]], [[note#Heading]], or [[note#^block]]; text mode prints verification metadata (base, matches, warnings) to stderr, stdout stays pure content. With embeds:true, ![[...]] embeds are recursively inlined (frontmatter stripped from whole-note embeds). With strip-frontmatter:true, the matched file's own frontmatter is dropped — returns the deployable body",
 			Params: map[string]paramHelp{
-				"target":        {Type: "string", Required: true},
-				"expect-unique": {Type: "bool", Required: false},
-				"expect-cwd":    {Type: "string", Required: false},
-				"format":        {Type: "string", Required: false},
+				"target":            {Type: "string", Required: true},
+				"expect-unique":     {Type: "bool", Required: false},
+				"expect-cwd":        {Type: "string", Required: false},
+				"embeds":            {Type: "bool", Required: false},
+				"strip-frontmatter": {Type: "bool", Required: false},
+				"format":            {Type: "string", Required: false},
 			},
-			ExitCodes: map[string]string{"0": "content resolved", "2": "not found, ambiguous (expect-unique), or wrong cwd"},
+			ExitCodes: map[string]string{"0": "content resolved", "2": "not found, ambiguous (expect-unique/embed), or wrong cwd"},
 		},
 		"watch": {
 			Description: "Start filesystem watcher daemon",
