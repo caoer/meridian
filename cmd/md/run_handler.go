@@ -80,11 +80,15 @@ func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 				Name: r.Name, BlockID: r.BlockID, Lang: r.Lang, ExitCode: r.ExitCode,
 			})
 			if r.ExitCode != 0 {
+				msg := fmt.Sprintf("task %s (^%s) exited %d — chain aborted", r.Name, r.BlockID, r.ExitCode)
+				if r.Stderr != "" {
+					msg += "\n" + r.Stderr
+				}
 				findings = append(findings, cli.Finding{
 					RuleID:   "md-run",
 					Severity: "error",
 					FilePath: params.File,
-					Message:  fmt.Sprintf("task %s (^%s) exited %d — chain aborted", r.Name, r.BlockID, r.ExitCode),
+					Message:  msg,
 				})
 			}
 		}

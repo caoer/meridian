@@ -51,6 +51,7 @@ test -d .git && echo "check ok: at git toplevel"
 ^check-demo
 
 ` + "```bash" + `
+echo "boom: the script broke" >&2
 exit 3
 ` + "```" + `
 
@@ -95,8 +96,46 @@ func TestRunTasksFailFast(t *testing.T) {
 	if results[0].ExitCode != 3 {
 		t.Errorf("exit = %d, want 3", results[0].ExitCode)
 	}
+	if !strings.Contains(results[0].Stderr, "boom: the script broke") {
+		t.Errorf("failing task must capture its stderr detail, got %q", results[0].Stderr)
+	}
 	if strings.Contains(stdout.String(), "demo argv") {
 		t.Error("chain did not abort after failure")
+	}
+}
+
+func TestRunTasksStderrTruncatedToTail(t *testing.T) {
+	// A chatty failing script's stderr is bounded to the tail — the last bytes,
+	// which hold the proximate error, survive; the head is dropped.
+	doc := `---
+md-loud: "[[note#^loud]]"
+---
+
+` + "```bash" + `
+for i in $(seq 1 5000); do echo "noise line $i" >&2; done
+echo "FINAL ERROR MARKER" >&2
+exit 7
+` + "```" + `
+
+^loud
+`
+	md := writeRepo(t, "note.md", doc)
+	var stdout, stderr bytes.Buffer
+	results, _, err := RunTasks(md, []string{"loud"}, nil, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("RunTasks: %v", err)
+	}
+	if results[0].ExitCode != 7 {
+		t.Fatalf("exit = %d, want 7", results[0].ExitCode)
+	}
+	if len(results[0].Stderr) > stderrTailMax {
+		t.Errorf("stderr tail unbounded: %d bytes", len(results[0].Stderr))
+	}
+	if !strings.Contains(results[0].Stderr, "FINAL ERROR MARKER") {
+		t.Errorf("tail must retain the proximate error, got %q", results[0].Stderr)
+	}
+	if strings.Contains(results[0].Stderr, "noise line 1\n") {
+		t.Error("head of a truncated stream should be dropped")
 	}
 }
 

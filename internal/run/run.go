@@ -1,6 +1,7 @@
 package run
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -11,12 +12,48 @@ import (
 	"github.com/caoer/meridian/internal/frontmatter"
 )
 
-// TaskResult is the outcome of one executed task.
+// TaskResult is the outcome of one executed task. Stderr carries the tail of
+// the task's standard error and is populated only on a non-zero exit — the
+// failure detail travels with the result so callers can surface *why* a script
+// failed, not just that it did.
 type TaskResult struct {
 	Name     string
 	BlockID  string
 	Lang     string
 	ExitCode int
+	Stderr   string
+}
+
+// stderrTailMax bounds how much of a failing task's stderr is retained — enough
+// for the error detail, capped so a chatty script can't blow up the envelope.
+const stderrTailMax = 4 << 10 // 4 KiB
+
+// tailWriter retains only the last stderrTailMax bytes written. It tees a
+// task's stderr (which still streams live or into the JSON capture buffer)
+// into a bounded tail so a failure's error detail can be attached to its
+// result without buffering unbounded output.
+type tailWriter struct {
+	buf []byte
+}
+
+func (t *tailWriter) Write(p []byte) (int, error) {
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > stderrTailMax {
+		t.buf = t.buf[len(t.buf)-stderrTailMax:]
+	}
+	return len(p), nil
+}
+
+// tail returns the retained stderr, trimmed of surrounding whitespace and — if
+// the buffer was truncated mid-line — of the leading partial line.
+func (t *tailWriter) tail() string {
+	s := t.buf
+	if len(s) == stderrTailMax {
+		if nl := bytes.IndexByte(s, '\n'); nl >= 0 {
+			s = s[nl+1:]
+		}
+	}
+	return strings.TrimSpace(string(s))
 }
 
 // TaskInfo is one row of `md run` list-mode introspection.
@@ -131,16 +168,21 @@ func RunTasks(mdPath string, names, args []string, stdout, stderr io.Writer) ([]
 	var results []TaskResult
 	for _, name := range leaves {
 		b := blocks[name]
-		code, err := ExecBlock(b, args, cwd, stdout, stderr)
+		// Tee this task's stderr into a bounded tail buffer: it still streams
+		// live (text mode) or into the capture buffer (JSON mode), and the tail
+		// lets us attach the failure detail to the result.
+		tail := &tailWriter{}
+		code, err := ExecBlock(b, args, cwd, stdout, io.MultiWriter(stderr, tail))
 		if err != nil {
 			return results, cwd, fmt.Errorf("task %s: %w", name, err)
 		}
-		results = append(results, TaskResult{
-			Name: name, BlockID: b.ID, Lang: b.Lang, ExitCode: code,
-		})
+		res := TaskResult{Name: name, BlockID: b.ID, Lang: b.Lang, ExitCode: code}
 		if code != 0 {
+			res.Stderr = tail.tail()
+			results = append(results, res)
 			break // fail-fast
 		}
+		results = append(results, res)
 	}
 	return results, cwd, nil
 }

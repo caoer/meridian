@@ -31,6 +31,7 @@ echo "check ok"
 ^check-demo
 
 ` + "```bash" + `
+echo "boom: the script broke" >&2
 exit 3
 ` + "```" + `
 
@@ -100,6 +101,9 @@ func TestRunHandlerTaskFailureExitsOne(t *testing.T) {
 	resp, data := decodeRunData(t, out)
 	if len(resp.Findings) == 0 || resp.Findings[0].Severity != "error" {
 		t.Errorf("want error finding, got %+v", resp.Findings)
+	}
+	if !strings.Contains(resp.Findings[0].Message, "boom: the script broke") {
+		t.Errorf("finding must carry the failure detail, got %q", resp.Findings[0].Message)
 	}
 	if len(data.Tasks) != 1 || data.Tasks[0].ExitCode != 3 {
 		t.Errorf("tasks = %+v", data.Tasks)
