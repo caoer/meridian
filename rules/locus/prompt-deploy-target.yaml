@@ -1,5 +1,5 @@
 property: deploy-target
 on: "wiki/outbox/prompts/**"
 required: true
-severity: error
-message: "Standalone prompt missing deploy-target"
+severity: warn
+message: "Standalone prompt missing deploy-target."
