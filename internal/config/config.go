@@ -36,6 +36,7 @@ type ScanConfig struct {
 	Root           string   `yaml:"root"`
 	FollowSymlinks bool     `yaml:"follow_symlinks"`
 	Skip           []string `yaml:"skip"`
+	MaxFileSize    int64    `yaml:"max_file_size"` // bytes; 0 = no limit
 }
 
 // Parse reads meridian.yaml content and resolves paths relative to configDir.

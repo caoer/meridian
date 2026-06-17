@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/caoer/meridian/internal/vfs"
@@ -284,6 +285,45 @@ func TestScan_NoFrontmatter_BodyAndSuppression(t *testing.T) {
 	}
 	if !doc.IsIgnored("rule-a") {
 		t.Error("expected rule-a to be file-ignored via md:ignore-file directive")
+	}
+}
+
+func TestScanWithOpts_MaxFileSize(t *testing.T) {
+	memfs := vfs.NewMemFS()
+	small := "---\ntitle: small\n---\nsmall"
+	big := "---\ntitle: big\n---\n" + strings.Repeat("x", 200)
+	memfs.AddFile("wiki/small.md", small)
+	memfs.AddFile("wiki/big.md", big)
+
+	// With limit smaller than big file
+	docs, err := ScanWithOpts(memfs, ScanOptions{MaxFileSize: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	paths := make(map[string]bool)
+	for _, d := range docs {
+		paths[d.Path] = true
+	}
+
+	if !paths["wiki/small.md"] {
+		t.Error("small.md should be included (under limit)")
+	}
+	if paths["wiki/big.md"] {
+		t.Error("big.md should be skipped (over limit)")
+	}
+
+	// With limit=0 (no limit) both should be included
+	docs2, err := ScanWithOpts(memfs, ScanOptions{MaxFileSize: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths2 := make(map[string]bool)
+	for _, d := range docs2 {
+		paths2[d.Path] = true
+	}
+	if !paths2["wiki/small.md"] || !paths2["wiki/big.md"] {
+		t.Error("both files should be included with no limit")
 	}
 }
 

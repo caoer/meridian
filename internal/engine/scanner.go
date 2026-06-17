@@ -142,6 +142,18 @@ func addWildcard(out map[int]map[string]bool, line int) {
 	set["*"] = true
 }
 
+// ScanOptions configures filesystem scanning behavior.
+type ScanOptions struct {
+	Skip        []string // directory skip patterns
+	MaxFileSize int64    // max file size in bytes; 0 = no limit
+}
+
+// ScanWithOpts walks the filesystem and parses .md files into Documents.
+// It accepts ScanOptions for skip patterns and max file size.
+func ScanWithOpts(fsys fs.FS, opts ScanOptions) ([]*Document, error) {
+	return scanImpl(fsys, opts.Skip, opts.MaxFileSize)
+}
+
 // Scan walks the filesystem and parses each .md file into a Document.
 // Optional skip patterns cause directories to be skipped. An entry without
 // a slash matches directories by name at any depth (e.g. "node_modules").
@@ -149,6 +161,10 @@ func addWildcard(out map[int]map[string]bool, line int) {
 // path relative to the scan root equals the entry with leading/trailing
 // slashes trimmed (e.g. "/repos" skips only top-level repos/, not wiki/repos/).
 func Scan(fsys fs.FS, skip ...string) ([]*Document, error) {
+	return scanImpl(fsys, skip, 0)
+}
+
+func scanImpl(fsys fs.FS, skip []string, maxFileSize int64) ([]*Document, error) {
 	skipNames := make(map[string]bool, len(skip))
 	skipPaths := make(map[string]bool, len(skip))
 	for _, s := range skip {
@@ -173,6 +189,13 @@ func Scan(fsys fs.FS, skip ...string) ([]*Document, error) {
 		}
 		if !strings.HasSuffix(path, ".md") {
 			return nil
+		}
+
+		// Skip files exceeding max size to avoid OOM on giant artifacts.
+		if maxFileSize > 0 {
+			if info, statErr := d.Info(); statErr == nil && info.Size() > maxFileSize {
+				return nil
+			}
 		}
 
 		data, err := fs.ReadFile(fsys, path)

@@ -110,6 +110,7 @@ func main() {
 	eng := engine.New()
 	if cfg != nil {
 		eng.SetSkip(cfg.Scan.Skip)
+		eng.SetMaxFileSize(cfg.Scan.MaxFileSize)
 	}
 	registeredChecks := map[string]bool{}
 	for name, fn := range checks.All {
@@ -193,7 +194,10 @@ func debtHandler(cfg *config.Config, cfgErr error) cli.Handler {
 		}
 
 		fsys := os.DirFS(cfg.Scan.Root)
-		docs, err := engine.Scan(fsys, cfg.Scan.Skip...)
+		docs, err := engine.ScanWithOpts(fsys, engine.ScanOptions{
+			Skip:        cfg.Scan.Skip,
+			MaxFileSize: cfg.Scan.MaxFileSize,
+		})
 		if err != nil {
 			return cli.ErrorResponse("SCAN_ERROR", "scan failed: "+err.Error())
 		}
