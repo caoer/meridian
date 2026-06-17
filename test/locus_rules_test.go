@@ -23,9 +23,9 @@ func TestLocusRules_Load(t *testing.T) {
 		t.Errorf("unexpected warning: %s", w)
 	}
 
-	// Expect exactly 14 rules
-	if len(loaded) != 14 {
-		t.Fatalf("got %d rules, want 14", len(loaded))
+	// Expect exactly 15 rules
+	if len(loaded) != 15 {
+		t.Fatalf("got %d rules, want 15", len(loaded))
 	}
 
 	// No duplicate IDs
@@ -48,6 +48,7 @@ func TestLocusRules_Load(t *testing.T) {
 		"prompt-deploy-target",
 		"skill-fields",
 		"source",
+		"table-wikilink-pipe",
 		"tags",
 	}
 
@@ -77,9 +78,10 @@ func TestLocusRules_Load(t *testing.T) {
 	checkTypes := map[string]string{
 		"ambiguous-wikilink":      "ambiguous-wikilink",
 		"backticked-wikilink":     "backticked-wikilink",
-		"broken-wikilink":        "broken-wikilink",
+		"broken-wikilink":         "broken-wikilink",
 		"filename-lowercase-dash": "pattern",
 		"heading-structure":       "heading-structure",
+		"table-wikilink-pipe":     "table-wikilink-pipe",
 	}
 
 	for _, r := range loaded {

@@ -1,0 +1,6 @@
+# Auto-fix: escapes | inside [[target|display]] wikilinks in markdown tables
+# to prevent column misalignment. Agents write wikilinks naturally; meridian fixes.
+check: table-wikilink-pipe
+on: "wiki/**"
+severity: warn
+message: "table column misalignment: expected {{.Expected}} columns, got {{.Actual}} (wikilinks: {{.Wikilinks}})"

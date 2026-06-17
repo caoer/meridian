@@ -22,4 +22,5 @@ var All = map[string]engine.CheckFunc{
 	"property":                   propertyCheck,
 	"broken-wikilink":            brokenWikilinkCheck,
 	"ambiguous-wikilink":         ambiguousWikilinkCheck,
+	"table-wikilink-pipe":        tableWikilinkPipeCheck,
 }
