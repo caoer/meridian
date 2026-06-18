@@ -16,13 +16,16 @@ var tableSepRe = regexp.MustCompile(`^\s*\|[\s:]*-{3,}[\s:]*\|`)
 var unescapedPipeWikilinkRe = regexp.MustCompile(`\[\[([^\]\\]+)\|([^\]]+)\]\]`)
 
 // TableWikilinkPipeFix escapes unescaped `|` inside wikilinks in markdown table
-// rows to prevent column misalignment. [[target|display]] → [[target\|display]].
+// rows. [[target|display]] → [[target\|display]].
+//
+// An unescaped wikilink pipe in a table row is always wrong — markdown reads it
+// as a column separator, breaking the wikilink rendering. This is true even when
+// column counts happen to match (the agent may have compensated by writing fewer
+// data cells, but the wikilink is still broken into two cells).
 //
 // Algorithm:
 //  1. Identify table groups (consecutive lines starting with |)
-//  2. Count expected columns from the header row
-//  3. For content rows with more columns than the header, escape | inside wikilinks
-//  4. Verify the fix restores correct column count
+//  2. For any table row containing [[...|...]], escape the pipe
 func TableWikilinkPipeFix(content []byte, params map[string]any) (bool, []byte, []string, error) {
 	lines := strings.Split(string(content), "\n")
 	changed := false
@@ -46,9 +49,6 @@ func TableWikilinkPipeFix(content []byte, params map[string]any) (bool, []byte, 
 			continue
 		}
 
-		// Expected column count from header.
-		headerCols := fixCountColumns(lines[tableStart])
-
 		for row := tableStart; row < tableEnd; row++ {
 			if tableSepRe.MatchString(lines[row]) {
 				continue
@@ -59,10 +59,8 @@ func TableWikilinkPipeFix(content []byte, params map[string]any) (bool, []byte, 
 				continue
 			}
 
-			actualCols := fixCountColumns(line)
-			if actualCols <= headerCols {
-				continue
-			}
+			// Collect match list before replacing (for action reporting).
+			matches := unescapedPipeWikilinkRe.FindAllString(line, -1)
 
 			// Escape | inside wikilinks: [[a|b]] → [[a\|b]]
 			fixed := unescapedPipeWikilinkRe.ReplaceAllStringFunc(line, func(match string) string {
@@ -74,16 +72,9 @@ func TableWikilinkPipeFix(content []byte, params map[string]any) (bool, []byte, 
 			})
 
 			if fixed != line {
-				// Verify fix restored column alignment.
-				fixedCols := fixCountColumns(fixed)
-				if fixedCols != headerCols {
-					// Fix didn't align — skip to avoid making things worse.
-					continue
-				}
 				lines[row] = fixed
 				changed = true
 
-				matches := unescapedPipeWikilinkRe.FindAllString(line, -1)
 				for _, m := range matches {
 					actions = append(actions, fmt.Sprintf("escaped wikilink pipe in table: %s", m))
 				}

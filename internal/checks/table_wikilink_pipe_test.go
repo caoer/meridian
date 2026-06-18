@@ -124,8 +124,8 @@ Some text between tables.
 }
 
 func TestTableWikilinkPipe_ColumnCountMatchesDespiteWikilink(t *testing.T) {
-	// Wikilink with pipe but columns still match header — shouldn't happen
-	// in practice, but if it did we don't flag it.
+	// Wikilink pipe breaks the wikilink even when the agent compensated
+	// by writing fewer cells (column count happens to match header).
 	doc := &engine.Document{
 		Body: `| A | B | C | D |
 | --- | --- | --- | --- |
@@ -133,10 +133,9 @@ func TestTableWikilinkPipe_ColumnCountMatchesDespiteWikilink(t *testing.T) {
 		BodyOffset: 1,
 	}
 	findings := tableWikilinkPipeCheck(doc, nil)
-	// The wikilink [[x|y]] adds 1 extra column, making actual=4 == header=4.
-	// This means the line coincidentally has the right count — no finding.
-	if len(findings) != 0 {
-		t.Fatalf("want 0 findings (column count matches), got %d", len(findings))
+	// The wikilink [[x|y]] is still broken — always a finding.
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding (wikilink pipe always wrong in tables), got %d", len(findings))
 	}
 }
 

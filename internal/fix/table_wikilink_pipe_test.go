@@ -81,7 +81,7 @@ Some text [[target|display]] more text.
 	}
 }
 
-func TestTableWikilinkPipeFix_ColumnCountRestoredAfterFix(t *testing.T) {
+func TestTableWikilinkPipeFix_EscapedPipeReducesColumnCount(t *testing.T) {
 	input := `| Name | Author | Count |
 | --- | --- | --- |
 | [[sources/foo | foo]] | alice | 5 |
@@ -94,17 +94,40 @@ func TestTableWikilinkPipeFix_ColumnCountRestoredAfterFix(t *testing.T) {
 		t.Fatal("expected changed=true")
 	}
 
-	// Verify the fixed row has 3 columns matching the header.
+	// After fix, wikilink pipe is escaped — should reduce column count by 1.
 	lines := strings.Split(string(result), "\n")
-	headerCols := fixCountColumns(lines[0])
 	for i, line := range lines {
-		if i == 0 || !isFixTableRow(line) || tableSepRe.MatchString(line) {
+		if i < 2 || !isFixTableRow(line) || tableSepRe.MatchString(line) || line == "" {
 			continue
 		}
 		rowCols := fixCountColumns(line)
-		if rowCols != headerCols {
-			t.Errorf("line %d: expected %d columns, got %d: %q", i, headerCols, rowCols, line)
+		// Original had 4 cols (wikilink pipe split), fixed should have 3.
+		if rowCols != 3 {
+			t.Errorf("line %d: expected 3 columns after fix, got %d: %q", i, rowCols, line)
 		}
+	}
+}
+
+func TestTableWikilinkPipeFix_ColumnCountMatching_StillFixes(t *testing.T) {
+	// Agent compensated — wrote one fewer data cell so column count matches.
+	// The wikilink is still broken and must be escaped.
+	input := `| A | B | C | D |
+| --- | --- | --- | --- |
+| [[x|y]] | val1 | val2 |
+`
+	changed, result, actions, err := TableWikilinkPipeFix([]byte(input), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected changed=true (wikilink pipe always wrong in tables)")
+	}
+	got := string(result)
+	if !strings.Contains(got, `[[x\|y]]`) {
+		t.Errorf("expected escaped wikilink, got:\n%s", got)
+	}
+	if len(actions) != 1 {
+		t.Errorf("expected 1 action, got %d", len(actions))
 	}
 }
 

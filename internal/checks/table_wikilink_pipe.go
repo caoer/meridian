@@ -15,12 +15,16 @@ var tableWikilinkPipeRe = regexp.MustCompile(`\[\[([^\]\\]+)\|([^\]]+)\]\]`)
 // tableSeparatorRe matches the separator row of a markdown table (e.g. | --- | --- |).
 var tableSeparatorRe = regexp.MustCompile(`^\s*\|[\s:]*-{3,}[\s:]*\|`)
 
-// tableWikilinkPipeCheck detects markdown table rows where unescaped `|` inside
-// wikilinks causes column count misalignment with the table header.
+// tableWikilinkPipeCheck detects markdown table rows containing wikilinks with
+// unescaped `|` pipe characters.
 //
 // Agents naturally write [[target|display]] in tables — the `|` is the wikilink
-// display separator, but markdown reads it as a column separator, breaking the table.
-// The fix is to escape: [[target\|display]].
+// display separator, but markdown reads it as a column separator, breaking the
+// wikilink rendering. This is always wrong regardless of whether column counts
+// happen to match (the agent may have compensated by writing fewer data cells).
+//
+// When column counts also diverge, that's reported for diagnostics. But ANY
+// unescaped wikilink pipe in a table row is a finding.
 func tableWikilinkPipeCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
 	if doc.Body == "" {
 		return nil
@@ -49,10 +53,9 @@ func tableWikilinkPipeCheck(doc *engine.Document, params map[string]any) []engin
 			continue
 		}
 
-		// Determine expected column count from header row.
 		headerCols := countColumns(lines[tableStart])
 
-		// Check every non-separator row (including header) for misaligned wikilinks.
+		// Flag every non-separator row that has an unescaped wikilink pipe.
 		for row := tableStart; row < tableEnd; row++ {
 			if tableSeparatorRe.MatchString(lines[row]) {
 				continue
@@ -63,12 +66,8 @@ func tableWikilinkPipeCheck(doc *engine.Document, params map[string]any) []engin
 				continue
 			}
 
-			actualCols := countColumns(line)
-			if actualCols <= headerCols {
-				continue
-			}
-
 			matches := tableWikilinkPipeRe.FindAllString(line, -1)
+			actualCols := countColumns(line)
 
 			out = append(out, engine.RawFinding{
 				Line: doc.BodyOffset + row + 1,
