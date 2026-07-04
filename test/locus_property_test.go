@@ -228,7 +228,7 @@ func TestLocusProperty_PromptDeployTarget_Fires(t *testing.T) {
 
 	results := eng.Run(fs, []rules.Rule{rule})
 	testkit.AssertFindings(t, results,
-		testkit.Finding("prompt-deploy-target", "wiki/outbox/prompts/bar.md", "error"),
+		testkit.Finding("prompt-deploy-target", "wiki/outbox/prompts/bar.md", "warn"),
 	)
 }
 
