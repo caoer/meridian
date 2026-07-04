@@ -22,56 +22,6 @@ type PathMapping struct {
 	NewPath string // e.g. "wiki/infra/arch-doc"
 }
 
-// UpdateLinks scans all .md files in fsys, rewrites wikilinks from old stems to new stems.
-// stemMap: old stem → new stem (for each moved file).
-// Returns list of LinkUpdates.
-//
-// Deprecated: Use UpdateLinksForMove for path-aware + anchor-aware rewriting.
-func UpdateLinks(fsys vfs.WriteFS, stemMap map[string]string) ([]LinkUpdate, error) {
-	var updates []LinkUpdate
-
-	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil // skip errors
-		}
-		if d.IsDir() || !strings.HasSuffix(p, ".md") {
-			return nil
-		}
-
-		data, err := fs.ReadFile(fsys, p)
-		if err != nil {
-			return nil // skip unreadable
-		}
-
-		content := string(data)
-		changed := false
-
-		for oldStem, newStem := range stemMap {
-			newContent, n := RewriteWikilinks(content, oldStem, newStem)
-			if n > 0 {
-				updates = append(updates, LinkUpdate{
-					File:    p,
-					OldLink: oldStem,
-					NewLink: newStem,
-					Count:   n,
-				})
-				content = newContent
-				changed = true
-			}
-		}
-
-		if changed {
-			if err := fsys.WriteFile(p, []byte(content), 0644); err != nil {
-				return fmt.Errorf("writing %q: %w", p, err)
-			}
-		}
-
-		return nil
-	})
-
-	return updates, err
-}
-
 // UpdateLinksForMove scans all .md files in fsys, rewrites wikilinks for moved files.
 // Handles bare stems, path-qualified links, and anchored links.
 // Returns list of LinkUpdates.

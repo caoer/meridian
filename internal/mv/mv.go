@@ -179,31 +179,6 @@ func dryRunMove(fsys vfs.WriteFS, source, dest string, eng *engine.Engine, ruleL
 	return result, nil
 }
 
-// buildStemMap creates oldStem→newStem mapping from source/dest paths.
-func buildStemMap(source, dest string, movedFiles []string) map[string]string {
-	stemMap := make(map[string]string)
-
-	// For each moved file, compute old and new stems
-	for _, newPath := range movedFiles {
-		newStem := StemFromPath(newPath)
-		// Reconstruct old path from new
-		rel := strings.TrimPrefix(newPath, dest)
-		rel = strings.TrimPrefix(rel, "/")
-		var oldPath string
-		if rel == "" {
-			oldPath = source
-		} else {
-			oldPath = source + "/" + rel
-		}
-		oldStem := StemFromPath(oldPath)
-		if oldStem != newStem {
-			stemMap[oldStem] = newStem
-		}
-	}
-
-	return stemMap
-}
-
 // buildPathMappings creates PathMapping entries for all moved files.
 // Each entry carries the full path (without .md) for path-aware link rewriting.
 func buildPathMappings(source, dest string, movedFiles []string) []PathMapping {
