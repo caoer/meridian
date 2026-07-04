@@ -9,3 +9,6 @@ message: "non-markdown file in outbox: {{.Path}} — {{.Reason}}"
 carve-out-paths:
   - "outbox/skills/*/scripts/**"
   - "outbox/skills/*/agents/**"
+exempt-extensions:
+  - ".canvas"
+  - ".base"
