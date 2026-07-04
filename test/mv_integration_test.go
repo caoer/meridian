@@ -142,11 +142,11 @@ func TestMvE2E_MoveWithStemChange(t *testing.T) {
 	totalRewrites := 0
 	for _, lu := range result.LinkUpdates {
 		totalRewrites += lu.Count
-		if lu.OldLink != "design-doc" {
-			t.Errorf("old_link = %q, want design-doc", lu.OldLink)
+		if lu.OldLink != "wiki/locus/design-doc" {
+			t.Errorf("old_link = %q, want wiki/locus/design-doc", lu.OldLink)
 		}
-		if lu.NewLink != "arch-doc" {
-			t.Errorf("new_link = %q, want arch-doc", lu.NewLink)
+		if lu.NewLink != "wiki/infra/arch-doc" {
+			t.Errorf("new_link = %q, want wiki/infra/arch-doc", lu.NewLink)
 		}
 	}
 	if totalRewrites < 2 {
@@ -298,5 +298,199 @@ func TestMvE2E_ErrorDestExists(t *testing.T) {
 	// Source should be untouched since move failed
 	if _, err := fs.Stat(m, "wiki/locus/design-doc.md"); err != nil {
 		t.Error("source was modified despite error")
+	}
+}
+
+// --- P2e: anchored + path-qualified link rewrite tests ---
+
+func TestMvE2E_AnchoredLinksRewritten(t *testing.T) {
+	m := testkit.Wiki(
+		testkit.F("wiki/locus/target.md", "---\n---\n# Target page\n"),
+		testkit.F("wiki/refs.md", "---\n---\nSee [[target#section]] and [[target#other|display]].\n"),
+	)
+
+	eng := engine.New()
+	result, err := mv.Move(m, "wiki/locus/target.md", "wiki/infra/renamed.md", eng, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Both anchored links should be rewritten
+	data, _ := fs.ReadFile(m, "wiki/refs.md")
+	body := string(data)
+	if !strings.Contains(body, "[[renamed#section]]") {
+		t.Errorf("missing [[renamed#section]], got: %s", body)
+	}
+	if !strings.Contains(body, "[[renamed#other|display]]") {
+		t.Errorf("missing [[renamed#other|display]], got: %s", body)
+	}
+	if strings.Contains(body, "[[target#") {
+		t.Errorf("old anchored links still present: %s", body)
+	}
+
+	// Should report 2 rewrites
+	total := 0
+	for _, lu := range result.LinkUpdates {
+		total += lu.Count
+	}
+	if total != 2 {
+		t.Errorf("total rewrites = %d, want 2", total)
+	}
+}
+
+func TestMvE2E_PathQualifiedLinksRewritten(t *testing.T) {
+	m := testkit.Wiki(
+		testkit.F("wiki/locus/target.md", "---\n---\n# Target page\n"),
+		testkit.F("wiki/refs.md", "---\n---\nSee [[locus/target]] and [[wiki/locus/target]].\n"),
+	)
+
+	eng := engine.New()
+	result, err := mv.Move(m, "wiki/locus/target.md", "wiki/infra/target.md", eng, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := fs.ReadFile(m, "wiki/refs.md")
+	body := string(data)
+
+	// Path-qualified links rewritten even though stem unchanged
+	if !strings.Contains(body, "[[infra/target]]") {
+		t.Errorf("missing [[infra/target]], got: %s", body)
+	}
+	if !strings.Contains(body, "[[wiki/infra/target]]") {
+		t.Errorf("missing [[wiki/infra/target]], got: %s", body)
+	}
+	if strings.Contains(body, "[[locus/target]]") {
+		t.Errorf("old path-qualified link still present: %s", body)
+	}
+
+	total := 0
+	for _, lu := range result.LinkUpdates {
+		total += lu.Count
+	}
+	if total != 2 {
+		t.Errorf("total rewrites = %d, want 2", total)
+	}
+
+	_ = result
+}
+
+func TestMvE2E_PathQualifiedAnchoredCombined(t *testing.T) {
+	m := testkit.Wiki(
+		testkit.F("wiki/locus/target.md", "---\n---\n# Target\n"),
+		testkit.F("wiki/refs.md", "---\n---\n[[locus/target#heading|display text]]\n"),
+	)
+
+	eng := engine.New()
+	_, err := mv.Move(m, "wiki/locus/target.md", "wiki/infra/renamed.md", eng, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := fs.ReadFile(m, "wiki/refs.md")
+	body := string(data)
+	want := "[[infra/renamed#heading|display text]]"
+	if !strings.Contains(body, want) {
+		t.Errorf("missing %q, got: %s", want, body)
+	}
+}
+
+func TestMvE2E_FencedCodeUntouched(t *testing.T) {
+	m := testkit.Wiki(
+		testkit.F("wiki/locus/target.md", "---\n---\n# Target\n"),
+		testkit.F("wiki/refs.md", "---\n---\n[[target#h]] outside\n```\n[[target#h]] inside code\n```\n[[locus/target]] after\n"),
+	)
+
+	eng := engine.New()
+	_, err := mv.Move(m, "wiki/locus/target.md", "wiki/infra/renamed.md", eng, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := fs.ReadFile(m, "wiki/refs.md")
+	body := string(data)
+
+	// Outside fence: rewritten
+	if !strings.Contains(body, "[[renamed#h]] outside") {
+		t.Errorf("outside-fence link not rewritten: %s", body)
+	}
+	if !strings.Contains(body, "[[infra/renamed]] after") {
+		t.Errorf("after-fence link not rewritten: %s", body)
+	}
+	// Inside fence: untouched
+	if !strings.Contains(body, "[[target#h]] inside code") {
+		t.Errorf("fenced link was modified: %s", body)
+	}
+}
+
+func TestMvE2E_DirMovePathQualifiedRewritten(t *testing.T) {
+	m := testkit.Wiki(
+		testkit.F("wiki/sub/a.md", "---\n---\nContent A\n"),
+		testkit.F("wiki/sub/b.md", "---\n---\nContent B\n"),
+		testkit.F("wiki/index.md", "---\n---\nBare: [[a]]. Path: [[sub/a]]. Anchored: [[b#section]].\n"),
+	)
+
+	eng := engine.New()
+	result, err := mv.Move(m, "wiki/sub", "wiki/moved", eng, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := fs.ReadFile(m, "wiki/index.md")
+	body := string(data)
+
+	// Bare stems unchanged (a→a, b→b) — no rewrite for bare links
+	if !strings.Contains(body, "Bare: [[a]]") {
+		t.Errorf("bare link should be unchanged: %s", body)
+	}
+	// Path-qualified: sub/a → moved/a
+	if !strings.Contains(body, "Path: [[moved/a]]") {
+		t.Errorf("path-qualified link not rewritten: %s", body)
+	}
+	// Anchored bare: b#section — stem unchanged, no rewrite needed
+	if !strings.Contains(body, "Anchored: [[b#section]]") {
+		t.Errorf("anchored bare link should be unchanged: %s", body)
+	}
+
+	// Only the path-qualified link should be rewritten
+	total := 0
+	for _, lu := range result.LinkUpdates {
+		total += lu.Count
+	}
+	if total != 1 {
+		t.Errorf("total rewrites = %d, want 1 (only path-qualified)", total)
+	}
+}
+
+func TestMvE2E_DryRunPathQualified(t *testing.T) {
+	m := testkit.Wiki(
+		testkit.F("wiki/locus/target.md", "---\n---\n# Target\n"),
+		testkit.F("wiki/refs.md", "---\n---\n[[locus/target#heading]] and [[target]].\n"),
+	)
+
+	origRefs, _ := fs.ReadFile(m, "wiki/refs.md")
+
+	eng := engine.New()
+	result, err := mv.Move(m, "wiki/locus/target.md", "wiki/infra/renamed.md", eng, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Dry run: filesystem unchanged
+	if _, err := fs.Stat(m, "wiki/locus/target.md"); err != nil {
+		t.Error("dry run removed source")
+	}
+	nowRefs, _ := fs.ReadFile(m, "wiki/refs.md")
+	if string(nowRefs) != string(origRefs) {
+		t.Error("dry run modified refs.md")
+	}
+
+	// But link updates computed
+	total := 0
+	for _, lu := range result.LinkUpdates {
+		total += lu.Count
+	}
+	if total != 2 {
+		t.Errorf("dry-run link updates = %d, want 2", total)
 	}
 }
