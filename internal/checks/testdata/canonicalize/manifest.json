@@ -1,0 +1,1505 @@
+[
+  {
+    "id": "col2-cloakbrowser",
+    "desc": "Two pages share basename 'cloakbrowser' across antidetect-browser and sources",
+    "category": "collision-2way",
+    "pages": [
+      "wiki/antidetect-browser/cloakbrowser.md",
+      "wiki/sources/cloakbrowser.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/antidetect-browser/cloakbrowser",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "antidetect-browser/cloakbrowser",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/sources/cloakbrowser",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "sources/cloakbrowser",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col2-agents",
+    "desc": "Two pages share basename 'agents' across ccc-compound and skill-landscape",
+    "category": "collision-2way",
+    "pages": [
+      "wiki/ccc-compound/agents.md",
+      "wiki/skill-landscape/gsd/agents.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "ccc-compound/agents",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "ccc-compound/agents",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "skill-landscape/gsd/agents",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "gsd/agents",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col2-posiwid",
+    "desc": "Two pages share basename 'posiwid' with deep nesting difference",
+    "category": "collision-2way",
+    "pages": [
+      "wiki/ccc-statusd/posiwid.md",
+      "wiki/outbox/skills/ccc-statusd/ccc-advisor/posiwid.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/ccc-statusd/posiwid",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "ccc-statusd/posiwid",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/ccc-statusd/ccc-advisor/posiwid",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "ccc-advisor/posiwid",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col2-cloudflare-upper",
+    "desc": "Two pages share basename 'CLOUDFLARE' across cloudflare and outbox skills",
+    "category": "collision-2way",
+    "pages": [
+      "wiki/cloudflare/CLOUDFLARE.md",
+      "wiki/outbox/skills/locus-cloudflare/skills/cloudflare/CLOUDFLARE.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/cloudflare/CLOUDFLARE",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "wiki/cloudflare/CLOUDFLARE",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/locus-cloudflare/skills/cloudflare/CLOUDFLARE",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "skills/cloudflare/CLOUDFLARE",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": true,
+    "regime": "a"
+  },
+  {
+    "id": "col2-workers",
+    "desc": "Two pages share basename 'workers' across cloudflare and durable-objects references",
+    "category": "collision-2way",
+    "pages": [
+      "wiki/cloudflare/workers.md",
+      "wiki/outbox/skills/locus-cloudflare/skills/durable-objects/references/workers.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/cloudflare/workers",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "cloudflare/workers",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/locus-cloudflare/skills/durable-objects/references/workers",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "references/workers",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col2-easytier",
+    "desc": "Two pages share basename 'easytier' across network and sources",
+    "category": "collision-2way",
+    "pages": [
+      "wiki/network/easytier.md",
+      "wiki/sources/easytier.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/network/easytier",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "network/easytier",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/sources/easytier",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "sources/easytier",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col2-tcp-over-redis",
+    "desc": "Two pages share basename 'tcp-over-redis' across friends/innopals and sources",
+    "category": "collision-2way",
+    "pages": [
+      "wiki/friends/innopals/tcp-over-redis.md",
+      "wiki/sources/tcp-over-redis.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/friends/innopals/tcp-over-redis",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "innopals/tcp-over-redis",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/sources/tcp-over-redis",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "sources/tcp-over-redis",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col2-disko",
+    "desc": "Two pages share basename 'disko' across osfiles and sources",
+    "category": "collision-2way",
+    "pages": [
+      "wiki/osfiles/disko.md",
+      "wiki/sources/disko.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/osfiles/disko",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "osfiles/disko",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/sources/disko",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "sources/disko",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col2-ideas",
+    "desc": "Two pages share basename 'IDEAS' across ccc-statusd and osfiles",
+    "category": "collision-2way",
+    "pages": [
+      "wiki/ccc-statusd/IDEAS.md",
+      "wiki/osfiles/IDEAS.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/ccc-statusd/IDEAS",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "ccc-statusd/IDEAS",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/osfiles/IDEAS",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "osfiles/IDEAS",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col2-conventions",
+    "desc": "Two pages share basename 'conventions' across locus and nix-expert guides",
+    "category": "collision-2way",
+    "pages": [
+      "wiki/locus/conventions.md",
+      "wiki/outbox/skills/nix-expert/guides/conventions.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/locus/conventions",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "locus/conventions",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/nix-expert/guides/conventions",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "guides/conventions",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col2-lazyvim-tips",
+    "desc": "Two pages share basename 'lazyvim-tips' across sources and user/memory",
+    "category": "collision-2way",
+    "pages": [
+      "wiki/sources/lazyvim-tips.md",
+      "wiki/user/memory/lazyvim-tips.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/sources/lazyvim-tips",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "sources/lazyvim-tips",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/user/memory/lazyvim-tips",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "memory/lazyvim-tips",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col2-exploitarium",
+    "desc": "Two pages share basename 'exploitarium' across security and sources",
+    "category": "collision-2way",
+    "pages": [
+      "wiki/security/exploitarium.md",
+      "wiki/sources/exploitarium.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/security/exploitarium",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "security/exploitarium",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/sources/exploitarium",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "sources/exploitarium",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col2-bases",
+    "desc": "Two pages share basename 'bases' across obsidian and obsidian-expert references",
+    "category": "collision-2way",
+    "pages": [
+      "wiki/obsidian/bases.md",
+      "wiki/outbox/skills/obsidian-expert/references/bases.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/obsidian/bases",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "obsidian/bases",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/obsidian-expert/references/bases",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "references/bases",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col2-dataview",
+    "desc": "Two pages share basename 'dataview' across obsidian/learnings and obsidian-expert references",
+    "category": "collision-2way",
+    "pages": [
+      "wiki/obsidian/learnings/dataview.md",
+      "wiki/outbox/skills/obsidian-expert/references/dataview.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/obsidian/learnings/dataview",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "learnings/dataview",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/obsidian-expert/references/dataview",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "references/dataview",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col2-cli",
+    "desc": "Two pages share basename 'cli' across obsidian-expert references and paseo",
+    "category": "collision-2way",
+    "pages": [
+      "wiki/outbox/skills/obsidian-expert/references/cli.md",
+      "wiki/paseo/cli.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/outbox/skills/obsidian-expert/references/cli",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "references/cli",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/paseo/cli",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "paseo/cli",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col3-design-decisions",
+    "desc": "Three pages share basename 'design-decisions' needing parent disambiguation",
+    "category": "collision-3way",
+    "pages": [
+      "wiki/ccc-statusd/design-decisions.md",
+      "wiki/meridian/design-decisions.md",
+      "wiki/osfiles/design-decisions.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/ccc-statusd/design-decisions",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "ccc-statusd/design-decisions",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/meridian/design-decisions",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "meridian/design-decisions",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/osfiles/design-decisions",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "osfiles/design-decisions",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col3-index",
+    "desc": "Three pages share basename 'index' needing parent disambiguation",
+    "category": "collision-3way",
+    "pages": [
+      "wiki/index.md",
+      "wiki/llm-wiki/index.md",
+      "wiki/outbox/skills/index.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/index",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "wiki/index",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/llm-wiki/index",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "llm-wiki/index",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/index",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "skills/index",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col3-deploy",
+    "desc": "Three pages share basename 'deploy' across different domains",
+    "category": "collision-3way",
+    "pages": [
+      "wiki/cloudflare/deploy.md",
+      "wiki/osfiles/deploy.md",
+      "wiki/outbox/skills/ccc-commit/deploy.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/cloudflare/deploy",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "cloudflare/deploy",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/osfiles/deploy",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "osfiles/deploy",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/ccc-commit/deploy",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "ccc-commit/deploy",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col3-commands",
+    "desc": "Three pages share basename 'commands' across different skill/tool areas",
+    "category": "collision-3way",
+    "pages": [
+      "wiki/outbox/skills/ccc-statusd/references/commands.md",
+      "wiki/outbox/skills/obsidian-expert/references/commands.md",
+      "wiki/paseo/commands.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/outbox/skills/ccc-statusd/references/commands",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "ccc-statusd/references/commands",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/obsidian-expert/references/commands",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "obsidian-expert/references/commands",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/paseo/commands",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "paseo/commands",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col3-caveman",
+    "desc": "Three pages share basename 'caveman' across prompts, skills, and sources",
+    "category": "collision-3way",
+    "pages": [
+      "wiki/locus/prompts/caveman.md",
+      "wiki/outbox/skills/caveman/caveman.md",
+      "wiki/sources/caveman.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/locus/prompts/caveman",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "prompts/caveman",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/caveman/caveman",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "caveman/caveman",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/sources/caveman",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "sources/caveman",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "deep-architecture",
+    "desc": "Four of 18 pages sharing basename 'architecture' across domains",
+    "category": "collision-deep",
+    "pages": [
+      "wiki/agent-browser/architecture.md",
+      "wiki/llm-wiki/architecture.md",
+      "wiki/meridian/architecture.md",
+      "wiki/osfiles/architecture.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/agent-browser/architecture",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "agent-browser/architecture",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/llm-wiki/architecture",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "llm-wiki/architecture",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/meridian/architecture",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "meridian/architecture",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/osfiles/architecture",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "osfiles/architecture",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "deep-readme",
+    "desc": "Four of 66 pages sharing basename 'README' from cloudflare references",
+    "category": "collision-deep",
+    "pages": [
+      "wiki/outbox/skills/locus-cloudflare/skills/workers/references/README.md",
+      "wiki/outbox/skills/locus-cloudflare/skills/durable-objects/references/README.md",
+      "wiki/outbox/skills/locus-cloudflare/skills/agents-sdk/references/README.md",
+      "wiki/outbox/skills/locus-cloudflare/skills/kv/references/README.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/outbox/skills/locus-cloudflare/skills/workers/references/README",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "workers/references/README",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/locus-cloudflare/skills/durable-objects/references/README",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "durable-objects/references/README",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/locus-cloudflare/skills/agents-sdk/references/README",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "agents-sdk/references/README",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/locus-cloudflare/skills/kv/references/README",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "kv/references/README",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "deep-configuration",
+    "desc": "Three pages sharing basename 'configuration' from cloudflare references",
+    "category": "collision-deep",
+    "pages": [
+      "wiki/outbox/skills/locus-cloudflare/skills/workers/references/configuration.md",
+      "wiki/outbox/skills/locus-cloudflare/skills/durable-objects/references/configuration.md",
+      "wiki/outbox/skills/locus-cloudflare/skills/r2/references/configuration.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/outbox/skills/locus-cloudflare/skills/workers/references/configuration",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "workers/references/configuration",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/locus-cloudflare/skills/durable-objects/references/configuration",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "durable-objects/references/configuration",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/locus-cloudflare/skills/r2/references/configuration",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "r2/references/configuration",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "deep-skill",
+    "desc": "Three pages sharing basename 'SKILL' from outbox/skills",
+    "category": "collision-deep",
+    "pages": [
+      "wiki/outbox/skills/ccc-review/SKILL.md",
+      "wiki/outbox/skills/llm-wiki/SKILL.md",
+      "wiki/outbox/skills/nix-expert/SKILL.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/outbox/skills/ccc-review/SKILL",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "ccc-review/SKILL",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/llm-wiki/SKILL",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "llm-wiki/SKILL",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/nix-expert/SKILL",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "nix-expert/SKILL",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "shorten-evolve",
+    "desc": "Over-long path to unique basename 'EVOLVE' can drop 35 chars",
+    "category": "shorten",
+    "pages": [
+      "wiki/outbox/skills/llm-wiki/evolve/EVOLVE.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/outbox/skills/llm-wiki/evolve/EVOLVE",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "EVOLVE",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "shorten-repo-ingest-pattern",
+    "desc": "Over-long path to unique basename 'repo-ingest-pattern' can drop 34 chars",
+    "category": "shorten",
+    "pages": [
+      "wiki/outbox/skills/llm-wiki/references/repo-ingest-pattern.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "outbox/skills/llm-wiki/references/repo-ingest-pattern",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "repo-ingest-pattern",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "shorten-addy-agent-skills",
+    "desc": "Over-long path to unique basename 'ADDY-AGENT-SKILLS' can drop 34 chars",
+    "category": "shorten",
+    "pages": [
+      "wiki/skill-landscape/addy-agent-skills/ADDY-AGENT-SKILLS.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "skill-landscape/addy-agent-skills/ADDY-AGENT-SKILLS",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "ADDY-AGENT-SKILLS",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "shorten-agents-observe",
+    "desc": "Over-long path to unique basename 'agents-observe' can drop 8 chars",
+    "category": "shorten",
+    "pages": [
+      "wiki/sources/agents-observe.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "sources/agents-observe",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "agents-observe",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "shorten-hint-tags",
+    "desc": "Over-long path to unique basename 'hint-tags' can drop 7 chars",
+    "category": "shorten",
+    "pages": [
+      "wiki/outbox/skills/hint-tags.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "skills/hint-tags",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "hint-tags",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "shorten-mcp-server",
+    "desc": "Over-long path to unique basename 'mcp-server' can drop 19 chars",
+    "category": "shorten",
+    "pages": [
+      "wiki/ccc-statusd/daemon/mcp-server.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "ccc-statusd/daemon/mcp-server",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "mcp-server",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "ambig-architecture",
+    "desc": "Bare link 'architecture' matches 18 pages",
+    "category": "ambiguous",
+    "pages": [
+      "wiki/agent-browser/architecture.md",
+      "wiki/ccc-statusd/architecture.md",
+      "wiki/cloudflare/architecture.md",
+      "wiki/llm-wiki/architecture.md",
+      "wiki/meridian/architecture.md",
+      "wiki/osfiles/architecture.md",
+      "wiki/outbox/skills/ccc-review/architecture.md",
+      "wiki/outbox/skills/ccc-work/architecture.md",
+      "wiki/outbox/skills/claude-api/architecture.md",
+      "wiki/outbox/skills/effect-ts-expert/architecture.md",
+      "wiki/outbox/skills/golang-expert/architecture.md",
+      "wiki/outbox/skills/locus-cloudflare/architecture.md",
+      "wiki/outbox/skills/nix-expert/architecture.md",
+      "wiki/outbox/skills/obsidian-expert/architecture.md",
+      "wiki/outbox/skills/osfiles/architecture.md",
+      "wiki/outbox/skills/shellkit-expert/architecture.md",
+      "wiki/outbox/skills/skill-engineer/architecture.md",
+      "wiki/paseo/architecture.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "architecture",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "architecture",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "ambig-deploy",
+    "desc": "Bare link 'deploy' matches 3 pages",
+    "category": "ambiguous",
+    "pages": [
+      "wiki/cloudflare/deploy.md",
+      "wiki/osfiles/deploy.md",
+      "wiki/outbox/skills/ccc-commit/deploy.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "deploy",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "deploy",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "ambig-caveman",
+    "desc": "Bare link 'caveman' matches 3 pages",
+    "category": "ambiguous",
+    "pages": [
+      "wiki/locus/prompts/caveman.md",
+      "wiki/outbox/skills/caveman/caveman.md",
+      "wiki/sources/caveman.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "caveman",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "caveman",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "ambig-design-decisions",
+    "desc": "Bare link 'design-decisions' matches 3 pages",
+    "category": "ambiguous",
+    "pages": [
+      "wiki/ccc-statusd/design-decisions.md",
+      "wiki/meridian/design-decisions.md",
+      "wiki/osfiles/design-decisions.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "design-decisions",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "design-decisions",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "ambig-flake-architecture",
+    "desc": "Bare link 'flake-architecture' matches 3 pages",
+    "category": "ambiguous",
+    "pages": [
+      "wiki/osfiles/flake-architecture.md",
+      "wiki/outbox/skills/nix-expert/guides/flake-architecture.md",
+      "wiki/outbox/skills/osfiles/references/flake-architecture.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "flake-architecture",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "flake-architecture",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "ambig-easytier",
+    "desc": "Bare link 'easytier' matches 2 pages",
+    "category": "ambiguous",
+    "pages": [
+      "wiki/network/easytier.md",
+      "wiki/sources/easytier.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "easytier",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "easytier",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "ambig-tcp-over-redis",
+    "desc": "Bare link 'tcp-over-redis' matches 2 pages",
+    "category": "ambiguous",
+    "pages": [
+      "wiki/friends/innopals/tcp-over-redis.md",
+      "wiki/sources/tcp-over-redis.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "tcp-over-redis",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "tcp-over-redis",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "ambig-disko",
+    "desc": "Bare link 'disko' matches 2 pages",
+    "category": "ambiguous",
+    "pages": [
+      "wiki/osfiles/disko.md",
+      "wiki/sources/disko.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "disko",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "disko",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "ambig-cloudflare",
+    "desc": "Bare link 'CLOUDFLARE' matches 2 pages",
+    "category": "ambiguous",
+    "pages": [
+      "wiki/cloudflare/CLOUDFLARE.md",
+      "wiki/outbox/skills/locus-cloudflare/skills/cloudflare/CLOUDFLARE.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "CLOUDFLARE",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "CLOUDFLARE",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "ambig-exploitarium",
+    "desc": "Bare link 'exploitarium' matches 2 pages",
+    "category": "ambiguous",
+    "pages": [
+      "wiki/security/exploitarium.md",
+      "wiki/sources/exploitarium.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "exploitarium",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "exploitarium",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "edge-fenced-backtick",
+    "desc": "Wikilink inside triple-backtick fenced code block is never touched",
+    "category": "edge-fenced",
+    "pages": [
+      "wiki/network/easytier.md",
+      "wiki/sources/easytier.md"
+    ],
+    "source": "wiki/test-fenced.md",
+    "links": [
+      {
+        "original": "easytier",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "easytier",
+        "expected_status": "unchanged"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "edge-fenced-tilde",
+    "desc": "Wikilink inside tilde fenced code block is never touched",
+    "category": "edge-fenced",
+    "pages": [
+      "wiki/osfiles/disko.md",
+      "wiki/sources/disko.md"
+    ],
+    "source": "wiki/test-fenced-tilde.md",
+    "links": [
+      {
+        "original": "disko",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "disko",
+        "expected_status": "unchanged"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "edge-alias-unique",
+    "desc": "Alias preserved when target is unique and already canonical",
+    "category": "edge-alias",
+    "pages": [
+      "wiki/ccc-statusd/daemon/mcp-server.md"
+    ],
+    "source": "wiki/test-alias.md",
+    "links": [
+      {
+        "original": "mcp-server",
+        "fragment": "",
+        "alias": "the MCP server",
+        "expected_canonical": "mcp-server",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "edge-alias-shorten",
+    "desc": "Over-long target shortens while alias is preserved",
+    "category": "edge-alias",
+    "pages": [
+      "wiki/outbox/skills/llm-wiki/evolve/EVOLVE.md"
+    ],
+    "source": "wiki/test-alias-shorten.md",
+    "links": [
+      {
+        "original": "wiki/outbox/skills/llm-wiki/evolve/EVOLVE",
+        "fragment": "",
+        "alias": "evolution workflow",
+        "expected_canonical": "EVOLVE",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "edge-alias-ambiguous",
+    "desc": "Ambiguous target stays ambiguous, alias is untouched",
+    "category": "edge-alias",
+    "pages": [
+      "wiki/network/easytier.md",
+      "wiki/sources/easytier.md"
+    ],
+    "source": "wiki/test-alias-ambig.md",
+    "links": [
+      {
+        "original": "easytier",
+        "fragment": "",
+        "alias": "EasyTier mesh VPN",
+        "expected_canonical": "easytier",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "edge-anchor-unique",
+    "desc": "Fragment preserved when target is unique",
+    "category": "edge-anchor",
+    "pages": [
+      "wiki/ccc-statusd/daemon/mcp-server.md"
+    ],
+    "source": "wiki/test-anchor.md",
+    "links": [
+      {
+        "original": "mcp-server",
+        "fragment": "#configuration",
+        "alias": "",
+        "expected_canonical": "mcp-server",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "edge-anchor-shorten",
+    "desc": "Over-long target shortens while fragment is preserved",
+    "category": "edge-anchor",
+    "pages": [
+      "wiki/outbox/skills/llm-wiki/references/repo-ingest-pattern.md"
+    ],
+    "source": "wiki/test-anchor-shorten.md",
+    "links": [
+      {
+        "original": "outbox/skills/llm-wiki/references/repo-ingest-pattern",
+        "fragment": "#step-1",
+        "alias": "",
+        "expected_canonical": "repo-ingest-pattern",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "edge-anchor-alias-combined",
+    "desc": "Fragment and alias both preserved while target canonicalizes",
+    "category": "edge-combined",
+    "pages": [
+      "wiki/skill-landscape/addy-agent-skills/ADDY-AGENT-SKILLS.md"
+    ],
+    "source": "wiki/test-combined.md",
+    "links": [
+      {
+        "original": "skill-landscape/addy-agent-skills/ADDY-AGENT-SKILLS",
+        "fragment": "#overview",
+        "alias": "Addy's skills",
+        "expected_canonical": "ADDY-AGENT-SKILLS",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "edge-cjk-basename",
+    "desc": "CJK basename page resolves correctly",
+    "category": "edge-cjk",
+    "pages": [
+      "wiki/legal/渎职犯罪辩护策略研究.md"
+    ],
+    "source": "wiki/test-cjk.md",
+    "links": [
+      {
+        "original": "渎职犯罪辩护策略研究",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "渎职犯罪辩护策略研究",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "edge-cjk-nested",
+    "desc": "CJK page in nested path shortens to basename when unique",
+    "category": "edge-cjk",
+    "pages": [
+      "wiki/user/notes/学习笔记/网络配置.md"
+    ],
+    "source": "wiki/test-cjk-nested.md",
+    "links": [
+      {
+        "original": "user/notes/学习笔记/网络配置",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "网络配置",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "edge-foreign-excluded",
+    "desc": "Link target in foreign/ directory is excluded from the uniqueness universe",
+    "category": "edge-foreign",
+    "pages": [
+      "foreign/vendor/config.md",
+      "wiki/infra/config.md"
+    ],
+    "source": "wiki/test-foreign.md",
+    "links": [
+      {
+        "original": "config",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "config",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "edge-foreign-shadow",
+    "desc": "Same basename in foreign/ and wiki/ — wiki page is canonical, foreign excluded",
+    "category": "edge-foreign",
+    "pages": [
+      "foreign/templates/setup.md",
+      "wiki/guides/setup.md"
+    ],
+    "source": "wiki/test-foreign-shadow.md",
+    "links": [
+      {
+        "original": "setup",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "setup",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "diverge-depth-proximity",
+    "desc": "Same basename at different depths — Obsidian proximity picks closer, we pick shortest suffix",
+    "category": "divergence-candidate",
+    "pages": [
+      "wiki/osfiles/disko.md",
+      "wiki/sources/disko.md"
+    ],
+    "source": "wiki/osfiles/flake-architecture.md",
+    "links": [
+      {
+        "original": "disko",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "disko",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": true,
+    "regime": "a"
+  },
+  {
+    "id": "diverge-nested-source",
+    "desc": "Source in deeply nested path — Obsidian proximity bias toward sibling collider",
+    "category": "divergence-candidate",
+    "pages": [
+      "wiki/outbox/skills/ccc-statusd/ccc-advisor/posiwid.md",
+      "wiki/ccc-statusd/posiwid.md"
+    ],
+    "source": "wiki/outbox/skills/ccc-statusd/ccc-advisor/workflows.md",
+    "links": [
+      {
+        "original": "posiwid",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "posiwid",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": true,
+    "regime": "a"
+  },
+  {
+    "id": "diverge-path-qualified-suffix",
+    "desc": "Path-qualified link where suffix matching could resolve to a different page than Obsidian exact-path match",
+    "category": "divergence-candidate",
+    "pages": [
+      "wiki/outbox/skills/obsidian-expert/references/commands.md",
+      "wiki/outbox/skills/ccc-statusd/references/commands.md",
+      "wiki/paseo/commands.md"
+    ],
+    "source": "wiki/paseo/usage.md",
+    "links": [
+      {
+        "original": "references/commands",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "references/commands",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": true,
+    "regime": "a"
+  },
+  {
+    "id": "diverge-sibling-collision",
+    "desc": "Link from deep source where Obsidian would prefer sibling over a structurally closer suffix match",
+    "category": "divergence-candidate",
+    "pages": [
+      "wiki/obsidian/learnings/dataview.md",
+      "wiki/outbox/skills/obsidian-expert/references/dataview.md"
+    ],
+    "source": "wiki/outbox/skills/obsidian-expert/references/plugins.md",
+    "links": [
+      {
+        "original": "dataview",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "dataview",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": true,
+    "regime": "a"
+  },
+  {
+    "id": "regime-b-resolved-dump",
+    "desc": "resolvedLinks dump present, bare ambiguous link resolved via dump",
+    "category": "regime-b",
+    "pages": [
+      "wiki/network/easytier.md",
+      "wiki/sources/easytier.md"
+    ],
+    "source": "wiki/test-regime-b.md",
+    "links": [
+      {
+        "original": "easytier",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "network/easytier",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "b"
+  },
+  {
+    "id": "regime-b-no-dump",
+    "desc": "resolvedLinks dump absent, same link reports ambiguous",
+    "category": "regime-b",
+    "pages": [
+      "wiki/network/easytier.md",
+      "wiki/sources/easytier.md"
+    ],
+    "source": "wiki/test-regime-b-nodump.md",
+    "links": [
+      {
+        "original": "easytier",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "easytier",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "b"
+  },
+  {
+    "id": "regime-b-stale-dump",
+    "desc": "resolvedLinks dump points to page not in vault, reports ambiguous",
+    "category": "regime-b",
+    "pages": [
+      "wiki/network/easytier.md",
+      "wiki/sources/easytier.md"
+    ],
+    "source": "wiki/test-regime-b-stale.md",
+    "links": [
+      {
+        "original": "easytier",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "easytier",
+        "expected_status": "ambiguous"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "b"
+  }
+]
