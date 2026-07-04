@@ -1501,5 +1501,136 @@
     ],
     "obsidian_divergence_candidate": false,
     "regime": "b"
+  },
+  {
+    "id": "date-prefixed-2way",
+    "desc": "Date-prefixed collision: logs/SLUG + sources/compound/SLUG — representative of all 24 date-prefixed 2-way collision classes",
+    "category": "collision-2way",
+    "pages": [
+      "wiki/logs/2026-07-03-attic-push-retirement.md",
+      "wiki/sources/compound/2026-07-03-attic-push-retirement.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/logs/2026-07-03-attic-push-retirement",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "logs/2026-07-03-attic-push-retirement",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/sources/compound/2026-07-03-attic-push-retirement",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "compound/2026-07-03-attic-push-retirement",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "high-n-structural",
+    "desc": "High-N structural collision (60+ pages) — representative of api/62, patterns/62, gotchas/61 classes; all under outbox/skills/locus-cloudflare/skills/*/references/",
+    "category": "collision-deep",
+    "pages": [
+      "wiki/outbox/skills/locus-cloudflare/skills/cloudflare/references/d1/api.md",
+      "wiki/outbox/skills/locus-cloudflare/skills/cloudflare/references/kv/api.md",
+      "wiki/outbox/skills/locus-cloudflare/skills/cloudflare/references/r2/api.md",
+      "wiki/outbox/skills/locus-cloudflare/skills/cloudflare/references/queues/api.md",
+      "wiki/tessera/hypernative/api.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/outbox/skills/locus-cloudflare/skills/cloudflare/references/d1/api",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "d1/api",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/tessera/hypernative/api",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "hypernative/api",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col3-routing",
+    "desc": "Three pages share basename 'routing' across different skill areas",
+    "category": "collision-3way",
+    "pages": [
+      "wiki/outbox/skills/locus-cloudflare/skills/agents-sdk/references/routing.md",
+      "wiki/outbox/skills/locus-cloudflare/skills/cloudflare-email-service/references/routing.md",
+      "wiki/outbox/skills/sing-box/routing.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/outbox/skills/locus-cloudflare/skills/agents-sdk/references/routing",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "agents-sdk/references/routing",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/locus-cloudflare/skills/cloudflare-email-service/references/routing",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "cloudflare-email-service/references/routing",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/sing-box/routing",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "sing-box/routing",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
+  },
+  {
+    "id": "col3-testing",
+    "desc": "Three pages share basename 'testing' across cloudflare references and parsez",
+    "category": "collision-3way",
+    "pages": [
+      "wiki/outbox/skills/locus-cloudflare/skills/cloudflare/references/do-storage/testing.md",
+      "wiki/outbox/skills/locus-cloudflare/skills/durable-objects/references/testing.md",
+      "wiki/parsez/testing.md"
+    ],
+    "source": "wiki/test-source.md",
+    "links": [
+      {
+        "original": "wiki/outbox/skills/locus-cloudflare/skills/cloudflare/references/do-storage/testing",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "do-storage/testing",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/outbox/skills/locus-cloudflare/skills/durable-objects/references/testing",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "references/testing",
+        "expected_status": "resolved"
+      },
+      {
+        "original": "wiki/parsez/testing",
+        "fragment": "",
+        "alias": "",
+        "expected_canonical": "parsez/testing",
+        "expected_status": "resolved"
+      }
+    ],
+    "obsidian_divergence_candidate": false,
+    "regime": "a"
   }
 ]
