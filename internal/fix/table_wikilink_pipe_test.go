@@ -256,7 +256,7 @@ func TestFixCountColumns_EscapedPipe(t *testing.T) {
 	}{
 		{"| a | b | c |", 3},
 		{`| [[x\|y]] | b |`, 2},
-		{`| [[x|y]] | b |`, 3},      // unescaped = 3 columns
+		{`| [[x|y]] | b |`, 3},       // unescaped = 3 columns
 		{`| a | b | c | d | e |`, 5}, // 5 columns
 		{"| |", 1},
 		{"|  |", 1},

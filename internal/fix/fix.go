@@ -11,6 +11,11 @@ import (
 	"github.com/caoer/meridian/internal/vfs"
 )
 
+// ScannedPathsKey is the parameter key injected into fix params, matching the
+// engine check path convention. Exported so downstream fixers can reference it
+// without magic strings.
+const ScannedPathsKey = "__scanned_paths"
+
 // FixFunc applies fixes for all findings of a check type on a file.
 // content is the raw file bytes. params are the rule's check-specific params.
 // Returns changed=true if any fixes applied, new content, action descriptions, and error.
@@ -49,6 +54,11 @@ type FixReport struct {
 type Options struct {
 	DryRun bool
 	Scope  string
+	// Files is an explicit file universe (vault index). When non-nil, these
+	// paths are injected as __scanned_paths into fix params — mirroring how
+	// the engine check path injects the vault index at evalDoc time. If nil,
+	// the Fixer scans the filesystem to derive the list automatically.
+	Files []string
 }
 
 // Fixer runs checks and applies registered fixes.
@@ -65,6 +75,22 @@ func New(eng *engine.Engine, registry map[string]FixFunc) *Fixer {
 // Fix runs checks, applies fixes for fixable findings, writes results.
 func (f *Fixer) Fix(fsys vfs.WriteFS, ruleList []rules.Rule, opts Options) (*FixReport, error) {
 	findings := f.engine.Run(fsys, ruleList)
+
+	// Resolve scanned paths (vault index) for fixers that need cross-file context.
+	// Mirrors engine/cached.go:153 injection of __scanned_paths.
+	scannedPaths := opts.Files
+	if scannedPaths == nil {
+		docs, err := engine.Scan(fsys)
+		if err == nil {
+			scannedPaths = make([]string, len(docs))
+			for i, d := range docs {
+				scannedPaths[i] = d.Path
+			}
+		} else {
+			// Graceful degradation: fixers that don't need the index still work.
+			scannedPaths = []string{}
+		}
+	}
 
 	// Pre-filter findings by scope so only scoped files get modified.
 	if opts.Scope != "" {
@@ -158,7 +184,15 @@ func (f *Fixer) Fix(fsys vfs.WriteFS, ruleList []rules.Rule, opts Options) (*Fix
 			content = data
 		}
 
-		changed, newContent, actions, err := fixFn(content, rule.Params)
+		// Build effective params with __scanned_paths injected — mirrors
+		// engine/cached.go evalDoc injection so fixers have vault context.
+		effectiveParams := make(map[string]any, len(rule.Params)+1)
+		for k, v := range rule.Params {
+			effectiveParams[k] = v
+		}
+		effectiveParams["__scanned_paths"] = scannedPaths
+
+		changed, newContent, actions, err := fixFn(content, effectiveParams)
 		if err != nil {
 			// Fix #5: Report fix errors instead of silently dropping.
 			report.Unfixable = append(report.Unfixable, SkipResult{
