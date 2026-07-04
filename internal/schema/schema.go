@@ -13,9 +13,14 @@ import (
 
 // contractSchemas maps contract version → baseline key/value pairs.
 // Each value is the contract-defined default for that key.
+//
+// SYNC OBLIGATION (P3): this ~70-LOC Go map duplicates facts held in
+// contract-v1.md and the P1 rule pack.  P3 must single-source it
+// (go:embed or a drift test).  Until then, manual sync is required —
+// any edit here must be mirrored in contract-v1.md and vice-versa.
 var contractSchemas = map[int]map[string]any{
 	1: {
-		"contract_version": 1,
+		"contract-version": 1,
 		"layout": []map[string]any{
 			{"dir": "SCHEMA.md", "purpose": "Contract version pin + local schema extensions", "required": true},
 			{"dir": "index.md", "purpose": "Wiki entry point", "required": true},
@@ -96,6 +101,10 @@ func Effective(root string) (map[string]any, error) {
 
 	doc, err := frontmatter.ParseBytes(data)
 	if err != nil {
+		// Include file:line when the parser provides a line number.
+		if pe, ok := err.(*frontmatter.ParseError); ok {
+			return nil, fmt.Errorf("%s:%d: %w", schemaPath, pe.Line, pe)
+		}
 		return nil, fmt.Errorf("%s: %w", schemaPath, err)
 	}
 	if doc == nil {

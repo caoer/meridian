@@ -206,6 +206,98 @@ func TestFixHandler_ScopeAndRulesCombined(t *testing.T) {
 	}
 }
 
+// --- Schema handler tests (F4: subdir walk) ---
+
+func TestFindSchemaRoot_SubdirFindsParent(t *testing.T) {
+	// Create: root/SCHEMA.md, root/domains/
+	// Start from root/domains/ → should find root.
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "SCHEMA.md"), []byte("---\ncontract-version: 1\n---\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(root, "domains")
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	found, ok := findSchemaRoot(sub)
+	if !ok {
+		t.Fatal("expected to find SCHEMA.md from subdir")
+	}
+	// Resolve symlinks for comparison (TempDir may be under /var → /private/var on macOS).
+	wantAbs, _ := filepath.EvalSymlinks(root)
+	gotAbs, _ := filepath.EvalSymlinks(found)
+	if gotAbs != wantAbs {
+		t.Errorf("findSchemaRoot = %q, want %q", gotAbs, wantAbs)
+	}
+}
+
+func TestFindSchemaRoot_StopsAtGitToplevel(t *testing.T) {
+	// Create: root/.git/, root/wiki/SCHEMA.md
+	// Start from root/ (not root/wiki/) → .git stops walk before finding
+	// SCHEMA.md in root (there is none at root level).  Should NOT find it.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	wiki := filepath.Join(root, "wiki")
+	if err := os.MkdirAll(wiki, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wiki, "SCHEMA.md"), []byte("---\n---\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Start from root itself — no SCHEMA.md here, .git stops walk.
+	_, ok := findSchemaRoot(root)
+	if ok {
+		t.Error("expected NOT to find SCHEMA.md when .git stops walk at root")
+	}
+}
+
+func TestFindSchemaRoot_NoSchemaAnywhere(t *testing.T) {
+	root := t.TempDir()
+	// Put .git to bound the walk.
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, ok := findSchemaRoot(sub)
+	if ok {
+		t.Error("expected NOT to find SCHEMA.md")
+	}
+}
+
+func TestSchemaHandler_NoConfigNoSchema_WarnsContractOnly(t *testing.T) {
+	// When cfg is nil and no SCHEMA.md exists, handler should return
+	// contract-only schema with a warning NOTE.
+	handler := schemaHandler(nil, nil)
+
+	// Run from a tmpdir with no SCHEMA.md and a .git boundary.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change to the tmpdir for this test.
+	orig, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(orig)
+
+	resp := handler(&cli.Request{Command: "schema"})
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %s", resp.Error.Message)
+	}
+	if len(resp.Warnings) == 0 {
+		t.Error("expected a warning NOTE when no SCHEMA.md found, got none")
+	}
+}
+
 // --- Cache stats tests (Stage 6) ---
 
 func alwaysFireCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {

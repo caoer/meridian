@@ -17,14 +17,38 @@ func TestEffective_ContractOnly(t *testing.T) {
 	if m == nil {
 		t.Fatal("expected non-nil schema")
 	}
-	if v, ok := m["contract_version"]; !ok || v != 1 {
-		t.Errorf("contract_version = %v, want 1", v)
+	if v, ok := m["contract-version"]; !ok || v != 1 {
+		t.Errorf("contract-version = %v, want 1", v)
 	}
 	if _, ok := m["layout"]; !ok {
 		t.Error("missing layout key in contract-only schema")
 	}
 	if _, ok := m["leaf_repo"]; !ok {
 		t.Error("missing leaf_repo key in contract-only schema")
+	}
+}
+
+func TestEffective_SingleVersionKey(t *testing.T) {
+	// After F1 fix: merged output must have exactly ONE version key
+	// ("contract-version", hyphen), never the old underscore variant.
+	dir := t.TempDir()
+	schema := "---\ncontract-version: 1\ncustom: true\n---\n"
+	if err := os.WriteFile(filepath.Join(dir, "SCHEMA.md"), []byte(schema), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := Effective(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Must have hyphen key.
+	if v, ok := m["contract-version"]; !ok || v != 1 {
+		t.Errorf("contract-version = %v, want 1", v)
+	}
+	// Must NOT have underscore key.
+	if _, ok := m["contract_version"]; ok {
+		t.Error("merged output contains both contract_version and contract-version; expected only hyphen variant")
 	}
 }
 
@@ -128,9 +152,14 @@ domains:
 	if err == nil {
 		t.Fatal("expected error for malformed overlay")
 	}
-	// Error should name the file.
-	if got := err.Error(); !contains(got, "SCHEMA.md") {
+	got := err.Error()
+	// Error must name the file (spec: file/line).
+	if !contains(got, "SCHEMA.md") {
 		t.Errorf("error %q should mention SCHEMA.md", got)
+	}
+	// Error must include a line number (F3: file:line format).
+	if !contains(got, ":4:") && !contains(got, ":5:") {
+		t.Errorf("error %q should include a line number (file:line format)", got)
 	}
 }
 
@@ -185,8 +214,8 @@ No frontmatter here.
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Falls back to contract-only.
-	if v, ok := m["contract_version"]; !ok || v != 1 {
-		t.Errorf("contract_version = %v, want 1", v)
+	if v, ok := m["contract-version"]; !ok || v != 1 {
+		t.Errorf("contract-version = %v, want 1", v)
 	}
 }
 

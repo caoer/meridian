@@ -53,7 +53,10 @@ func ParseReader(r io.Reader) (*Doc, error) {
 	}
 
 	if !closed {
-		return nil, fmt.Errorf("unclosed frontmatter (no closing ---)")
+		return nil, &ParseError{
+			Line:    lineNum,
+			Message: "unclosed frontmatter (no closing ---)",
+		}
 	}
 
 	// Parse YAML
@@ -61,7 +64,14 @@ func ParseReader(r io.Reader) (*Doc, error) {
 	rawYAML := yamlBuf.String()
 	if strings.TrimSpace(rawYAML) != "" {
 		if err := yaml.Unmarshal([]byte(rawYAML), &meta); err != nil {
-			return nil, fmt.Errorf("invalid YAML in frontmatter: %w", err)
+			// YAML errors from the library often include their own
+			// line offset (relative to the YAML block).  Translate
+			// to document-absolute by adding the opening---- line.
+			return nil, &ParseError{
+				Line:    2, // first line of YAML content
+				Message: "invalid YAML in frontmatter",
+				Err:     err,
+			}
 		}
 	}
 

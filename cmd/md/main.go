@@ -444,13 +444,54 @@ func statusHandler(cfgPath string, cfgErr error) cli.Handler {
 	}
 }
 
+// findSchemaRoot walks upward from start looking for a directory containing
+// SCHEMA.md.  It stops at the git toplevel (directory containing .git) or
+// the filesystem root.  Returns ("", false) if no SCHEMA.md is found.
+func findSchemaRoot(start string) (string, bool) {
+	dir, err := filepath.Abs(start)
+	if err != nil {
+		return "", false
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "SCHEMA.md")); err == nil {
+			return dir, true
+		}
+		// Stop at git toplevel.
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break // filesystem root
+		}
+		dir = parent
+	}
+	return "", false
+}
+
 func schemaHandler(cfg *config.Config, cfgErr error) cli.Handler {
 	return func(req *cli.Request) *cli.Response {
 		// schema does not strictly require config — it needs a scan root
-		// to find SCHEMA.md. Fall back to cwd if config is absent.
-		root := "."
+		// to find SCHEMA.md. When config provides scan.root, use it.
+		// Otherwise walk upward from cwd to find SCHEMA.md (prevents
+		// silent wrong answers when invoked from a wiki subdir).
+		var warnings []cli.Warning
+
+		root := ""
 		if cfg != nil {
 			root = cfg.Scan.Root
+		} else {
+			if found, ok := findSchemaRoot("."); ok {
+				root = found
+			} else {
+				// No SCHEMA.md anywhere up to git toplevel / fs root.
+				// Contract-only is correct, but surface a NOTE so the
+				// caller knows this is not a local overlay.
+				root = "."
+				warnings = append(warnings, cli.Warning{
+					Message: "no SCHEMA.md found (searched from cwd to git toplevel); returning contract-only schema",
+				})
+			}
 		}
 
 		merged, err := schema.Effective(root)
@@ -459,8 +500,9 @@ func schemaHandler(cfg *config.Config, cfgErr error) cli.Handler {
 		}
 
 		return &cli.Response{
-			Version: cli.ResponseVersion,
-			Data:    cli.SchemaData{Schema: merged},
+			Version:  cli.ResponseVersion,
+			Data:     cli.SchemaData{Schema: merged},
+			Warnings: warnings,
 		}
 	}
 }

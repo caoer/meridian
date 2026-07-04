@@ -6,6 +6,23 @@ import (
 	"strings"
 )
 
+// ParseError is returned for malformed frontmatter and includes the
+// 1-indexed line number where the problem was detected.
+type ParseError struct {
+	Line    int    // 1-indexed line of the error
+	Message string // human-readable description
+	Err     error  // underlying error, if any
+}
+
+func (e *ParseError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("line %d: %s: %v", e.Line, e.Message, e.Err)
+	}
+	return fmt.Sprintf("line %d: %s", e.Line, e.Message)
+}
+
+func (e *ParseError) Unwrap() error { return e.Err }
+
 // Doc represents a parsed markdown document with frontmatter.
 type Doc struct {
 	RawYAML    string         // raw YAML between --- delimiters
