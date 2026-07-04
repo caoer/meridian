@@ -1,0 +1,5 @@
+property: [tags, created]
+on: ["**", "!*.generated.md"]
+required: true
+severity: warn
+message: "Missing required contract field: {{.Key}}"
