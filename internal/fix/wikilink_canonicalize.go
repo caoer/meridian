@@ -56,6 +56,12 @@ func WikilinkCanonicalizeFix(content []byte, params map[string]any) (bool, []byt
 	resolvedLinks := extractResolvedLinks(params, filePath)
 	newFiles := buildNewFilesSet(params)
 
+	// Mapping-zero-hits abort: if resolved_links is present but matches
+	// NOTHING in the scanned universe, this is a wrong-universe signal.
+	if err := validateResolvedLinksUniverse(params, idx); err != nil {
+		return false, content, nil, err
+	}
+
 	re := canon.WikilinkInnerRe()
 	lines := strings.Split(string(content), "\n")
 	changed := false
@@ -258,6 +264,42 @@ func extractResolvedLinks(params map[string]any, filePath string) map[string]boo
 		result[strings.TrimSuffix(target, ".md")] = true
 	}
 	return result
+}
+
+// validateResolvedLinksUniverse checks that when a resolved_links mapping
+// is present AND has entries for the current source file, at least one of
+// those targets exists in the scanned universe. A zero-hit per-source
+// mapping = wrong-universe signal → hard abort. A mapping that has no entry
+// for the current source file is fine (that source was simply not tracked).
+func validateResolvedLinksUniverse(params map[string]any, idx *canon.Index) error {
+	rl, _ := params["resolved_links"].(map[string]any)
+	if len(rl) == 0 {
+		return nil // no mapping → regime (a), nothing to validate
+	}
+
+	// Global check: does ANY source in the mapping have ANY target that resolves?
+	// If the entire mapping is from a wrong universe, every source entry
+	// will have zero hits.
+	totalTargets := 0
+	hits := 0
+	for _, sourceLinksRaw := range rl {
+		sourceLinks, ok := sourceLinksRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		for target := range sourceLinks {
+			totalTargets++
+			if _, resolved := idx.Resolve(strings.TrimSuffix(target, ".md")); resolved {
+				hits++
+			}
+		}
+	}
+
+	if totalTargets > 0 && hits == 0 {
+		return fmt.Errorf("resolved_links mapping has %d targets across %d sources but ZERO match the scanned universe — wrong-universe signal; aborting to prevent silent no-op", totalTargets, len(rl))
+	}
+
+	return nil
 }
 
 // buildFixCanonIndex constructs a canon.Index for the fixer, filtering

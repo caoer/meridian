@@ -1,6 +1,8 @@
 package fix
 
 import (
+	"errors"
+	"fmt"
 	"io/fs"
 	"sort"
 	"strings"
@@ -10,6 +12,10 @@ import (
 	"github.com/caoer/meridian/internal/types"
 	"github.com/caoer/meridian/internal/vfs"
 )
+
+// ErrDryRunWrite is returned if a write is attempted during a dry run.
+// This should never happen in correct code — it exists as a safety net.
+var ErrDryRunWrite = errors.New("write attempted during dry-run")
 
 // ScannedPathsKey is the parameter key injected into fix params, matching the
 // engine check path convention. Exported so downstream fixers can reference it
@@ -27,6 +33,194 @@ var All = map[string]FixFunc{
 	"property":              PropertyFix,
 	"table-wikilink-pipe":   TableWikilinkPipeFix,
 	"wikilink-canonicalize": WikilinkCanonicalizeFix,
+}
+
+// ParamSpec declares accepted param names and types for a fixer.
+// Used for strict validation — unknown keys and type mismatches are hard errors.
+type ParamSpec struct {
+	// Accepted maps param name → expected Go type string (e.g. "[]string", "map[string]any").
+	// Empty string means any type is accepted.
+	Accepted map[string]string
+}
+
+// ParamSpecs is the registry of accepted params per check name.
+// Checks not listed here skip param validation (backward compatible).
+var ParamSpecs = map[string]ParamSpec{
+	"wikilink-canonicalize": {
+		Accepted: map[string]string{
+			"roots":          "",
+			"skip-prefixes":  "",
+			"resolved_links": "map[string]any",
+			"new_files":      "",
+		},
+	},
+	"field-exists": {
+		Accepted: map[string]string{
+			"frontmatter": "",
+		},
+	},
+	"broken-wikilink": {
+		Accepted: map[string]string{
+			"roots":         "",
+			"scope":         "",
+			"skip-prefixes": "",
+		},
+	},
+	"ambiguous-wikilink": {
+		Accepted: map[string]string{
+			"roots":         "",
+			"skip-prefixes": "",
+		},
+	},
+	"table-wikilink-pipe": {
+		Accepted: map[string]string{},
+	},
+	"link-resolve": {
+		Accepted: map[string]string{
+			"frontmatter":    "",
+			"roots":          "",
+			"resolved_index": "",
+		},
+	},
+	"property": {
+		Accepted: map[string]string{
+			"wikilink": "",
+			"tag":      "",
+			"text":     "",
+			"date":     "",
+		},
+	},
+	"tier-downgrade": {
+		Accepted: map[string]string{
+			"foreign-roots": "",
+		},
+	},
+	"tag-format": {
+		Accepted: map[string]string{
+			"prefixes": "",
+		},
+	},
+	"pattern": {
+		Accepted: map[string]string{
+			"target": "",
+			"match":  "",
+		},
+	},
+	"heading-structure": {
+		Accepted: map[string]string{
+			"allow_multiple_h1": "",
+		},
+	},
+	"backticked-wikilink": {
+		Accepted: map[string]string{},
+	},
+}
+
+// validateParams checks that all non-injected params in a rule are declared
+// in the ParamSpec for that check. Returns an error naming the unknown key
+// and suggesting the nearest valid alternative.
+func validateParams(checkName string, params map[string]any) error {
+	spec, ok := ParamSpecs[checkName]
+	if !ok {
+		return nil // no spec registered — skip validation
+	}
+
+	for key, val := range params {
+		// Skip engine-injected params (__ prefix).
+		if len(key) >= 2 && key[:2] == "__" {
+			continue
+		}
+
+		expectedType, accepted := spec.Accepted[key]
+		if !accepted {
+			suggestion := nearestKey(key, spec.Accepted)
+			if suggestion != "" {
+				return fmt.Errorf("unknown param %q for check %q (did you mean %q?)", key, checkName, suggestion)
+			}
+			return fmt.Errorf("unknown param %q for check %q", key, checkName)
+		}
+
+		// Type validation for params with declared types.
+		if expectedType != "" && val != nil {
+			if err := checkParamType(key, val, expectedType); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkParamType validates that val matches the expected type string.
+func checkParamType(key string, val any, expected string) error {
+	actual := fmt.Sprintf("%T", val)
+	switch expected {
+	case "map[string]any":
+		if _, ok := val.(map[string]any); !ok {
+			return fmt.Errorf("param %q: expected %s, got %s", key, expected, actual)
+		}
+	case "[]string":
+		switch val.(type) {
+		case []string, []any:
+			// both acceptable (YAML produces []any)
+		default:
+			return fmt.Errorf("param %q: expected %s, got %s", key, expected, actual)
+		}
+	}
+	return nil
+}
+
+// nearestKey finds the most similar key in accepted using simple edit distance.
+func nearestKey(input string, accepted map[string]string) string {
+	best := ""
+	bestDist := len(input) + 1
+	for key := range accepted {
+		d := editDist(input, key)
+		if d < bestDist && d <= 3 { // threshold: max 3 edits
+			bestDist = d
+			best = key
+		}
+	}
+	return best
+}
+
+func editDist(a, b string) int {
+	la, lb := len(a), len(b)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+	prev := make([]int, lb+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= la; i++ {
+		curr := make([]int, lb+1)
+		curr[0] = i
+		for j := 1; j <= lb; j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			curr[j] = min3(curr[j-1]+1, prev[j]+1, prev[j-1]+cost)
+		}
+		prev = curr
+	}
+	return prev[lb]
+}
+
+func min3(a, b, c int) int {
+	if a < b {
+		if a < c {
+			return a
+		}
+		return c
+	}
+	if b < c {
+		return b
+	}
+	return c
 }
 
 // FixResult describes one fix applied.
@@ -74,14 +268,41 @@ func New(eng *engine.Engine, registry map[string]FixFunc) *Fixer {
 }
 
 // Fix runs checks, applies fixes for fixable findings, writes results.
+// When opts.DryRun is true, the filesystem is wrapped in a read-only guard
+// that makes writes physically impossible — belt-and-suspenders defense.
 func (f *Fixer) Fix(fsys vfs.WriteFS, ruleList []rules.Rule, opts Options) (*FixReport, error) {
-	findings := f.engine.Run(fsys, ruleList)
+	// Belt-and-suspenders: when DryRun is true, wrap the FS so WriteFile
+	// is physically impossible, not just gated by an if-check.
+	writeFS := fsys
+	if opts.DryRun {
+		writeFS = &readOnlyFS{inner: fsys}
+	}
+
+	// Early param validation: reject unknown keys and type mismatches
+	// BEFORE running checks — a bad param can cause the check to silently
+	// produce no findings, hiding the error.
+	for _, rule := range ruleList {
+		if _, hasSpec := ParamSpecs[rule.Check]; hasSpec {
+			if err := validateParams(rule.Check, rule.Params); err != nil {
+				return &FixReport{
+					Unfixable: []SkipResult{{
+						FilePath: "(all)",
+						RuleID:   rule.ID,
+						Reason:   "param error: " + err.Error(),
+					}},
+					UnfixableCount: 1,
+				}, fmt.Errorf("param validation failed for rule %q: %w", rule.ID, err)
+			}
+		}
+	}
+
+	findings := f.engine.Run(writeFS, ruleList)
 
 	// Resolve scanned paths (vault index) for fixers that need cross-file context.
 	// Mirrors engine/cached.go:153 injection of __scanned_paths.
 	scannedPaths := opts.Files
 	if scannedPaths == nil {
-		docs, err := engine.Scan(fsys)
+		docs, err := engine.Scan(writeFS)
 		if err == nil {
 			scannedPaths = make([]string, len(docs))
 			for i, d := range docs {
@@ -171,7 +392,7 @@ func (f *Fixer) Fix(fsys vfs.WriteFS, ruleList []rules.Rule, opts Options) (*Fix
 		// Read file content (use previously fixed content if available)
 		content, ok := fixedContent[key.path]
 		if !ok {
-			data, err := fs.ReadFile(fsys, key.path)
+			data, err := fs.ReadFile(writeFS, key.path)
 			if err != nil {
 				// Fix #5: Report read errors instead of silently dropping.
 				report.Unfixable = append(report.Unfixable, SkipResult{
@@ -193,6 +414,17 @@ func (f *Fixer) Fix(fsys vfs.WriteFS, ruleList []rules.Rule, opts Options) (*Fix
 		}
 		effectiveParams["__scanned_paths"] = scannedPaths
 		effectiveParams["__file_path"] = key.path
+
+		// Strict param validation: reject unknown keys and type mismatches.
+		if err := validateParams(rule.Check, effectiveParams); err != nil {
+			report.Unfixable = append(report.Unfixable, SkipResult{
+				FilePath: key.path,
+				RuleID:   key.ruleID,
+				Reason:   "param error: " + err.Error(),
+			})
+			report.UnfixableCount++
+			continue
+		}
 
 		changed, newContent, actions, err := fixFn(content, effectiveParams)
 		if err != nil {
@@ -241,7 +473,7 @@ func (f *Fixer) Fix(fsys vfs.WriteFS, ruleList []rules.Rule, opts Options) (*Fix
 		sort.Strings(writePaths)
 
 		for _, path := range writePaths {
-			if err := fsys.WriteFile(path, fixedContent[path], 0644); err != nil {
+			if err := writeFS.WriteFile(path, fixedContent[path], 0644); err != nil {
 				// Move this file's fixes from Fixed to Unfixable.
 				var kept []FixResult
 				for _, f := range report.Fixed {
@@ -263,4 +495,27 @@ func (f *Fixer) Fix(fsys vfs.WriteFS, ruleList []rules.Rule, opts Options) (*Fix
 	}
 
 	return report, nil
+}
+
+// readOnlyFS wraps a WriteFS and rejects all mutations.
+// Used as a safety net during dry-run to make writes physically impossible.
+type readOnlyFS struct {
+	inner vfs.WriteFS
+}
+
+func (r *readOnlyFS) Open(name string) (fs.File, error)           { return r.inner.Open(name) }
+func (r *readOnlyFS) WriteFile(string, []byte, fs.FileMode) error { return ErrDryRunWrite }
+func (r *readOnlyFS) MkdirAll(string, fs.FileMode) error          { return ErrDryRunWrite }
+func (r *readOnlyFS) Remove(string) error                         { return ErrDryRunWrite }
+func (r *readOnlyFS) Rename(string, string) error                 { return ErrDryRunWrite }
+func (r *readOnlyFS) ReadDir(name string) ([]fs.DirEntry, error)  { return fs.ReadDir(r.inner, name) }
+func (r *readOnlyFS) Stat(name string) (fs.FileInfo, error) {
+	return fs.Stat(r.inner, name)
+}
+
+var _ vfs.WriteFS = (*readOnlyFS)(nil) // compile-time interface check
+
+// ReadDirFile exposes ReadDir for engine.Scan which needs fs.ReadDirFS.
+func (r *readOnlyFS) ReadDirFile(name string) ([]fs.DirEntry, error) {
+	return fs.ReadDir(r.inner, name)
 }

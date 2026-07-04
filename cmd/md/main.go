@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -258,7 +259,9 @@ func fixHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config
 			DryRun bool     `json:"dry-run"`
 		}
 		if req.Params != nil {
-			if err := json.Unmarshal(req.Params, &params); err != nil {
+			dec := json.NewDecoder(bytes.NewReader(req.Params))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&params); err != nil {
 				return cli.ErrorResponse(cli.ErrInvalidParams, "invalid params: "+err.Error())
 			}
 		}
@@ -336,7 +339,9 @@ func mvHandlerFS(eng *engine.Engine, loadedRules []rules.Rule, cfgErr error, mak
 			DryRun bool   `json:"dry-run"`
 		}
 		if req.Params != nil {
-			if err := json.Unmarshal(req.Params, &params); err != nil {
+			dec := json.NewDecoder(bytes.NewReader(req.Params))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&params); err != nil {
 				return cli.ErrorResponse(cli.ErrInvalidParams, "invalid params: "+err.Error())
 			}
 		}

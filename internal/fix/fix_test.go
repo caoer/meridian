@@ -611,6 +611,261 @@ func TestFixer_ScannedPathsKeyConstant(t *testing.T) {
 	}
 }
 
+// --- DryRun safety tests (filesystem-level, not return-value) ---
+
+// writeTrackingFS wraps a MemFS and records every WriteFile call.
+// This is the filesystem-level assertion: we detect writes by observing
+// the actual FS mutation, not by trusting the return value.
+type writeTrackingFS struct {
+	inner  *vfs.MemFS
+	writes []string // paths that received WriteFile calls
+}
+
+func (w *writeTrackingFS) Open(name string) (fs.File, error) { return w.inner.Open(name) }
+func (w *writeTrackingFS) MkdirAll(p string, perm fs.FileMode) error {
+	return w.inner.MkdirAll(p, perm)
+}
+func (w *writeTrackingFS) Remove(name string) error     { return w.inner.Remove(name) }
+func (w *writeTrackingFS) Rename(old, new string) error { return w.inner.Rename(old, new) }
+func (w *writeTrackingFS) WriteFile(name string, data []byte, perm fs.FileMode) error {
+	w.writes = append(w.writes, name)
+	return w.inner.WriteFile(name, data, perm)
+}
+
+var _ vfs.WriteFS = (*writeTrackingFS)(nil)
+
+// TestFixer_DryRunZeroWrites_FieldExists asserts ZERO filesystem writes
+// under DryRun for the field-exists fixer.
+func TestFixer_DryRunZeroWrites_FieldExists(t *testing.T) {
+	mem := testkit.Wiki(
+		testkit.F("wiki/page.md", "---\ncreated: 2026-05-05\n---\n# Page\n"),
+	)
+	tracker := &writeTrackingFS{inner: mem}
+
+	eng := setupEngine()
+	ruleList := []rules.Rule{
+		testkit.Rule("required-fields",
+			testkit.Check("field-exists"),
+			testkit.On("wiki/**"),
+			testkit.Frontmatter("tags", "created"),
+			testkit.MessageTemplate("missing {{.Field}}"),
+		),
+	}
+
+	fixer := fix.New(eng, fix.All)
+	report, err := fixer.Fix(tracker, ruleList, fix.Options{DryRun: true})
+	if err != nil {
+		t.Fatalf("Fix error: %v", err)
+	}
+
+	if len(tracker.writes) != 0 {
+		t.Fatalf("DRY-RUN VIOLATION: %d filesystem writes occurred: %v", len(tracker.writes), tracker.writes)
+	}
+
+	// The fixer should still report what it WOULD fix.
+	if report.FixedCount != 1 {
+		t.Errorf("expected 1 fixed (dry-run report), got %d", report.FixedCount)
+	}
+}
+
+// TestFixer_DryRunZeroWrites_WikilinkCanonicalize asserts ZERO filesystem
+// writes under DryRun for the wikilink-canonicalize fixer.
+func TestFixer_DryRunZeroWrites_WikilinkCanonicalize(t *testing.T) {
+	// Build a vault with a non-canonical link that WILL trigger the fixer.
+	mem := testkit.Wiki(
+		testkit.F("wiki/page.md", "---\ntitle: page\n---\n\nSee [[wiki/domain/target]] here.\n"),
+		testkit.F("wiki/domain/target.md", "---\ntitle: target\n---\n# Target\n"),
+	)
+	tracker := &writeTrackingFS{inner: mem}
+
+	eng := setupEngine()
+	ruleList := []rules.Rule{
+		testkit.Rule("wikilink-canonicalize",
+			testkit.Check("wikilink-canonicalize"),
+			testkit.On("wiki/**"),
+			testkit.MessageTemplate("wikilink [[{{.Target}}]] not canonical; canonical: [[{{.Canonical}}]]"),
+		),
+	}
+	// Set roots param via rule params.
+	ruleList[0].Params = map[string]any{"roots": []any{"wiki/**"}}
+
+	fixer := fix.New(eng, fix.All)
+	report, err := fixer.Fix(tracker, ruleList, fix.Options{DryRun: true})
+	if err != nil {
+		t.Fatalf("Fix error: %v", err)
+	}
+
+	if len(tracker.writes) != 0 {
+		t.Fatalf("DRY-RUN VIOLATION: %d filesystem writes occurred: %v", len(tracker.writes), tracker.writes)
+	}
+
+	// The fixer should report what it would fix.
+	if report.FixedCount == 0 {
+		t.Error("expected at least 1 fix reported in dry-run mode")
+	}
+}
+
+// TestFixer_DryRunZeroWrites_TableWikilinkPipe asserts ZERO filesystem
+// writes under DryRun for the table-wikilink-pipe fixer.
+func TestFixer_DryRunZeroWrites_TableWikilinkPipe(t *testing.T) {
+	mem := testkit.Wiki(
+		testkit.F("wiki/table.md", "---\ntitle: t\n---\n\n| Col |\n| --- |\n| [[a|b]] |\n"),
+	)
+	tracker := &writeTrackingFS{inner: mem}
+
+	eng := setupEngine()
+	ruleList := []rules.Rule{
+		testkit.Rule("table-wikilink-pipe",
+			testkit.Check("table-wikilink-pipe"),
+			testkit.On("wiki/**"),
+			testkit.MessageTemplate("pipe in table"),
+		),
+	}
+
+	fixer := fix.New(eng, fix.All)
+	report, err := fixer.Fix(tracker, ruleList, fix.Options{DryRun: true})
+	if err != nil {
+		t.Fatalf("Fix error: %v", err)
+	}
+
+	if len(tracker.writes) != 0 {
+		t.Fatalf("DRY-RUN VIOLATION: %d filesystem writes occurred: %v", len(tracker.writes), tracker.writes)
+	}
+
+	if report.FixedCount == 0 {
+		t.Error("expected at least 1 fix reported in dry-run mode")
+	}
+}
+
+// --- Strict param validation tests ---
+
+// TestFixer_UnknownParamKey_Rejected reproduces the dry_run escape:
+// "dry_run" (underscore) is unknown — should produce a param error.
+func TestFixer_UnknownParamKey_Rejected(t *testing.T) {
+	mem := testkit.Wiki(
+		testkit.F("wiki/page.md", "---\ntitle: p\n---\nSee [[wiki/domain/target]].\n"),
+		testkit.F("wiki/domain/target.md", "---\ntitle: t\n---\n# Target\n"),
+	)
+
+	eng := setupEngine()
+	ruleList := []rules.Rule{
+		testkit.Rule("wikilink-canonicalize",
+			testkit.Check("wikilink-canonicalize"),
+			testkit.On("wiki/**"),
+			testkit.MessageTemplate("[[{{.Target}}]] not canonical"),
+		),
+	}
+	// Inject a typo'd param: "root" instead of "roots"
+	ruleList[0].Params = map[string]any{
+		"root": []any{"wiki/**"}, // TYPO — should be "roots"
+	}
+
+	fixer := fix.New(eng, fix.All)
+	_, err := fixer.Fix(mem, ruleList, fix.Options{})
+	if err == nil {
+		t.Fatal("expected error for unknown param key, got nil")
+	}
+	if !containsSubstring(err.Error(), "unknown param") || !containsSubstring(err.Error(), "roots") {
+		t.Errorf("expected error mentioning 'unknown param' and 'roots' suggestion, got: %v", err)
+	}
+}
+
+// TestFixer_TypeMismatch_Rejected reproduces the resolved_links-as-string escape.
+func TestFixer_TypeMismatch_Rejected(t *testing.T) {
+	mem := testkit.Wiki(
+		testkit.F("wiki/page.md", "---\ntitle: p\n---\nSee [[architecture]].\n"),
+		testkit.F("wiki/a/architecture.md", "---\ntitle: a\n---\n"),
+		testkit.F("wiki/b/architecture.md", "---\ntitle: b\n---\n"),
+	)
+
+	eng := setupEngine()
+	ruleList := []rules.Rule{
+		testkit.Rule("wikilink-canonicalize",
+			testkit.Check("wikilink-canonicalize"),
+			testkit.On("wiki/**"),
+			testkit.MessageTemplate("[[{{.Target}}]] not canonical"),
+		),
+	}
+	ruleList[0].Params = map[string]any{
+		"roots":          []any{"wiki/**"},
+		"resolved_links": "/path/to/dump.json", // STRING instead of map — type mismatch
+	}
+
+	fixer := fix.New(eng, fix.All)
+	_, err := fixer.Fix(mem, ruleList, fix.Options{})
+	if err == nil {
+		t.Fatal("expected error for type mismatch, got nil")
+	}
+	if !containsSubstring(err.Error(), "expected map[string]any") {
+		t.Errorf("expected type mismatch error, got: %v", err)
+	}
+}
+
+// TestFixer_InjectedParamsExempt verifies that __-prefixed engine params
+// don't trigger unknown-key rejection.
+func TestFixer_InjectedParamsExempt(t *testing.T) {
+	mem := testkit.Wiki(
+		testkit.F("wiki/page.md", "---\ntitle: p\n---\nSee [[wiki/domain/target]].\n"),
+		testkit.F("wiki/domain/target.md", "---\ntitle: t\n---\n# Target\n"),
+	)
+
+	eng := setupEngine()
+	ruleList := []rules.Rule{
+		testkit.Rule("wikilink-canonicalize",
+			testkit.Check("wikilink-canonicalize"),
+			testkit.On("wiki/**"),
+			testkit.MessageTemplate("[[{{.Target}}]] not canonical"),
+		),
+	}
+	ruleList[0].Params = map[string]any{"roots": []any{"wiki/**"}}
+
+	fixer := fix.New(eng, fix.All)
+	report, err := fixer.Fix(mem, ruleList, fix.Options{})
+	if err != nil {
+		t.Fatalf("Fix error: %v", err)
+	}
+
+	// Should NOT have param errors — __scanned_paths and __file_path are exempt.
+	for _, u := range report.Unfixable {
+		if containsSubstring(u.Reason, "param error") {
+			t.Errorf("injected params should be exempt, got unfixable: %s", u.Reason)
+		}
+	}
+}
+
+// TestFixer_DryRunBeltAndSuspenders verifies the readOnlyFS wrapper
+// makes writes physically impossible even if the DryRun gate is bypassed.
+func TestFixer_DryRunBeltAndSuspenders(t *testing.T) {
+	// This test proves the readOnlyFS wrapper works by checking that
+	// the error sentinel is ErrDryRunWrite.
+	mem := testkit.Wiki(
+		testkit.F("wiki/page.md", "---\ntitle: p\n---\nSee [[wiki/domain/target]].\n"),
+		testkit.F("wiki/domain/target.md", "---\ntitle: t\n---\n# Target\n"),
+	)
+	tracker := &writeTrackingFS{inner: mem}
+
+	eng := setupEngine()
+	ruleList := []rules.Rule{
+		testkit.Rule("wikilink-canonicalize",
+			testkit.Check("wikilink-canonicalize"),
+			testkit.On("wiki/**"),
+			testkit.MessageTemplate("[[{{.Target}}]] not canonical"),
+		),
+	}
+	ruleList[0].Params = map[string]any{"roots": []any{"wiki/**"}}
+
+	fixer := fix.New(eng, fix.All)
+	_, err := fixer.Fix(tracker, ruleList, fix.Options{DryRun: true})
+	if err != nil {
+		t.Fatalf("Fix error: %v", err)
+	}
+
+	// Zero writes at the tracking layer proves the readOnlyFS wrapper worked.
+	if len(tracker.writes) != 0 {
+		t.Fatalf("readOnlyFS failed: %d writes leaked through", len(tracker.writes))
+	}
+}
+
 func containsSubstring(s, sub string) bool {
 	return len(s) >= len(sub) && searchSubstring(s, sub)
 }

@@ -133,6 +133,14 @@ func TestFixCorpus(t *testing.T) {
 			}
 
 			changed, newContent, actions, err := WikilinkCanonicalizeFix([]byte(content), params)
+
+			// Zero-hit mapping cases (wrong-universe) should abort with error.
+			if tc.ID == "regime-b-no-dump" || tc.ID == "regime-b-stale-dump" {
+				if err == nil {
+					t.Fatalf("expected error for zero-hit mapping case %q, got nil", tc.ID)
+				}
+				return // error is the expected outcome
+			}
 			if err != nil {
 				t.Fatalf("fixer error: %v", err)
 			}
@@ -329,12 +337,8 @@ func TestFixCorpus_RegimeB_Resolved(t *testing.T) {
 	}
 }
 
-// TestFixCorpus_RegimeB_Absent verifies that regime-b without a mapping
-// for the source file leaves ambiguous links unchanged silently.
-// When the resolved_links mapping has no entry for the source file,
-// the fixer has no ground truth and leaves ambiguous links untouched
-// without emitting AMBIGUOUS actions (those only fire when the mapping
-// IS present but doesn't resolve the target).
+// TestFixCorpus_RegimeB_Absent verifies that regime-b without valid
+// mapping targets aborts with a zero-hit error (wrong-universe signal).
 func TestFixCorpus_RegimeB_Absent(t *testing.T) {
 	cases := loadFixCorpusManifest(t)
 	for _, tc := range cases {
@@ -354,25 +358,9 @@ func TestFixCorpus_RegimeB_Absent(t *testing.T) {
 				"resolved_links": buildResolvedLinksParam(tc),
 			}
 
-			changed, newContent, _, err := WikilinkCanonicalizeFix([]byte(content), params)
-			if err != nil {
-				t.Fatalf("fixer error: %v", err)
-			}
-
-			// No mapping for source → fixer cannot resolve → no change.
-			if changed {
-				t.Error("expected no change when resolved_links mapping absent for source file")
-			}
-
-			// Ambiguous links should remain unchanged in output.
-			for _, link := range tc.Links {
-				if link.ExpectedStatus == "ambiguous" {
-					wl := buildWikilink(link)
-					if !strings.Contains(string(newContent), wl) {
-						t.Errorf("ambiguous link %s should remain unchanged, not found in output",
-							wl)
-					}
-				}
+			_, _, _, err := WikilinkCanonicalizeFix([]byte(content), params)
+			if err == nil {
+				t.Fatal("expected error for zero-hit mapping (wrong-universe)")
 			}
 		})
 	}
@@ -506,12 +494,18 @@ func TestFixCorpus_ReportCompleteness(t *testing.T) {
 			}
 
 			// For regime-b, add resolved_links so the fixer exercises that path.
+			// Skip zero-hit mapping cases (they correctly abort with error).
 			if tc.Regime == "b" {
-				params["resolved_links"] = buildResolvedLinksParam(tc)
+				rl := buildResolvedLinksParam(tc)
+				params["resolved_links"] = rl
 			}
 
 			_, _, actions, err := WikilinkCanonicalizeFix([]byte(content), params)
+			// Zero-hit mapping cases abort — not a completeness violation.
 			if err != nil {
+				if tc.ID == "regime-b-no-dump" || tc.ID == "regime-b-stale-dump" {
+					return // expected abort
+				}
 				t.Fatalf("fixer error: %v", err)
 			}
 

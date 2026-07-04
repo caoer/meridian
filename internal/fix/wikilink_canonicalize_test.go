@@ -266,22 +266,24 @@ func TestCanonFix_RegimeB_AmbiguousNoMapping_Reports(t *testing.T) {
 }
 
 func TestCanonFix_RegimeB_AmbiguousWithMapping_StillAmbiguous(t *testing.T) {
+	// Mapping has the correct source but points to a page that exists but
+	// doesn't match the ambiguous target's candidates — still ambiguous.
 	content := []byte("See [[architecture]] for details.\n")
 	paths := []string{
 		"wiki/test.md",
 		"wiki/meridian/architecture.md",
 		"wiki/osfiles/architecture.md",
+		"wiki/other/thing.md", // exists in vault so mapping isn't zero-hit
 	}
 	params := canonFixParams(paths)
-	// Mapping exists but doesn't contain the target — still ambiguous
 	params["resolved_links"] = map[string]any{
 		"wiki/test.md": map[string]any{
-			"wiki/other/thing.md": 1,
+			"wiki/other/thing.md": 1, // exists but not an architecture candidate
 		},
 	}
 	changed, _, actions, err := WikilinkCanonicalizeFix(content, params)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if changed {
 		t.Fatal("expected no change")
@@ -572,5 +574,73 @@ func TestCanonFix_BrokenLink_NoChange(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("expected no change for broken link")
+	}
+}
+
+// --- Mapping-zero-hits abort ---
+
+func TestCanonFix_MappingZeroHits_Aborts(t *testing.T) {
+	// resolved_links mapping has targets that match NOTHING in the scanned
+	// universe → wrong-universe signal → hard abort with error.
+	content := []byte("See [[architecture]] for details.\n")
+	paths := []string{
+		"wiki/test.md",
+		"wiki/a/architecture.md",
+		"wiki/b/architecture.md",
+	}
+	params := canonFixParams(paths)
+	params["resolved_links"] = map[string]any{
+		"wiki/test.md": map[string]any{
+			"completely/wrong/universe/page.md": 1,
+			"also/not/here/other.md":            2,
+		},
+	}
+	changed, _, _, err := WikilinkCanonicalizeFix(content, params)
+	if err == nil {
+		t.Fatal("expected error for zero-hit mapping, got nil")
+	}
+	if !strings.Contains(err.Error(), "ZERO match") {
+		t.Fatalf("expected zero-match error, got: %v", err)
+	}
+	if changed {
+		t.Fatal("expected no change on abort")
+	}
+}
+
+func TestCanonFix_MappingPartialHits_Proceeds(t *testing.T) {
+	// resolved_links mapping has SOME targets that match → proceeds normally.
+	content := []byte("See [[architecture]] for details.\n")
+	paths := []string{
+		"wiki/test.md",
+		"wiki/a/architecture.md",
+		"wiki/b/architecture.md",
+	}
+	params := canonFixParams(paths)
+	params["resolved_links"] = map[string]any{
+		"wiki/test.md": map[string]any{
+			"wiki/a/architecture.md": 1, // this one matches
+			"wiki/nonexistent.md":    1, // this one doesn't — but partial is OK
+		},
+	}
+	changed, newContent, _, err := WikilinkCanonicalizeFix(content, params)
+	if err != nil {
+		t.Fatalf("expected no error for partial-hit mapping, got: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected change — mapping resolves the ambiguity")
+	}
+	got := string(newContent)
+	if !strings.Contains(got, "[[a/architecture]]") {
+		t.Fatalf("expected [[a/architecture]], got %q", got)
+	}
+}
+
+func TestCanonFix_MappingNoResolvedLinks_NoAbort(t *testing.T) {
+	// No resolved_links param at all → regime (a), no validation needed.
+	content := []byte("See [[page]] for details.\n")
+	paths := []string{"wiki/test.md", "wiki/page.md"}
+	_, _, _, err := WikilinkCanonicalizeFix(content, canonFixParams(paths))
+	if err != nil {
+		t.Fatalf("expected no error without resolved_links, got: %v", err)
 	}
 }
