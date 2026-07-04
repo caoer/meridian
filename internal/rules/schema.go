@@ -28,6 +28,36 @@ type Exclude struct {
 	Tag  string // non-empty if tag exclude
 }
 
+// ApplyConfigParams merges config-level rule params into loaded rules.
+// For each rule whose ID matches a key in configParams, the config values
+// are shallow-merged into the rule's Params (config wins on conflict).
+// Returns a new slice — does not mutate originals.
+func ApplyConfigParams(loaded []Rule, configParams map[string]map[string]any) []Rule {
+	if len(configParams) == 0 {
+		return loaded
+	}
+	result := make([]Rule, len(loaded))
+	for i, r := range loaded {
+		cp, ok := configParams[r.ID]
+		if !ok || len(cp) == 0 {
+			result[i] = r
+			continue
+		}
+		// Copy rule to avoid mutating original.
+		merged := make(map[string]any, len(r.Params)+len(cp))
+		for k, v := range r.Params {
+			merged[k] = v
+		}
+		for k, v := range cp {
+			merged[k] = v // config wins
+		}
+		nr := r
+		nr.Params = merged
+		result[i] = nr
+	}
+	return result
+}
+
 // ParseOnFilter extracts paths, tags, and excludes from raw on strings.
 func ParseOnFilter(raw []string) OnFilter {
 	var f OnFilter

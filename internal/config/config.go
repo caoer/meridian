@@ -11,18 +11,19 @@ import (
 
 // Config represents a parsed meridian.yaml.
 type Config struct {
-	Version        string             `yaml:"version"`
-	RulePacks      []RulePack         `yaml:"rule_packs"`
-	Profiles       map[string]Profile `yaml:"profiles"`
-	DefaultProfile string             `yaml:"default_profile"`
-	Scan           ScanConfig         `yaml:"scan"`
-	Watch          *WatchConfig       `yaml:"watch"`
+	Version        string                    `yaml:"version"`
+	RulePacks      []RulePack                `yaml:"rule_packs"`
+	Profiles       map[string]Profile        `yaml:"profiles"`
+	DefaultProfile string                    `yaml:"default_profile"`
+	Scan           ScanConfig                `yaml:"scan"`
+	Watch          *WatchConfig              `yaml:"watch"`
+	RuleParams     map[string]map[string]any `yaml:"rule_params"`
 }
 
 // WatchConfig controls the md watch daemon.
 type WatchConfig struct {
-	DebounceMs int                    `yaml:"debounce_ms"`
-	Ignore     []string               `yaml:"ignore"`
+	DebounceMs int                      `yaml:"debounce_ms"`
+	Ignore     []string                 `yaml:"ignore"`
 	Hooks      map[string]hooks.HookDef `yaml:"hooks"`
 }
 

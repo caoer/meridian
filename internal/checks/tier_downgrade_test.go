@@ -43,7 +43,9 @@ func TestTierLevel_Unknown(t *testing.T) {
 	}
 }
 
-// --- REFUSAL TESTS: tier-downgrade must produce findings ---
+// ==========================================================================
+// REFUSAL TESTS: tier-downgrade must produce findings
+// ==========================================================================
 
 func TestTierDowngrade_ConfidentialIntoPublicPage(t *testing.T) {
 	doc := &engine.Document{
@@ -59,21 +61,18 @@ func TestTierDowngrade_ConfidentialIntoPublicPage(t *testing.T) {
 		},
 	}
 	findings := tierDowngradeCheck(doc, params)
-	if len(findings) != 1 {
-		t.Fatalf("REFUSAL PROOF: want 1 finding for tier downgrade, got %d", len(findings))
+	found := findByField(findings, "foreign-touched")
+	if found == nil {
+		t.Fatalf("REFUSAL PROOF: want tier-downgrade finding, got none among %d findings", len(findings))
 	}
-	f := findings[0]
-	if f.TemplateData["PageTier"] != "public" {
-		t.Errorf("PageTier = %q, want public", f.TemplateData["PageTier"])
+	if found.TemplateData["PageTier"] != "public" {
+		t.Errorf("PageTier = %q, want public", found.TemplateData["PageTier"])
 	}
-	if f.TemplateData["SourceTier"] != "confidential" {
-		t.Errorf("SourceTier = %q, want confidential", f.TemplateData["SourceTier"])
+	if found.TemplateData["SourceTier"] != "confidential" {
+		t.Errorf("SourceTier = %q, want confidential", found.TemplateData["SourceTier"])
 	}
-	if f.TemplateData["Source"] != "cos-wiki" {
-		t.Errorf("Source = %q, want cos-wiki", f.TemplateData["Source"])
-	}
-	if f.TemplateData["Field"] != "foreign-touched" {
-		t.Errorf("Field = %q, want foreign-touched", f.TemplateData["Field"])
+	if found.TemplateData["Source"] != "cos-wiki" {
+		t.Errorf("Source = %q, want cos-wiki", found.TemplateData["Source"])
 	}
 }
 
@@ -91,16 +90,16 @@ func TestTierDowngrade_SecretIntoInternalPage(t *testing.T) {
 		},
 	}
 	findings := tierDowngradeCheck(doc, params)
-	if len(findings) != 1 {
-		t.Fatalf("REFUSAL PROOF: want 1 finding for secret→internal downgrade, got %d", len(findings))
+	found := findByField(findings, "foreign-touched")
+	if found == nil {
+		t.Fatalf("REFUSAL PROOF: want finding for secret→internal downgrade, got none among %d", len(findings))
 	}
-	if findings[0].TemplateData["SourceTier"] != "secret" {
-		t.Errorf("SourceTier = %q, want secret", findings[0].TemplateData["SourceTier"])
+	if found.TemplateData["SourceTier"] != "secret" {
+		t.Errorf("SourceTier = %q, want secret", found.TemplateData["SourceTier"])
 	}
 }
 
 func TestTierDowngrade_HighestTierWins(t *testing.T) {
-	// Page touches two wikis: one public, one secret. Highest (secret) wins.
 	doc := &engine.Document{
 		Path: "sources/multi.md",
 		Frontmatter: map[string]any{
@@ -115,16 +114,16 @@ func TestTierDowngrade_HighestTierWins(t *testing.T) {
 		},
 	}
 	findings := tierDowngradeCheck(doc, params)
-	if len(findings) != 1 {
-		t.Fatalf("REFUSAL PROOF: want 1 finding (highest source tier=secret > page=internal), got %d", len(findings))
+	found := findByField(findings, "foreign-touched")
+	if found == nil {
+		t.Fatalf("REFUSAL PROOF: want finding (highest source=secret > page=internal), got none among %d", len(findings))
 	}
-	if findings[0].TemplateData["Source"] != "secret-wiki" {
-		t.Errorf("Source = %q, want secret-wiki (highest tier source)", findings[0].TemplateData["Source"])
+	if found.TemplateData["Source"] != "secret-wiki" {
+		t.Errorf("Source = %q, want secret-wiki (highest tier source)", found.TemplateData["Source"])
 	}
 }
 
 func TestTierDowngrade_UsesTargetTierWhenPageHasNoOwnTier(t *testing.T) {
-	// Page has no confidential/audience field; falls back to target-tier.
 	doc := &engine.Document{
 		Path: "sources/bare.md",
 		Frontmatter: map[string]any{
@@ -138,16 +137,16 @@ func TestTierDowngrade_UsesTargetTierWhenPageHasNoOwnTier(t *testing.T) {
 		"target-tier": "public",
 	}
 	findings := tierDowngradeCheck(doc, params)
-	if len(findings) != 1 {
-		t.Fatalf("REFUSAL PROOF: want 1 finding (page target-tier=public, source=secret), got %d", len(findings))
+	found := findByField(findings, "foreign-touched")
+	if found == nil {
+		t.Fatalf("REFUSAL PROOF: want finding (target-tier=public, source=secret), got none among %d", len(findings))
 	}
-	if findings[0].TemplateData["PageTier"] != "public" {
-		t.Errorf("PageTier = %q, want public (from target-tier)", findings[0].TemplateData["PageTier"])
+	if found.TemplateData["PageTier"] != "public" {
+		t.Errorf("PageTier = %q, want public (from target-tier)", found.TemplateData["PageTier"])
 	}
 }
 
 func TestTierDowngrade_ConfidentialFieldTakesPriorityOverAudience(t *testing.T) {
-	// Page has both confidential and audience; confidential wins.
 	doc := &engine.Document{
 		Path: "sources/both-fields.md",
 		Frontmatter: map[string]any{
@@ -162,15 +161,169 @@ func TestTierDowngrade_ConfidentialFieldTakesPriorityOverAudience(t *testing.T) 
 		},
 	}
 	findings := tierDowngradeCheck(doc, params)
-	if len(findings) != 1 {
-		t.Fatalf("REFUSAL PROOF: confidential=public should be used (not audience=secret), got %d findings", len(findings))
+	found := findByField(findings, "foreign-touched")
+	if found == nil {
+		t.Fatalf("REFUSAL PROOF: confidential=public should be used (not audience=secret), got none among %d", len(findings))
 	}
-	if findings[0].TemplateData["PageTier"] != "public" {
-		t.Errorf("PageTier = %q, want public (confidential field takes priority)", findings[0].TemplateData["PageTier"])
+	if found.TemplateData["PageTier"] != "public" {
+		t.Errorf("PageTier = %q, want public (confidential takes priority)", found.TemplateData["PageTier"])
 	}
 }
 
-// --- CLEAN PASS TESTS: no findings when tiers are compatible ---
+func TestTierDowngrade_ScalarStringForeignTouched(t *testing.T) {
+	// Finding 2: scalar string `foreign-touched: cos` (no brackets) must not evade.
+	doc := &engine.Document{
+		Path: "sources/scalar.md",
+		Frontmatter: map[string]any{
+			"foreign-touched": "secret-wiki", // scalar, not list
+			"confidential":    "public",
+		},
+	}
+	params := map[string]any{
+		"wiki-tiers": map[string]any{
+			"secret-wiki": "secret",
+		},
+	}
+	findings := tierDowngradeCheck(doc, params)
+	found := findByField(findings, "foreign-touched")
+	if found == nil {
+		t.Fatalf("REFUSAL PROOF (fail-closed): scalar foreign-touched must not evade, got none among %d", len(findings))
+	}
+}
+
+// ==========================================================================
+// FAIL-CLOSED REFUSAL: unrecognized tiers produce ERROR, never exemption
+// ==========================================================================
+
+func TestTierDowngrade_FailClosed_PageTypoConfidential(t *testing.T) {
+	// Finding 3: 'confidential: secrit' typo → ERROR unconditionally.
+	doc := &engine.Document{
+		Path: "sources/typo.md",
+		Frontmatter: map[string]any{
+			"confidential": "secrit", // typo
+		},
+	}
+	params := map[string]any{}
+	findings := tierDowngradeCheck(doc, params)
+	if len(findings) != 1 {
+		t.Fatalf("REFUSAL PROOF (fail-closed): typo tier must produce finding, got %d", len(findings))
+	}
+	if findings[0].TemplateData["Source"] != "confidential" {
+		t.Errorf("Source = %q, want confidential", findings[0].TemplateData["Source"])
+	}
+}
+
+func TestTierDowngrade_FailClosed_PageTypoAudience(t *testing.T) {
+	doc := &engine.Document{
+		Path: "sources/typo2.md",
+		Frontmatter: map[string]any{
+			"audience": "publik", // typo
+		},
+	}
+	params := map[string]any{}
+	findings := tierDowngradeCheck(doc, params)
+	if len(findings) != 1 {
+		t.Fatalf("REFUSAL PROOF (fail-closed): typo audience must produce finding, got %d", len(findings))
+	}
+	if findings[0].TemplateData["Source"] != "audience" {
+		t.Errorf("Source = %q, want audience", findings[0].TemplateData["Source"])
+	}
+}
+
+func TestTierDowngrade_FailClosed_BothFieldsTypo(t *testing.T) {
+	doc := &engine.Document{
+		Path: "sources/both-typo.md",
+		Frontmatter: map[string]any{
+			"confidential": "secrit",
+			"audience":     "publik",
+		},
+	}
+	params := map[string]any{}
+	findings := tierDowngradeCheck(doc, params)
+	if len(findings) != 2 {
+		t.Fatalf("REFUSAL PROOF (fail-closed): both typo fields must produce 2 findings, got %d", len(findings))
+	}
+}
+
+func TestTierDowngrade_FailClosed_WikiTiersInvalidValue(t *testing.T) {
+	// Finding 4: invalid wiki-tiers value → ERROR unconditionally.
+	doc := &engine.Document{
+		Path:        "sources/any.md",
+		Frontmatter: map[string]any{},
+	}
+	params := map[string]any{
+		"wiki-tiers": map[string]any{
+			"bad-wiki": "ultra-secret", // not a recognized tier
+		},
+	}
+	findings := tierDowngradeCheck(doc, params)
+	if len(findings) != 1 {
+		t.Fatalf("REFUSAL PROOF (fail-closed): invalid wiki-tiers value must produce finding, got %d", len(findings))
+	}
+	if findings[0].TemplateData["Source"] != "bad-wiki" {
+		t.Errorf("Source = %q, want bad-wiki", findings[0].TemplateData["Source"])
+	}
+}
+
+func TestTierDowngrade_FailClosed_WikiTiersMultipleInvalid(t *testing.T) {
+	doc := &engine.Document{
+		Path:        "sources/any.md",
+		Frontmatter: map[string]any{},
+	}
+	params := map[string]any{
+		"wiki-tiers": map[string]any{
+			"good-wiki": "secret",
+			"bad-wiki1": "ultra-secret",
+			"bad-wiki2": "classified",
+		},
+	}
+	findings := tierDowngradeCheck(doc, params)
+	if len(findings) != 2 {
+		t.Fatalf("want 2 findings for 2 invalid wiki-tier values, got %d", len(findings))
+	}
+}
+
+func TestTierDowngrade_FailClosed_TypoDoesNotExemptFromDowngrade(t *testing.T) {
+	// Page has valid audience + typo confidential + foreign-touched.
+	// The typo gets its own finding; the downgrade check uses audience.
+	doc := &engine.Document{
+		Path: "sources/typo-plus-downgrade.md",
+		Frontmatter: map[string]any{
+			"foreign-touched": []any{"secret-wiki"},
+			"confidential":    "secrit", // typo — own finding
+			"audience":        "public", // valid — used for downgrade comparison
+		},
+	}
+	params := map[string]any{
+		"wiki-tiers": map[string]any{
+			"secret-wiki": "secret",
+		},
+	}
+	findings := tierDowngradeCheck(doc, params)
+	// Expect: 1 typo finding + 1 downgrade finding = 2
+	if len(findings) != 2 {
+		t.Fatalf("want 2 findings (typo + downgrade), got %d", len(findings))
+	}
+	var hasTypo, hasDowngrade bool
+	for _, f := range findings {
+		if f.TemplateData["Source"] == "confidential" {
+			hasTypo = true
+		}
+		if f.TemplateData["Field"] == "foreign-touched" {
+			hasDowngrade = true
+		}
+	}
+	if !hasTypo {
+		t.Error("REFUSAL PROOF: missing typo finding for confidential")
+	}
+	if !hasDowngrade {
+		t.Error("REFUSAL PROOF: missing downgrade finding")
+	}
+}
+
+// ==========================================================================
+// CLEAN PASS TESTS: no findings when tiers are compatible
+// ==========================================================================
 
 func TestTierDowngrade_SameTier_NoFinding(t *testing.T) {
 	doc := &engine.Document{
@@ -192,7 +345,6 @@ func TestTierDowngrade_SameTier_NoFinding(t *testing.T) {
 }
 
 func TestTierDowngrade_UpgradeTier_NoFinding(t *testing.T) {
-	// Page at secret, source at public — not a downgrade.
 	doc := &engine.Document{
 		Path: "sources/upgrade.md",
 		Frontmatter: map[string]any{
@@ -211,12 +363,30 @@ func TestTierDowngrade_UpgradeTier_NoFinding(t *testing.T) {
 	}
 }
 
-// --- EDGE CASES ---
+func TestTierDowngrade_ValidTierFields_NoFinding(t *testing.T) {
+	// Page has valid tier fields, no foreign-touched — clean.
+	doc := &engine.Document{
+		Path: "sources/clean.md",
+		Frontmatter: map[string]any{
+			"confidential": "internal",
+			"audience":     "public",
+		},
+	}
+	params := map[string]any{}
+	findings := tierDowngradeCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for valid tier fields without foreign-touched, got %d", len(findings))
+	}
+}
+
+// ==========================================================================
+// EDGE CASES
+// ==========================================================================
 
 func TestTierDowngrade_NoForeignTouched_NoFinding(t *testing.T) {
 	doc := &engine.Document{
 		Path:        "domains/local.md",
-		Frontmatter: map[string]any{"confidential": "public"},
+		Frontmatter: map[string]any{},
 	}
 	params := map[string]any{
 		"wiki-tiers": map[string]any{
@@ -225,7 +395,7 @@ func TestTierDowngrade_NoForeignTouched_NoFinding(t *testing.T) {
 	}
 	findings := tierDowngradeCheck(doc, params)
 	if len(findings) != 0 {
-		t.Fatalf("want 0 findings when no foreign-touched, got %d", len(findings))
+		t.Fatalf("want 0 findings when no foreign-touched and no tier fields, got %d", len(findings))
 	}
 }
 
@@ -244,12 +414,11 @@ func TestTierDowngrade_EmptyForeignTouched_NoFinding(t *testing.T) {
 	}
 	findings := tierDowngradeCheck(doc, params)
 	if len(findings) != 0 {
-		t.Fatalf("want 0 findings for empty foreign-touched, got %d", len(findings))
+		t.Fatalf("want 0 findings for empty foreign-touched with valid tier, got %d", len(findings))
 	}
 }
 
-func TestTierDowngrade_NoWikiTiers_NoFinding(t *testing.T) {
-	// Wiki not participating in mounts — no wiki-tiers configured.
+func TestTierDowngrade_NoWikiTiers_NoDowngradeFinding(t *testing.T) {
 	doc := &engine.Document{
 		Path: "sources/orphan.md",
 		Frontmatter: map[string]any{
@@ -260,12 +429,11 @@ func TestTierDowngrade_NoWikiTiers_NoFinding(t *testing.T) {
 	params := map[string]any{}
 	findings := tierDowngradeCheck(doc, params)
 	if len(findings) != 0 {
-		t.Fatalf("want 0 findings when no wiki-tiers configured, got %d", len(findings))
+		t.Fatalf("want 0 findings when no wiki-tiers configured and valid page tier, got %d", len(findings))
 	}
 }
 
 func TestTierDowngrade_ForeignTouchedWikiNotInTierMap_NoFinding(t *testing.T) {
-	// foreign-touched lists a wiki that's not in wiki-tiers.
 	doc := &engine.Document{
 		Path: "sources/unknown-source.md",
 		Frontmatter: map[string]any{
@@ -281,27 +449,6 @@ func TestTierDowngrade_ForeignTouchedWikiNotInTierMap_NoFinding(t *testing.T) {
 	findings := tierDowngradeCheck(doc, params)
 	if len(findings) != 0 {
 		t.Fatalf("want 0 findings when foreign-touched wiki not in tier map, got %d", len(findings))
-	}
-}
-
-func TestTierDowngrade_MissingFieldsOnNonMountWiki_NoFinding(t *testing.T) {
-	// Page has foreign-touched but no confidential/audience AND no target-tier.
-	// Fields are optional unless mount participant — no finding.
-	doc := &engine.Document{
-		Path: "sources/bare-no-target.md",
-		Frontmatter: map[string]any{
-			"foreign-touched": []any{"secret-wiki"},
-		},
-	}
-	params := map[string]any{
-		"wiki-tiers": map[string]any{
-			"secret-wiki": "secret",
-		},
-		// No target-tier — wiki not participating as a target.
-	}
-	findings := tierDowngradeCheck(doc, params)
-	if len(findings) != 0 {
-		t.Fatalf("want 0 findings when page has no tier and no target-tier, got %d", len(findings))
 	}
 }
 
@@ -322,7 +469,6 @@ func TestTierDowngrade_NilFrontmatter_NoFinding(t *testing.T) {
 }
 
 func TestTierDowngrade_ForeignTouchedAsStringSlice(t *testing.T) {
-	// YAML sometimes deserializes as []string instead of []any.
 	doc := &engine.Document{
 		Path: "sources/string-slice.md",
 		Frontmatter: map[string]any{
@@ -336,13 +482,13 @@ func TestTierDowngrade_ForeignTouchedAsStringSlice(t *testing.T) {
 		},
 	}
 	findings := tierDowngradeCheck(doc, params)
-	if len(findings) != 1 {
-		t.Fatalf("want 1 finding for []string foreign-touched, got %d", len(findings))
+	found := findByField(findings, "foreign-touched")
+	if found == nil {
+		t.Fatalf("want downgrade finding for []string foreign-touched, got none among %d", len(findings))
 	}
 }
 
 func TestTierDowngrade_AudienceFallback(t *testing.T) {
-	// Page has audience but not confidential.
 	doc := &engine.Document{
 		Path: "sources/audience-only.md",
 		Frontmatter: map[string]any{
@@ -356,50 +502,12 @@ func TestTierDowngrade_AudienceFallback(t *testing.T) {
 		},
 	}
 	findings := tierDowngradeCheck(doc, params)
-	if len(findings) != 1 {
-		t.Fatalf("want 1 finding using audience fallback, got %d", len(findings))
+	found := findByField(findings, "foreign-touched")
+	if found == nil {
+		t.Fatalf("want downgrade finding using audience fallback, got none among %d", len(findings))
 	}
-	if findings[0].TemplateData["PageTier"] != "public" {
-		t.Errorf("PageTier = %q, want public (from audience)", findings[0].TemplateData["PageTier"])
-	}
-}
-
-func TestTierDowngrade_UnrecognizedPageTier_NoFinding(t *testing.T) {
-	// Page has a tier value not in the hierarchy.
-	doc := &engine.Document{
-		Path: "sources/custom-tier.md",
-		Frontmatter: map[string]any{
-			"foreign-touched": []any{"cos"},
-			"confidential":    "custom-level",
-		},
-	}
-	params := map[string]any{
-		"wiki-tiers": map[string]any{
-			"cos": "secret",
-		},
-	}
-	findings := tierDowngradeCheck(doc, params)
-	if len(findings) != 0 {
-		t.Fatalf("want 0 findings for unrecognized page tier, got %d", len(findings))
-	}
-}
-
-func TestTierDowngrade_UnrecognizedSourceTier_NoFinding(t *testing.T) {
-	doc := &engine.Document{
-		Path: "sources/custom-source.md",
-		Frontmatter: map[string]any{
-			"foreign-touched": []any{"weird-wiki"},
-			"confidential":    "public",
-		},
-	}
-	params := map[string]any{
-		"wiki-tiers": map[string]any{
-			"weird-wiki": "ultra-secret",
-		},
-	}
-	findings := tierDowngradeCheck(doc, params)
-	if len(findings) != 0 {
-		t.Fatalf("want 0 findings for unrecognized source tier, got %d", len(findings))
+	if found.TemplateData["PageTier"] != "public" {
+		t.Errorf("PageTier = %q, want public (from audience)", found.TemplateData["PageTier"])
 	}
 }
 
@@ -417,15 +525,36 @@ func TestTierDowngrade_FindingLine(t *testing.T) {
 		},
 	}
 	findings := tierDowngradeCheck(doc, params)
-	if len(findings) != 1 {
-		t.Fatalf("want 1 finding, got %d", len(findings))
+	found := findByField(findings, "foreign-touched")
+	if found == nil {
+		t.Fatalf("want finding, got none among %d", len(findings))
 	}
-	if findings[0].Line != 1 {
-		t.Errorf("Line = %d, want 1 (frontmatter-level finding)", findings[0].Line)
+	if found.Line != 1 {
+		t.Errorf("Line = %d, want 1 (frontmatter-level finding)", found.Line)
 	}
 }
 
-// --- extractWikiTiers ---
+func TestTierDowngrade_MissingTierFieldsNoForeignTouched_NoFinding(t *testing.T) {
+	// Page with no tier fields and no foreign-touched — truly uninvolved.
+	doc := &engine.Document{
+		Path: "sources/plain.md",
+		Frontmatter: map[string]any{
+			"tags":    []any{"type/source"},
+			"created": "2026-01-01",
+		},
+	}
+	params := map[string]any{
+		"wiki-tiers": map[string]any{
+			"cos": "secret",
+		},
+	}
+	findings := tierDowngradeCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for page with no tier fields and no foreign-touched, got %d", len(findings))
+	}
+}
+
+// --- extractAndValidateWikiTiers ---
 
 func TestExtractWikiTiers_Valid(t *testing.T) {
 	params := map[string]any{
@@ -434,7 +563,10 @@ func TestExtractWikiTiers_Valid(t *testing.T) {
 			"home": "secret",
 		},
 	}
-	got := extractWikiTiers(params)
+	got, findings := extractAndValidateWikiTiers(params)
+	if len(findings) != 0 {
+		t.Errorf("want 0 validation findings for valid tiers, got %d", len(findings))
+	}
 	if got["cos"] != "confidential" {
 		t.Errorf("cos = %q, want confidential", got["cos"])
 	}
@@ -444,16 +576,40 @@ func TestExtractWikiTiers_Valid(t *testing.T) {
 }
 
 func TestExtractWikiTiers_Missing(t *testing.T) {
-	got := extractWikiTiers(map[string]any{})
+	got, findings := extractAndValidateWikiTiers(map[string]any{})
 	if got != nil {
 		t.Errorf("want nil for missing wiki-tiers, got %v", got)
+	}
+	if len(findings) != 0 {
+		t.Errorf("want 0 findings, got %d", len(findings))
 	}
 }
 
 func TestExtractWikiTiers_WrongType(t *testing.T) {
-	got := extractWikiTiers(map[string]any{"wiki-tiers": "not a map"})
+	got, findings := extractAndValidateWikiTiers(map[string]any{"wiki-tiers": "not a map"})
 	if got != nil {
 		t.Errorf("want nil for wrong type, got %v", got)
+	}
+	if len(findings) != 0 {
+		t.Errorf("want 0 findings, got %d", len(findings))
+	}
+}
+
+func TestExtractWikiTiers_InvalidValue(t *testing.T) {
+	got, findings := extractAndValidateWikiTiers(map[string]any{
+		"wiki-tiers": map[string]any{
+			"good": "secret",
+			"bad":  "ultra-secret",
+		},
+	})
+	if got["good"] != "secret" {
+		t.Errorf("good = %q, want secret", got["good"])
+	}
+	if _, exists := got["bad"]; exists {
+		t.Error("bad should not be in valid tiers map")
+	}
+	if len(findings) != 1 {
+		t.Fatalf("want 1 validation finding for invalid tier, got %d", len(findings))
 	}
 }
 
@@ -502,4 +658,30 @@ func TestEffectivePageTier_NoTier(t *testing.T) {
 	if got != "" {
 		t.Errorf("got %q, want empty string (no tier available)", got)
 	}
+}
+
+func TestEffectivePageTier_TypoSkipped(t *testing.T) {
+	// Typo in confidential → skipped, falls to audience.
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"confidential": "secrit",
+			"audience":     "public",
+		},
+	}
+	got := effectivePageTier(doc, map[string]any{})
+	if got != "public" {
+		t.Errorf("got %q, want public (typo confidential skipped, audience fallback)", got)
+	}
+}
+
+// --- helpers ---
+
+// findByField returns the first finding whose Field matches, or nil.
+func findByField(findings []engine.RawFinding, field string) *engine.RawFinding {
+	for i, f := range findings {
+		if f.TemplateData["Field"] == field {
+			return &findings[i]
+		}
+	}
+	return nil
 }
