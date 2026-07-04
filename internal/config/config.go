@@ -17,12 +17,13 @@ type Config struct {
 	DefaultProfile string             `yaml:"default_profile"`
 	Scan           ScanConfig         `yaml:"scan"`
 	Watch          *WatchConfig       `yaml:"watch"`
+	ForeignRoots   []string           `yaml:"foreign_roots"` // root-relative dirs whose files resolve for link-checking but are never linted
 }
 
 // WatchConfig controls the md watch daemon.
 type WatchConfig struct {
-	DebounceMs int                    `yaml:"debounce_ms"`
-	Ignore     []string               `yaml:"ignore"`
+	DebounceMs int                      `yaml:"debounce_ms"`
+	Ignore     []string                 `yaml:"ignore"`
 	Hooks      map[string]hooks.HookDef `yaml:"hooks"`
 }
 

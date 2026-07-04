@@ -259,6 +259,43 @@ watch:
 	}
 }
 
+func TestConfig_ForeignRoots(t *testing.T) {
+	raw := `
+rule_packs:
+  - path: "./rules"
+foreign_roots:
+  - "foreign"
+  - "mirrors/team-wiki"
+`
+	cfg, err := Parse([]byte(raw), "/project")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if len(cfg.ForeignRoots) != 2 {
+		t.Fatalf("ForeignRoots = %d, want 2", len(cfg.ForeignRoots))
+	}
+	if cfg.ForeignRoots[0] != "foreign" {
+		t.Errorf("ForeignRoots[0] = %q, want foreign", cfg.ForeignRoots[0])
+	}
+	if cfg.ForeignRoots[1] != "mirrors/team-wiki" {
+		t.Errorf("ForeignRoots[1] = %q, want mirrors/team-wiki", cfg.ForeignRoots[1])
+	}
+}
+
+func TestConfig_ForeignRoots_DefaultEmpty(t *testing.T) {
+	raw := `
+rule_packs:
+  - path: "./rules"
+`
+	cfg, err := Parse([]byte(raw), "/project")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if len(cfg.ForeignRoots) != 0 {
+		t.Errorf("ForeignRoots should default to empty, got %v", cfg.ForeignRoots)
+	}
+}
+
 func TestProfile_EmptyInclude_DefaultAll(t *testing.T) {
 	// Empty include defaults to ["*"]
 	profile := Profile{}

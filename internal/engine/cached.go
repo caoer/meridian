@@ -63,6 +63,12 @@ func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 	var findings []types.Finding
 
 	for _, doc := range docs {
+		// Foreign-root docs contribute to scannedPaths for link
+		// resolution but are never evaluated as lint subjects.
+		if e.isForeignDoc(doc.Path) {
+			continue
+		}
+
 		// Cache check (if store present).
 		var combined string
 		if store != nil {
@@ -146,11 +152,14 @@ func (e *Engine) prepareActiveRules(ruleList []rules.Rule) []activeRule {
 
 // evalDoc evaluates a single rule against a single doc. Recovers panics.
 func (e *Engine) evalDoc(doc *Document, ar activeRule, scannedPaths []string) evalResult {
-	effectiveParams := make(map[string]any, len(ar.rule.Params)+1)
+	effectiveParams := make(map[string]any, len(ar.rule.Params)+2)
 	for k, v := range ar.rule.Params {
 		effectiveParams[k] = v
 	}
 	effectiveParams["__scanned_paths"] = scannedPaths
+	if len(e.foreignRoots) > 0 {
+		effectiveParams["__foreign_roots"] = e.foreignRoots
+	}
 
 	var result evalResult
 	var raws []RawFinding

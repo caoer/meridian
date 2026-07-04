@@ -100,12 +100,26 @@ func buildGlobIndex(globs []string, paths []string) map[string]bool {
 // buildResolvedIndex constructs a case-insensitive lookup map.
 // Prefers roots + __scanned_paths (engine-injected). Falls back to
 // resolved_index for backward compatibility.
+//
+// Foreign roots (__foreign_roots) are added as implicit resolution globs
+// so that wikilinks into /foreign/<name>/ resolve for link-checking
+// without requiring rule YAML to list foreign dirs explicitly.
 func buildResolvedIndex(params map[string]any) map[string]bool {
 	roots := toStringSlice(params["roots"])
 	paths, _ := params["__scanned_paths"].([]string)
 
 	if len(roots) > 0 && len(paths) > 0 {
-		return buildGlobIndex(roots, paths)
+		// Merge foreign roots as additional resolution globs.
+		foreignRoots := toStringSlice(params["__foreign_roots"])
+		resolveRoots := roots
+		if len(foreignRoots) > 0 {
+			resolveRoots = make([]string, 0, len(roots)+len(foreignRoots))
+			resolveRoots = append(resolveRoots, roots...)
+			for _, fr := range foreignRoots {
+				resolveRoots = append(resolveRoots, fr+"/**")
+			}
+		}
+		return buildGlobIndex(resolveRoots, paths)
 	}
 
 	// Fallback: resolved_index param (backward compat).
@@ -118,6 +132,16 @@ func buildResolvedIndex(params map[string]any) map[string]bool {
 	}
 
 	return map[string]bool{}
+}
+
+// isForeignPath reports whether path falls under any of the foreign root prefixes.
+func isForeignPath(path string, foreignRoots []string) bool {
+	for _, root := range foreignRoots {
+		if strings.HasPrefix(path, root+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // toStringSlice converts []any (from YAML) to []string.

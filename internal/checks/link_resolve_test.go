@@ -123,9 +123,9 @@ func TestLinkResolve_ScannedPaths_Resolves(t *testing.T) {
 		},
 	}
 	params := map[string]any{
-		"frontmatter":      "source",
-		"roots":            []any{"wiki/**"},
-		"__scanned_paths":  []string{"wiki/page-a.md", "wiki/page-b.md"},
+		"frontmatter":     "source",
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/page-a.md", "wiki/page-b.md"},
 	}
 	findings := linkResolveCheck(doc, params)
 	if len(findings) != 0 {
@@ -140,9 +140,9 @@ func TestLinkResolve_ScannedPaths_Unresolved(t *testing.T) {
 		},
 	}
 	params := map[string]any{
-		"frontmatter":      "source",
-		"roots":            []any{"wiki/**"},
-		"__scanned_paths":  []string{"wiki/page-a.md"},
+		"frontmatter":     "source",
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/page-a.md"},
 	}
 	findings := linkResolveCheck(doc, params)
 	if len(findings) != 1 {
@@ -157,9 +157,9 @@ func TestLinkResolve_ScannedPaths_CaseInsensitive(t *testing.T) {
 		},
 	}
 	params := map[string]any{
-		"frontmatter":      "source",
-		"roots":            []any{"wiki/**"},
-		"__scanned_paths":  []string{"wiki/page-a.md"},
+		"frontmatter":     "source",
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/page-a.md"},
 	}
 	findings := linkResolveCheck(doc, params)
 	if len(findings) != 0 {
@@ -266,9 +266,9 @@ func TestLinkResolve_RootsFiltersPaths(t *testing.T) {
 		},
 	}
 	params := map[string]any{
-		"frontmatter":      "source",
-		"roots":            []any{"wiki/**"},
-		"__scanned_paths":  []string{"wiki/wiki-page.md", "inbox/inbox-page.md"},
+		"frontmatter":     "source",
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/wiki-page.md", "inbox/inbox-page.md"},
 	}
 	findings := linkResolveCheck(doc, params)
 	// inbox-page.md doesn't match wiki/**, so it shouldn't resolve
@@ -362,3 +362,79 @@ func TestLinkResolve_WhitespaceOnlyTarget(t *testing.T) {
 	}
 }
 
+// --- Foreign roots resolution tests ---
+
+func TestLinkResolve_ForeignRoots_Resolves(t *testing.T) {
+	// A wikilink target that exists under a foreign root should resolve
+	// even when the rule's roots glob doesn't include the foreign dir.
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"source": "see [[foreign-page]]",
+		},
+	}
+	params := map[string]any{
+		"frontmatter":     "source",
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/page-a.md", "foreign/other/foreign-page.md"},
+		"__foreign_roots": []string{"foreign"},
+	}
+	findings := linkResolveCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for foreign root resolved link, got %d", len(findings))
+	}
+}
+
+func TestLinkResolve_ForeignRoots_PathQualified(t *testing.T) {
+	// Path-qualified links into foreign roots should also resolve.
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"source": "see [[foreign/other/foreign-page]]",
+		},
+	}
+	params := map[string]any{
+		"frontmatter":     "source",
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/page-a.md", "foreign/other/foreign-page.md"},
+		"__foreign_roots": []string{"foreign"},
+	}
+	findings := linkResolveCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for path-qualified foreign link, got %d", len(findings))
+	}
+}
+
+func TestLinkResolve_ForeignRoots_NoEffect_WhenEmpty(t *testing.T) {
+	// Without foreign roots, the foreign path should NOT resolve under wiki/** roots.
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"source": "see [[foreign-page]]",
+		},
+	}
+	params := map[string]any{
+		"frontmatter":     "source",
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/page-a.md", "foreign/other/foreign-page.md"},
+	}
+	findings := linkResolveCheck(doc, params)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding (foreign not in roots and no __foreign_roots), got %d", len(findings))
+	}
+}
+
+func TestLinkResolve_ForeignRoots_MultiplePrefixes(t *testing.T) {
+	doc := &engine.Document{
+		Frontmatter: map[string]any{
+			"source": "see [[page-from-team]] and [[page-from-mirror]]",
+		},
+	}
+	params := map[string]any{
+		"frontmatter":     "source",
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/a.md", "foreign/team/page-from-team.md", "mirrors/ext/page-from-mirror.md"},
+		"__foreign_roots": []string{"foreign", "mirrors"},
+	}
+	findings := linkResolveCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for multi-prefix foreign resolution, got %d", len(findings))
+	}
+}
