@@ -23,4 +23,5 @@ var All = map[string]engine.CheckFunc{
 	"broken-wikilink":            brokenWikilinkCheck,
 	"ambiguous-wikilink":         ambiguousWikilinkCheck,
 	"table-wikilink-pipe":        tableWikilinkPipeCheck,
+	"wikilink-canonicalize":      wikilinkCanonicalizeCheck,
 }

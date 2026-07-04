@@ -23,9 +23,10 @@ type FixFunc func(content []byte, params map[string]any) (changed bool, newConte
 
 // All is the registry of fix functions, keyed by check name.
 var All = map[string]FixFunc{
-	"field-exists":        FieldExistsFix,
-	"property":            PropertyFix,
-	"table-wikilink-pipe": TableWikilinkPipeFix,
+	"field-exists":          FieldExistsFix,
+	"property":              PropertyFix,
+	"table-wikilink-pipe":   TableWikilinkPipeFix,
+	"wikilink-canonicalize": WikilinkCanonicalizeFix,
 }
 
 // FixResult describes one fix applied.
@@ -191,6 +192,7 @@ func (f *Fixer) Fix(fsys vfs.WriteFS, ruleList []rules.Rule, opts Options) (*Fix
 			effectiveParams[k] = v
 		}
 		effectiveParams["__scanned_paths"] = scannedPaths
+		effectiveParams["__file_path"] = key.path
 
 		changed, newContent, actions, err := fixFn(content, effectiveParams)
 		if err != nil {
