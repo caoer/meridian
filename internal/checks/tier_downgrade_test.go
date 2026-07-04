@@ -208,8 +208,15 @@ func TestTierDowngrade_FailClosed_PageTypoConfidential(t *testing.T) {
 	if len(findings) != 1 {
 		t.Fatalf("REFUSAL PROOF (fail-closed): typo tier must produce finding, got %d", len(findings))
 	}
-	if findings[0].TemplateData["Source"] != "confidential" {
-		t.Errorf("Source = %q, want confidential", findings[0].TemplateData["Source"])
+	f := findings[0]
+	if f.TemplateData["Source"] != "field confidential" {
+		t.Errorf("Source = %q, want 'field confidential'", f.TemplateData["Source"])
+	}
+	if f.TemplateData["PageTier"] != "(unrecognized)" {
+		t.Errorf("PageTier = %q, want '(unrecognized)'", f.TemplateData["PageTier"])
+	}
+	if f.TemplateData["SourceTier"] != "secrit" {
+		t.Errorf("SourceTier = %q, want 'secrit' (the invalid value)", f.TemplateData["SourceTier"])
 	}
 }
 
@@ -225,8 +232,12 @@ func TestTierDowngrade_FailClosed_PageTypoAudience(t *testing.T) {
 	if len(findings) != 1 {
 		t.Fatalf("REFUSAL PROOF (fail-closed): typo audience must produce finding, got %d", len(findings))
 	}
-	if findings[0].TemplateData["Source"] != "audience" {
-		t.Errorf("Source = %q, want audience", findings[0].TemplateData["Source"])
+	f := findings[0]
+	if f.TemplateData["Source"] != "field audience" {
+		t.Errorf("Source = %q, want 'field audience'", f.TemplateData["Source"])
+	}
+	if f.TemplateData["SourceTier"] != "publik" {
+		t.Errorf("SourceTier = %q, want 'publik' (the invalid value)", f.TemplateData["SourceTier"])
 	}
 }
 
@@ -306,7 +317,7 @@ func TestTierDowngrade_FailClosed_TypoDoesNotExemptFromDowngrade(t *testing.T) {
 	}
 	var hasTypo, hasDowngrade bool
 	for _, f := range findings {
-		if f.TemplateData["Source"] == "confidential" {
+		if f.TemplateData["Source"] == "field confidential" {
 			hasTypo = true
 		}
 		if f.TemplateData["Field"] == "foreign-touched" {
@@ -671,6 +682,41 @@ func TestEffectivePageTier_TypoSkipped(t *testing.T) {
 	got := effectivePageTier(doc, map[string]any{})
 	if got != "public" {
 		t.Errorf("got %q, want public (typo confidential skipped, audience fallback)", got)
+	}
+}
+
+// ==========================================================================
+// MESSAGE TEMPLATE WIRING: verify TemplateData renders coherently
+// ==========================================================================
+
+func TestTierDowngrade_MessageWiring_UnrecognizedPageTier(t *testing.T) {
+	// Regression: previously the unrecognized-tier finding put the field name
+	// ("confidential") in Source and the invalid value ("secrit") in PageTier,
+	// producing "page at secrit inherits unrecognized from foreign-touched wiki confidential".
+	doc := &engine.Document{
+		Path: "sources/typo.md",
+		Frontmatter: map[string]any{
+			"confidential": "secrit",
+		},
+	}
+	findings := tierDowngradeCheck(doc, map[string]any{})
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding, got %d", len(findings))
+	}
+	f := findings[0]
+	// SourceTier carries the invalid value so the message reads
+	// "inherits secrit" (what was declared) rather than "inherits unrecognized".
+	if f.TemplateData["SourceTier"] != "secrit" {
+		t.Errorf("SourceTier = %q, want secrit", f.TemplateData["SourceTier"])
+	}
+	// Source names the field (prefixed) so the message reads
+	// "from foreign-touched wiki field confidential" — not "wiki confidential".
+	if f.TemplateData["Source"] != "field confidential" {
+		t.Errorf("Source = %q, want 'field confidential'", f.TemplateData["Source"])
+	}
+	// PageTier signals this is a validation error, not a real tier level.
+	if f.TemplateData["PageTier"] != "(unrecognized)" {
+		t.Errorf("PageTier = %q, want '(unrecognized)'", f.TemplateData["PageTier"])
 	}
 }
 

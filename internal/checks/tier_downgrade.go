@@ -134,10 +134,10 @@ func validatePageTierFields(doc *engine.Document) []engine.RawFinding {
 				out = append(out, engine.RawFinding{
 					Line: 1,
 					TemplateData: map[string]string{
-						"PageTier":   s,
-						"SourceTier": "unrecognized",
-						"Source":     "confidential",
-						"Field":      fmt.Sprintf("confidential: %q is not a recognized tier (%s)", s, knownTierNames()),
+						"PageTier":   "(unrecognized)",
+						"SourceTier": s,
+						"Source":     "field confidential",
+						"Field":      fmt.Sprintf("%q is not a recognized tier (%s)", s, knownTierNames()),
 					},
 				})
 			}
@@ -150,10 +150,10 @@ func validatePageTierFields(doc *engine.Document) []engine.RawFinding {
 				out = append(out, engine.RawFinding{
 					Line: 1,
 					TemplateData: map[string]string{
-						"PageTier":   s,
-						"SourceTier": "unrecognized",
-						"Source":     "audience",
-						"Field":      fmt.Sprintf("audience: %q is not a recognized tier (%s)", s, knownTierNames()),
+						"PageTier":   "(unrecognized)",
+						"SourceTier": s,
+						"Source":     "field audience",
+						"Field":      fmt.Sprintf("%q is not a recognized tier (%s)", s, knownTierNames()),
 					},
 				})
 			}
@@ -209,8 +209,8 @@ func extractAndValidateWikiTiers(params map[string]any) (map[string]string, []en
 				findings = append(findings, engine.RawFinding{
 					Line: 0,
 					TemplateData: map[string]string{
-						"PageTier":   "",
-						"SourceTier": "unrecognized",
+						"PageTier":   "(config)",
+						"SourceTier": s,
 						"Source":     k,
 						"Field":      fmt.Sprintf("wiki-tiers: %q has unrecognized tier %q (%s)", k, s, knownTierNames()),
 					},
