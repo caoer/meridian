@@ -87,35 +87,13 @@ func wikilinkCanonicalizeCheck(doc *engine.Document, params map[string]any) []en
 }
 
 // buildCanonIndex constructs a canon.Index from check params, filtering
-// paths by the roots globs (same convention as buildBasenameIndex).
+// paths by the roots globs. Uses canon.FilterPathsByRoots (P3-1: deduped).
 func buildCanonIndex(params map[string]any) *canon.Index {
 	rootsRaw := toStringSlice(params["roots"])
 	paths, _ := params["__scanned_paths"].([]string)
-	if len(rootsRaw) == 0 || len(paths) == 0 {
-		return nil
-	}
-
-	var includes, excludes []string
-	for _, g := range rootsRaw {
-		if strings.HasPrefix(g, "!") {
-			excludes = append(excludes, g[1:])
-		} else {
-			includes = append(includes, g)
-		}
-	}
-	if len(includes) == 0 {
-		return nil
-	}
-
-	var filtered []string
-	for _, p := range paths {
-		if matchAnyGlob(includes, p) && !matchAnyGlob(excludes, p) {
-			filtered = append(filtered, p)
-		}
-	}
+	filtered := canon.FilterPathsByRoots(paths, rootsRaw)
 	if len(filtered) == 0 {
 		return nil
 	}
-
 	return canon.BuildIndex(filtered)
 }

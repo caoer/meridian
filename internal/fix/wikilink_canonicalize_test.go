@@ -241,13 +241,14 @@ func TestCanonFix_RegimeB_ResolvesViaMapping(t *testing.T) {
 }
 
 func TestCanonFix_RegimeB_AmbiguousNoMapping_Reports(t *testing.T) {
+	// P1-1: Ambiguous links without mapping still produce AMBIGUOUS actions,
+	// even though content is unchanged.
 	content := []byte("See [[architecture]] for details.\n")
 	paths := []string{
 		"wiki/test.md",
 		"wiki/meridian/architecture.md",
 		"wiki/osfiles/architecture.md",
 	}
-	// No resolved_links mapping — ambiguous link stays, reports action
 	changed, _, actions, err := WikilinkCanonicalizeFix(content, canonFixParams(paths))
 	if err != nil {
 		t.Fatal(err)
@@ -255,12 +256,12 @@ func TestCanonFix_RegimeB_AmbiguousNoMapping_Reports(t *testing.T) {
 	if changed {
 		t.Fatal("expected no content change for ambiguous link without mapping")
 	}
-	// Should still report AMBIGUOUS in actions — wait, no. If not changed,
-	// actions won't be returned. Actually, the fixer returns changed=false
-	// and no actions. The ambiguous report happens only when regime (b) is active.
-	// Without resolved_links param, ambiguous links are just skipped.
-	if len(actions) != 0 {
-		t.Fatalf("expected no actions without mapping, got %v", actions)
+	// P1-1 fix: actions returned even when content unchanged.
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 AMBIGUOUS action, got %d: %v", len(actions), actions)
+	}
+	if !strings.Contains(actions[0], "AMBIGUOUS") {
+		t.Fatalf("expected AMBIGUOUS action, got %q", actions[0])
 	}
 }
 
@@ -278,31 +279,81 @@ func TestCanonFix_RegimeB_AmbiguousWithMapping_StillAmbiguous(t *testing.T) {
 			"wiki/other/thing.md": 1,
 		},
 	}
-	changed, _, _, err := WikilinkCanonicalizeFix(content, params)
+	changed, _, actions, err := WikilinkCanonicalizeFix(content, params)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Changed should be false because the ambiguous link can't be resolved even via mapping,
-	// but actions should include the AMBIGUOUS report
 	if changed {
 		t.Fatal("expected no change")
+	}
+	// P1-1: should report AMBIGUOUS even though content unchanged
+	if len(actions) != 1 || !strings.Contains(actions[0], "AMBIGUOUS") {
+		t.Fatalf("expected 1 AMBIGUOUS action, got %d: %v", len(actions), actions)
+	}
+}
+
+// --- P1-1: Ambiguous-only file returns actions ---
+
+func TestCanonFix_P1_1_AmbiguousOnlyFile_ActionsPresent(t *testing.T) {
+	// File has ONLY ambiguous links — actions must be returned, no rewrite.
+	content := []byte("See [[architecture]] and [[deploy]].\n")
+	paths := []string{
+		"wiki/test.md",
+		"wiki/a/architecture.md",
+		"wiki/b/architecture.md",
+		"wiki/a/deploy.md",
+		"wiki/b/deploy.md",
+	}
+	changed, _, actions, err := WikilinkCanonicalizeFix(content, canonFixParams(paths))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("expected no content change")
+	}
+	if len(actions) != 2 {
+		t.Fatalf("expected 2 AMBIGUOUS actions, got %d: %v", len(actions), actions)
+	}
+	for _, a := range actions {
+		if !strings.Contains(a, "AMBIGUOUS") {
+			t.Fatalf("expected AMBIGUOUS in action, got %q", a)
+		}
+	}
+}
+
+// --- P1-2: Duplicate wikilink in inline code + outside ---
+
+func TestCanonFix_P1_2_DuplicateInlineCodeAndOutside(t *testing.T) {
+	// Same wikilink appears first in inline code then outside.
+	// P1-2 bug: strings.Index found the first (in-code) occurrence,
+	// skipped it, then the real one was also skipped or rewritten wrongly.
+	content := []byte("Use `[[wiki/domain/page]]` and also [[wiki/domain/page]] here.\n")
+	paths := []string{"wiki/test.md", "wiki/domain/page.md"}
+	changed, newContent, actions, err := WikilinkCanonicalizeFix(content, canonFixParams(paths))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected change — the outside link should be rewritten")
+	}
+	got := string(newContent)
+	// Inline code should be preserved verbatim.
+	if !strings.Contains(got, "`[[wiki/domain/page]]`") {
+		t.Fatalf("inline code link should be preserved, got %q", got)
+	}
+	// Outside link should be canonicalized.
+	if !strings.Contains(got, "also [[page]] here") {
+		t.Fatalf("outside link should be canonicalized to [[page]], got %q", got)
+	}
+	if len(actions) != 1 {
+		t.Fatalf("expected exactly 1 action (the outside rewrite), got %d: %v", len(actions), actions)
 	}
 }
 
 // --- Regime (a) determinism: creation-induced ambiguity ---
 
-func TestCanonFix_RegimeA_Determinism_NewFileCreatesCollision(t *testing.T) {
-	// Before: "page" is unique → [[page]] is canonical
-	// After: new "wiki/b/page.md" creates collision
-	// Result: [[page]] in wiki/a/source.md stays as [[page]] (ambiguous, not resolved)
-	// The fixer doesn't change ambiguous links without regime (b) mapping.
-	// The CHECK would flag it; the hook would need to lengthen links in
-	// OTHER files (not the current one) or the new file needs a unique name.
-	//
-	// In practice: the pre-commit hook runs `md fix` on all staged files.
-	// Existing files with [[page]] that previously resolved uniquely now have
-	// an ambiguous target. Without regime (b), these stay unchanged.
-	// The CHECK flags them so the developer knows disambiguation is needed.
+func TestCanonFix_RegimeA_AlreadyCanonical_NoChange(t *testing.T) {
+	// "a/page" resolves uniquely and is shortest-unique → no change
 	content := []byte("See [[a/page]] for details.\n")
 	paths := []string{
 		"wiki/a/source.md",
@@ -311,13 +362,93 @@ func TestCanonFix_RegimeA_Determinism_NewFileCreatesCollision(t *testing.T) {
 	}
 	params := canonFixParams(paths)
 	params["__file_path"] = "wiki/a/source.md"
-	// "a/page" resolves uniquely and is shortest-unique → no change
 	changed, _, _, err := WikilinkCanonicalizeFix(content, params)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if changed {
 		t.Fatal("expected no change — a/page is already shortest-unique")
+	}
+}
+
+// P2-3: Staged-intruder detection. When new_files param is present,
+// the fixer excludes intruders and lengthens existing links to the incumbent.
+func TestCanonFix_RegimeA_IntruderDetection_Lengthens(t *testing.T) {
+	// Before: [[page]] resolved to wiki/a/page.md (unique basename).
+	// A new file wiki/b/page.md is staged (intruder).
+	// With new_files, the fixer knows wiki/b/page.md is the intruder,
+	// so [[page]] in existing files should lengthen to [[a/page]].
+	content := []byte("See [[page]] for details.\n")
+	paths := []string{
+		"wiki/test.md",
+		"wiki/a/page.md",
+		"wiki/b/page.md",
+	}
+	params := canonFixParams(paths)
+	params["new_files"] = []string{"wiki/b/page.md"}
+	changed, newContent, actions, err := WikilinkCanonicalizeFix(content, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected change — [[page]] should lengthen to [[a/page]] (intruder excluded)")
+	}
+	got := string(newContent)
+	if !strings.Contains(got, "[[a/page]]") {
+		t.Fatalf("expected [[a/page]], got %q", got)
+	}
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d: %v", len(actions), actions)
+	}
+	if !strings.Contains(actions[0], "intruder-induced") {
+		t.Fatalf("expected intruder-induced action, got %q", actions[0])
+	}
+}
+
+func TestCanonFix_RegimeA_IntruderDetection_MultipleIntruders(t *testing.T) {
+	// Two new files create ambiguity — incumbent is wiki/a/page.md
+	content := []byte("See [[page]] for details.\n")
+	paths := []string{
+		"wiki/test.md",
+		"wiki/a/page.md",
+		"wiki/b/page.md",
+		"wiki/c/page.md",
+	}
+	params := canonFixParams(paths)
+	params["new_files"] = []string{"wiki/b/page.md", "wiki/c/page.md"}
+	changed, newContent, _, err := WikilinkCanonicalizeFix(content, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected change — both intruders excluded, incumbent resolves")
+	}
+	got := string(newContent)
+	if !strings.Contains(got, "[[a/page]]") {
+		t.Fatalf("expected [[a/page]], got %q", got)
+	}
+}
+
+func TestCanonFix_RegimeA_IntruderDetection_AllNew_StillAmbiguous(t *testing.T) {
+	// All candidates are intruders → no incumbent → still ambiguous
+	content := []byte("See [[page]] for details.\n")
+	paths := []string{
+		"wiki/test.md",
+		"wiki/a/page.md",
+		"wiki/b/page.md",
+	}
+	params := canonFixParams(paths)
+	params["new_files"] = []string{"wiki/a/page.md", "wiki/b/page.md"}
+	changed, _, actions, err := WikilinkCanonicalizeFix(content, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("expected no change — all candidates are intruders")
+	}
+	// Should report AMBIGUOUS
+	if len(actions) != 1 || !strings.Contains(actions[0], "AMBIGUOUS") {
+		t.Fatalf("expected AMBIGUOUS action, got %v", actions)
 	}
 }
 

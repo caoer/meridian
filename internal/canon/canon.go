@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 // Index is a pre-computed lookup for wikilink resolution and canonicalization.
@@ -197,6 +199,96 @@ func (lp LinkParts) Reconstruct(newTarget string) string {
 		b.WriteString(lp.Alias)
 	}
 	return b.String()
+}
+
+// ResolveExcluding resolves an ambiguous target by excluding a set of
+// "intruder" paths from the candidate list. If exactly one candidate
+// remains after exclusion, returns it. Used for regime (a) staged-intruder
+// detection: the newly-created file is the intruder, and existing links
+// should lengthen to the incumbent target.
+func (idx *Index) ResolveExcluding(target string, exclude map[string]bool) (string, bool) {
+	candidates := idx.Candidates(target)
+	if len(candidates) <= 1 {
+		return "", false
+	}
+	var remaining []string
+	for _, c := range candidates {
+		if !exclude[c] {
+			remaining = append(remaining, c)
+		}
+	}
+	if len(remaining) == 1 {
+		return remaining[0], true
+	}
+	return "", false
+}
+
+// --- Shared helpers (P3-1: deduped from checks/fix) ---
+
+// FilterPathsByRoots filters paths by include/exclude doublestar globs.
+// rootsRaw is the raw "roots" param — entries prefixed with "!" are excludes.
+func FilterPathsByRoots(paths []string, rootsRaw []string) []string {
+	if len(rootsRaw) == 0 || len(paths) == 0 {
+		return nil
+	}
+
+	var includes, excludes []string
+	for _, g := range rootsRaw {
+		if strings.HasPrefix(g, "!") {
+			excludes = append(excludes, g[1:])
+		} else {
+			includes = append(includes, g)
+		}
+	}
+	if len(includes) == 0 {
+		return nil
+	}
+
+	var filtered []string
+	for _, p := range paths {
+		if MatchAnyGlob(includes, p) && !MatchAnyGlob(excludes, p) {
+			filtered = append(filtered, p)
+		}
+	}
+	return filtered
+}
+
+// MatchAnyGlob reports whether p matches any of the doublestar globs.
+func MatchAnyGlob(globs []string, p string) bool {
+	for _, g := range globs {
+		if ok, _ := doublestar.Match(g, p); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// ToStringSlice converts []any (from YAML) or []string to []string.
+func ToStringSlice(v any) []string {
+	switch s := v.(type) {
+	case []string:
+		return s
+	case []any:
+		out := make([]string, 0, len(s))
+		for _, item := range s {
+			if str, ok := item.(string); ok {
+				out = append(out, str)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// ShouldSkip checks if target matches any skip prefix (case-insensitive).
+func ShouldSkip(target string, prefixes []string) bool {
+	lower := strings.ToLower(target)
+	for _, p := range prefixes {
+		if strings.HasPrefix(lower, strings.ToLower(p)) {
+			return true
+		}
+	}
+	return false
 }
 
 func dedupSorted(in []string) []string {

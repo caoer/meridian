@@ -205,7 +205,18 @@ func (f *Fixer) Fix(fsys vfs.WriteFS, ruleList []rules.Rule, opts Options) (*Fix
 			report.UnfixableCount++
 			continue
 		}
+		// P1-1: Process actions even when content is unchanged.
+		// Unchanged actions (e.g. AMBIGUOUS reports) go to Unfixable;
+		// changed actions (actual rewrites) go to Fixed.
 		if !changed {
+			for _, action := range actions {
+				report.Unfixable = append(report.Unfixable, SkipResult{
+					FilePath: key.path,
+					RuleID:   key.ruleID,
+					Reason:   action,
+				})
+				report.UnfixableCount++
+			}
 			continue
 		}
 

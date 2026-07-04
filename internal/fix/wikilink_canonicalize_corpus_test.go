@@ -117,9 +117,9 @@ func TestFixCorpus(t *testing.T) {
 			scanned = append(scanned, tc.Source)
 
 			params := map[string]any{
-				"roots":           []string{"wiki/**"},
-				ScannedPathsKey:   scanned,
-				FilePathKey:       tc.Source,
+				"roots":         []string{"wiki/**"},
+				ScannedPathsKey: scanned,
+				FilePathKey:     tc.Source,
 			}
 
 			// For edge-foreign cases, add skip-prefixes.
@@ -464,6 +464,83 @@ func TestFixCorpus_AliasPreservation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestFixCorpus_ReportCompleteness is a property-style invariant test:
+// every ambiguous input across the entire corpus produces EXACTLY ONE
+// AMBIGUOUS action — no drops, no dupes. This is the never-block safety
+// guarantee: proceed+queue is only safe if the queue is COMPLETE.
+func TestFixCorpus_ReportCompleteness(t *testing.T) {
+	cases := loadFixCorpusManifest(t)
+
+	totalAmbigInputs := 0
+	totalAmbigActions := 0
+
+	for _, tc := range cases {
+		// Count expected ambiguous links in this case.
+		expectedAmbig := 0
+		for _, link := range tc.Links {
+			if link.ExpectedStatus == "ambiguous" {
+				expectedAmbig++
+			}
+		}
+		if expectedAmbig == 0 {
+			continue
+		}
+
+		t.Run(tc.ID, func(t *testing.T) {
+			content := buildFixSourceContent(tc)
+			scanned := make([]string, len(tc.Pages))
+			copy(scanned, tc.Pages)
+			scanned = append(scanned, tc.Source)
+
+			params := map[string]any{
+				"roots":         []string{"wiki/**"},
+				ScannedPathsKey: scanned,
+				FilePathKey:     tc.Source,
+			}
+
+			// For edge-foreign cases, add skip-prefixes.
+			if tc.Category == "edge-foreign" {
+				params["skip-prefixes"] = []string{"foreign/"}
+			}
+
+			// For regime-b, add resolved_links so the fixer exercises that path.
+			if tc.Regime == "b" {
+				params["resolved_links"] = buildResolvedLinksParam(tc)
+			}
+
+			_, _, actions, err := WikilinkCanonicalizeFix([]byte(content), params)
+			if err != nil {
+				t.Fatalf("fixer error: %v", err)
+			}
+
+			// Count AMBIGUOUS actions.
+			ambigCount := 0
+			for _, a := range actions {
+				if strings.HasPrefix(a, "AMBIGUOUS:") {
+					ambigCount++
+				}
+			}
+
+			// Invariant: exactly one AMBIGUOUS action per ambiguous input.
+			// For regime-b-resolved-dump, the mapping resolves it → 0 expected.
+			adjustedExpected := expectedAmbig
+			if tc.ID == "regime-b-resolved-dump" {
+				adjustedExpected = 0
+			}
+
+			if ambigCount != adjustedExpected {
+				t.Errorf("REPORT-COMPLETENESS VIOLATION: case %q has %d ambiguous inputs but produced %d AMBIGUOUS actions (expected %d). Actions: %v",
+					tc.ID, expectedAmbig, ambigCount, adjustedExpected, actions)
+			}
+
+			totalAmbigInputs += adjustedExpected
+			totalAmbigActions += ambigCount
+		})
+	}
+
+	t.Logf("Report-completeness: %d ambiguous inputs → %d AMBIGUOUS actions across corpus", totalAmbigInputs, totalAmbigActions)
 }
 
 // TestFixCorpus_FencedCodeIntact verifies that fenced code content is
