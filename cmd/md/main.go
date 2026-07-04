@@ -92,6 +92,11 @@ func main() {
 			}
 		}
 
+		// Apply config-level rule params (shallow merge, config wins).
+		if cfgErr == nil && len(cfg.RuleParams) > 0 {
+			loadedRules = rules.ApplyConfigParams(loadedRules, cfg.RuleParams)
+		}
+
 		if cfgErr != nil {
 			loadedRules = nil
 		}

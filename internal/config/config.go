@@ -12,13 +12,14 @@ import (
 
 // Config represents a parsed meridian.yaml.
 type Config struct {
-	Version        string             `yaml:"version"`
-	RulePacks      []RulePack         `yaml:"rule_packs"`
-	Profiles       map[string]Profile `yaml:"profiles"`
-	DefaultProfile string             `yaml:"default_profile"`
-	Scan           ScanConfig         `yaml:"scan"`
-	Watch          *WatchConfig       `yaml:"watch"`
-	ForeignRoots   []string           `yaml:"foreign_roots"` // root-relative dirs whose files resolve for link-checking but are never linted
+	Version        string                    `yaml:"version"`
+	RulePacks      []RulePack                `yaml:"rule_packs"`
+	Profiles       map[string]Profile        `yaml:"profiles"`
+	DefaultProfile string                    `yaml:"default_profile"`
+	Scan           ScanConfig                `yaml:"scan"`
+	Watch          *WatchConfig              `yaml:"watch"`
+	ForeignRoots   []string                  `yaml:"foreign_roots"` // root-relative dirs whose files resolve for link-checking but are never linted
+	RuleParams     map[string]map[string]any `yaml:"rule_params"`
 }
 
 // WatchConfig controls the md watch daemon.

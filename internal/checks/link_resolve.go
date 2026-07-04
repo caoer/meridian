@@ -144,7 +144,8 @@ func isForeignPath(path string, foreignRoots []string) bool {
 	return false
 }
 
-// toStringSlice converts []any (from YAML) to []string.
+// toStringSlice converts []any, []string, or a bare string (from YAML) to []string.
+// A scalar string (e.g. `foreign-touched: cos` without brackets) becomes a single-element slice.
 func toStringSlice(v any) []string {
 	switch s := v.(type) {
 	case []string:
@@ -157,6 +158,8 @@ func toStringSlice(v any) []string {
 			}
 		}
 		return out
+	case string:
+		return []string{s}
 	}
 	return nil
 }

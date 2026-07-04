@@ -1,0 +1,11 @@
+# Check not registered until P2b builds it.
+# Loader emits CHECK_NOT_REGISTERED warning and skips; no fatal error.
+check: wikilink-canonicalize
+on: "**"
+severity: warn
+message: "wikilink [[{{.Target}}]] is not in canonical shortest-unambiguous form; canonical: [[{{.Canonical}}]]"
+roots:
+  - "**"
+skip-prefixes:
+  - "foreign/"
+  - "http"

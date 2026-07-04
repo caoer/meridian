@@ -1,0 +1,4 @@
+check: tier-downgrade
+on: "**"
+severity: error
+message: "tier downgrade: page at {{.PageTier}} inherits {{.SourceTier}} from foreign-touched wiki {{.Source}} — {{.Field}}"

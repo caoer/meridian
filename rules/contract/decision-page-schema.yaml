@@ -1,0 +1,15 @@
+# Check not registered until a future unit builds it.
+# Loader emits CHECK_NOT_REGISTERED warning and skips; no fatal error.
+check: decision-page-schema
+on: "decisions/**"
+severity: error
+message: "decision page: {{.Issue}}"
+required-fields:
+  - type
+  - status
+  - created
+  - tags
+valid-status:
+  - pending
+  - approved
+  - rejected

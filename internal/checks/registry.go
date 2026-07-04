@@ -24,4 +24,5 @@ var All = map[string]engine.CheckFunc{
 	"ambiguous-wikilink":         ambiguousWikilinkCheck,
 	"table-wikilink-pipe":        tableWikilinkPipeCheck,
 	"wikilink-canonicalize":      wikilinkCanonicalizeCheck,
+	"tier-downgrade":             tierDowngradeCheck,
 }

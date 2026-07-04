@@ -1,0 +1,11 @@
+# Check not registered until a future unit builds it.
+# Loader emits CHECK_NOT_REGISTERED warning and skips; no fatal error.
+#
+# D10 ruling 2026-07-04, ZT morning veto pending; revert handle = remove carve-out-paths.
+check: outbox-md-only
+on: "outbox/**"
+severity: error
+message: "non-markdown file in outbox: {{.Path}} — {{.Reason}}"
+carve-out-paths:
+  - "outbox/skills/*/scripts/**"
+  - "outbox/skills/*/agents/**"
