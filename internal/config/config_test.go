@@ -282,6 +282,26 @@ foreign_roots:
 	}
 }
 
+func TestConfig_ForeignRoots_TrailingSlashNormalized(t *testing.T) {
+	raw := `
+rule_packs:
+  - path: "./rules"
+foreign_roots:
+  - "foreign/"
+  - "mirrors/team/"
+`
+	cfg, err := Parse([]byte(raw), "/project")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if cfg.ForeignRoots[0] != "foreign" {
+		t.Errorf("ForeignRoots[0] = %q, want trailing slash stripped to \"foreign\"", cfg.ForeignRoots[0])
+	}
+	if cfg.ForeignRoots[1] != "mirrors/team" {
+		t.Errorf("ForeignRoots[1] = %q, want trailing slash stripped to \"mirrors/team\"", cfg.ForeignRoots[1])
+	}
+}
+
 func TestConfig_ForeignRoots_DefaultEmpty(t *testing.T) {
 	raw := `
 rule_packs:

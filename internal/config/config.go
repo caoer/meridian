@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/caoer/meridian/internal/hooks"
@@ -65,6 +66,12 @@ func Parse(data []byte, configDir string) (*Config, error) {
 	// Apply default skip dirs
 	if cfg.Scan.Skip == nil {
 		cfg.Scan.Skip = []string{".git", ".obsidian", "node_modules"}
+	}
+
+	// Normalize foreign roots: strip trailing slashes to prevent
+	// silent prefix-match failures (root+"/" would produce "foreign//").
+	for i, fr := range cfg.ForeignRoots {
+		cfg.ForeignRoots[i] = strings.TrimRight(fr, "/")
 	}
 
 	// Validate watch config
