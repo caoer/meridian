@@ -833,6 +833,21 @@ func TestFixer_InjectedParamsExempt(t *testing.T) {
 	}
 }
 
+// TestParamSpecs_CoverAllRegisteredChecks is a fail-closed invariant:
+// every registered check that accepts params MUST have a ParamSpec.
+// A new check shipping without a spec fails this test — no silent gaps.
+func TestParamSpecs_CoverAllRegisteredChecks(t *testing.T) {
+	// All registered checks from the check registry.
+	for name := range checks.All {
+		// Checks that accept zero user params are exempt if they have
+		// a spec with an empty Accepted map (explicit declaration).
+		// Checks without a spec entry at all are flagged.
+		if _, hasSpec := fix.ParamSpecs[name]; !hasSpec {
+			t.Errorf("registered check %q has no ParamSpec — add one to fix.ParamSpecs (use empty Accepted{} if it takes no params)", name)
+		}
+	}
+}
+
 // TestFixer_DryRunBeltAndSuspenders verifies the readOnlyFS wrapper
 // makes writes physically impossible even if the DryRun gate is bypassed.
 func TestFixer_DryRunBeltAndSuspenders(t *testing.T) {

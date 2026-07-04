@@ -114,6 +114,19 @@ var ParamSpecs = map[string]ParamSpec{
 	"backticked-wikilink": {
 		Accepted: map[string]string{},
 	},
+	"partition-date-consistency": {
+		Accepted: map[string]string{
+			"date_field": "",
+		},
+	},
+	"partition-rollup": {
+		Accepted: map[string]string{
+			"date_field":      "",
+			"daily_max_days":  "",
+			"weekly_max_days": "",
+			"reference_time":  "",
+		},
+	},
 }
 
 // validateParams checks that all non-injected params in a rule are declared
