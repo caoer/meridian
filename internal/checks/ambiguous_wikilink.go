@@ -123,8 +123,14 @@ func buildBasenameIndex(params map[string]any) map[string][]string {
 		return nil
 	}
 
+	foreignRoots := toStringSlice(params["__foreign_roots"])
+
 	idx := make(map[string][]string)
 	for _, p := range paths {
+		// Foreign-root files never enter the uniqueness universe (D6).
+		if isForeignPath(p, foreignRoots) {
+			continue
+		}
 		if !matchAnyGlob(includes, p) || matchAnyGlob(excludes, p) {
 			continue
 		}

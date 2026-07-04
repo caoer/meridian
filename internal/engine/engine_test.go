@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/caoer/meridian/internal/rules"
@@ -718,6 +719,138 @@ func TestEngine_MdIgnore_CoexistsWithLegacy(t *testing.T) {
 	}
 	if !sawLine9 {
 		t.Error("line 9 should not be suppressed")
+	}
+}
+
+// --- Foreign roots tests ---
+
+func TestEngine_ForeignRoots_NotLinted(t *testing.T) {
+	// Files under a foreign root must not produce findings.
+	fs := makeFS(map[string]string{
+		"wiki/page.md":               "---\n---\n# Page\n",
+		"foreign/other/page.md":      "---\n---\n# Foreign page\n",
+		"foreign/other/deep/note.md": "---\n---\n# Deep foreign\n",
+	})
+
+	eng := New()
+	eng.SetForeignRoots([]string{"foreign"})
+	eng.RegisterCheck("always-fire", func(doc *Document, params map[string]any) []RawFinding {
+		return []RawFinding{{TemplateData: map[string]string{"File": doc.Path}}}
+	})
+
+	rule := rules.Rule{
+		ID: "test-rule", Check: "always-fire", Message: "found: {{.File}}",
+		Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"**/*.md"}),
+		Params: map[string]any{},
+	}
+
+	results := eng.Run(fs, []rules.Rule{rule})
+
+	for _, f := range results {
+		if strings.HasPrefix(f.FilePath, "foreign/") {
+			t.Errorf("foreign file should not be linted: %s", f.FilePath)
+		}
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 finding (wiki/page.md only), got %d", len(results))
+	}
+}
+
+func TestEngine_ForeignRoots_PathsInScannedPaths(t *testing.T) {
+	// Foreign files must appear in __scanned_paths so they resolve for link-checking.
+	fs := makeFS(map[string]string{
+		"wiki/page.md":          "---\n---\n# Page\n",
+		"foreign/other/note.md": "---\n---\n# Foreign\n",
+	})
+
+	eng := New()
+	eng.SetForeignRoots([]string{"foreign"})
+
+	var capturedPaths []string
+	eng.RegisterCheck("capture-paths", func(doc *Document, params map[string]any) []RawFinding {
+		capturedPaths, _ = params["__scanned_paths"].([]string)
+		return nil
+	})
+
+	rule := rules.Rule{
+		ID: "capture", Check: "capture-paths", Message: "x",
+		Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"**/*.md"}),
+		Params: map[string]any{},
+	}
+
+	eng.Run(fs, []rules.Rule{rule})
+
+	pathSet := make(map[string]bool, len(capturedPaths))
+	for _, p := range capturedPaths {
+		pathSet[p] = true
+	}
+	if !pathSet["foreign/other/note.md"] {
+		t.Error("foreign file should be in __scanned_paths for resolution")
+	}
+	if !pathSet["wiki/page.md"] {
+		t.Error("wiki file should be in __scanned_paths")
+	}
+}
+
+func TestEngine_ForeignRoots_InjectsParam(t *testing.T) {
+	// __foreign_roots param must be injected into check params.
+	fs := makeFS(map[string]string{
+		"wiki/page.md": "---\n---\n# Page\n",
+	})
+
+	eng := New()
+	eng.SetForeignRoots([]string{"foreign", "mirrors"})
+
+	var capturedRoots []string
+	eng.RegisterCheck("capture-roots", func(doc *Document, params map[string]any) []RawFinding {
+		if roots, ok := params["__foreign_roots"].([]string); ok {
+			capturedRoots = roots
+		}
+		return nil
+	})
+
+	rule := rules.Rule{
+		ID: "capture", Check: "capture-roots", Message: "x",
+		Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"**/*.md"}),
+		Params: map[string]any{},
+	}
+
+	eng.Run(fs, []rules.Rule{rule})
+
+	if len(capturedRoots) != 2 {
+		t.Fatalf("expected 2 foreign roots, got %v", capturedRoots)
+	}
+	if capturedRoots[0] != "foreign" || capturedRoots[1] != "mirrors" {
+		t.Errorf("unexpected foreign roots: %v", capturedRoots)
+	}
+}
+
+func TestEngine_ForeignRoots_MultiplePrefixes(t *testing.T) {
+	// Multiple foreign roots should all be excluded from linting.
+	fs := makeFS(map[string]string{
+		"wiki/page.md":         "---\n---\n",
+		"foreign/a/page.md":    "---\n---\n",
+		"mirrors/team/page.md": "---\n---\n",
+	})
+
+	eng := New()
+	eng.SetForeignRoots([]string{"foreign", "mirrors"})
+	eng.RegisterCheck("always-fire", func(doc *Document, params map[string]any) []RawFinding {
+		return []RawFinding{{TemplateData: map[string]string{"File": doc.Path}}}
+	})
+
+	rule := rules.Rule{
+		ID: "test-rule", Check: "always-fire", Message: "found: {{.File}}",
+		Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"**/*.md"}),
+		Params: map[string]any{},
+	}
+
+	results := eng.Run(fs, []rules.Rule{rule})
+	if len(results) != 1 {
+		t.Errorf("expected 1 finding (wiki only), got %d", len(results))
+	}
+	if len(results) > 0 && results[0].FilePath != "wiki/page.md" {
+		t.Errorf("only finding should be wiki/page.md, got %s", results[0].FilePath)
 	}
 }
 

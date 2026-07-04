@@ -2,6 +2,7 @@ package engine
 
 import (
 	"io/fs"
+	"strings"
 
 	"github.com/caoer/meridian/internal/rules"
 	"github.com/caoer/meridian/internal/types"
@@ -19,10 +20,11 @@ type CheckFunc func(doc *Document, params map[string]any) []RawFinding
 
 // Engine runs rules against documents.
 type Engine struct {
-	checks      map[string]CheckFunc
-	warnings    []types.Warning
-	skip        []string // directory names to skip during scan
-	maxFileSize int64    // max file size in bytes; 0 = no limit
+	checks       map[string]CheckFunc
+	warnings     []types.Warning
+	skip         []string // directory names to skip during scan
+	maxFileSize  int64    // max file size in bytes; 0 = no limit
+	foreignRoots []string // root-relative path prefixes for foreign (resolution-only) content
 }
 
 // SetSkip configures directory names to skip during filesystem scan.
@@ -34,6 +36,28 @@ func (e *Engine) SetSkip(patterns []string) {
 // Files larger than this are silently skipped. 0 means no limit.
 func (e *Engine) SetMaxFileSize(n int64) {
 	e.maxFileSize = n
+}
+
+// SetForeignRoots configures root-relative directory prefixes whose files
+// participate in link resolution but are never evaluated as lint subjects
+// and never enter the wikilink uniqueness universe.
+func (e *Engine) SetForeignRoots(roots []string) {
+	e.foreignRoots = roots
+}
+
+// ForeignRoots returns the configured foreign root prefixes.
+func (e *Engine) ForeignRoots() []string {
+	return e.foreignRoots
+}
+
+// isForeignDoc reports whether path falls under any configured foreign root.
+func (e *Engine) isForeignDoc(path string) bool {
+	for _, root := range e.foreignRoots {
+		if strings.HasPrefix(path, root+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // New creates an Engine.

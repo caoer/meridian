@@ -112,6 +112,7 @@ func main() {
 	if cfg != nil {
 		eng.SetSkip(cfg.Scan.Skip)
 		eng.SetMaxFileSize(cfg.Scan.MaxFileSize)
+		eng.SetForeignRoots(cfg.ForeignRoots)
 	}
 	registeredChecks := map[string]bool{}
 	for name, fn := range checks.All {

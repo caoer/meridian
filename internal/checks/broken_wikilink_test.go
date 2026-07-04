@@ -541,3 +541,39 @@ func TestBrokenWikilink_MultipleInlineCodeSpans(t *testing.T) {
 		t.Errorf("Target = %q, want real", findings[0].TemplateData["Target"])
 	}
 }
+
+// --- Foreign roots resolution ---
+
+func TestBrokenWikilink_ForeignRoots_Resolves(t *testing.T) {
+	// Links to pages in a foreign root should resolve (not be flagged as broken).
+	doc := &engine.Document{
+		Body:       "see [[foreign-page]] for details",
+		BodyOffset: 1,
+	}
+	params := map[string]any{
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/page-a.md", "foreign/other/foreign-page.md"},
+		"__foreign_roots": []string{"foreign"},
+	}
+	findings := brokenWikilinkCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings for foreign-root resolved link, got %d", len(findings))
+	}
+}
+
+func TestBrokenWikilink_ForeignRoots_StillBrokenIfMissing(t *testing.T) {
+	// A link that doesn't exist anywhere — including foreign — is still broken.
+	doc := &engine.Document{
+		Body:       "see [[truly-missing]] here",
+		BodyOffset: 1,
+	}
+	params := map[string]any{
+		"roots":           []any{"wiki/**"},
+		"__scanned_paths": []string{"wiki/page-a.md", "foreign/other/foreign-page.md"},
+		"__foreign_roots": []string{"foreign"},
+	}
+	findings := brokenWikilinkCheck(doc, params)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding for truly missing link, got %d", len(findings))
+	}
+}

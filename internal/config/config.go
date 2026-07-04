@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/caoer/meridian/internal/hooks"
@@ -17,12 +18,13 @@ type Config struct {
 	DefaultProfile string             `yaml:"default_profile"`
 	Scan           ScanConfig         `yaml:"scan"`
 	Watch          *WatchConfig       `yaml:"watch"`
+	ForeignRoots   []string           `yaml:"foreign_roots"` // root-relative dirs whose files resolve for link-checking but are never linted
 }
 
 // WatchConfig controls the md watch daemon.
 type WatchConfig struct {
-	DebounceMs int                    `yaml:"debounce_ms"`
-	Ignore     []string               `yaml:"ignore"`
+	DebounceMs int                      `yaml:"debounce_ms"`
+	Ignore     []string                 `yaml:"ignore"`
 	Hooks      map[string]hooks.HookDef `yaml:"hooks"`
 }
 
@@ -64,6 +66,12 @@ func Parse(data []byte, configDir string) (*Config, error) {
 	// Apply default skip dirs
 	if cfg.Scan.Skip == nil {
 		cfg.Scan.Skip = []string{".git", ".obsidian", "node_modules"}
+	}
+
+	// Normalize foreign roots: strip trailing slashes to prevent
+	// silent prefix-match failures (root+"/" would produce "foreign//").
+	for i, fr := range cfg.ForeignRoots {
+		cfg.ForeignRoots[i] = strings.TrimRight(fr, "/")
 	}
 
 	// Validate watch config

@@ -254,3 +254,63 @@ func TestAmbiguousWikilink_OutsideRoots_NotCounted(t *testing.T) {
 		t.Fatalf("want 0 findings (only 1 copy within roots), got %d", len(findings))
 	}
 }
+
+// --- Foreign roots exclusion from uniqueness universe ---
+
+func TestAmbiguousWikilink_ForeignRoots_ExcludedFromUniverse(t *testing.T) {
+	// A foreign-root copy of page-a should NOT count toward ambiguity.
+	doc := &engine.Document{Body: "see [[page-a]] here", BodyOffset: 1}
+	params := map[string]any{
+		"roots":           []any{"**/*.md"},
+		"__scanned_paths": []string{"wiki/one/page-a.md", "foreign/other/page-a.md"},
+		"__foreign_roots": []string{"foreign"},
+	}
+	findings := ambiguousWikilinkCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings (foreign copy excluded from universe), got %d", len(findings))
+	}
+}
+
+func TestAmbiguousWikilink_ForeignRoots_RealCollisionStillFlagged(t *testing.T) {
+	// Two non-foreign copies still collide, even with a foreign copy present.
+	doc := &engine.Document{Body: "see [[page-a]] here", BodyOffset: 1}
+	params := map[string]any{
+		"roots":           []any{"**/*.md"},
+		"__scanned_paths": []string{"wiki/one/page-a.md", "wiki/two/page-a.md", "foreign/other/page-a.md"},
+		"__foreign_roots": []string{"foreign"},
+	}
+	findings := ambiguousWikilinkCheck(doc, params)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding (two non-foreign copies), got %d", len(findings))
+	}
+	if findings[0].TemplateData["Count"] != "2" {
+		t.Errorf("Count = %q, want 2 (foreign copy excluded)", findings[0].TemplateData["Count"])
+	}
+}
+
+func TestAmbiguousWikilink_ForeignRoots_MultiplePrefixes(t *testing.T) {
+	// Multiple foreign root prefixes should all be excluded.
+	doc := &engine.Document{Body: "see [[page-a]] here", BodyOffset: 1}
+	params := map[string]any{
+		"roots":           []any{"**/*.md"},
+		"__scanned_paths": []string{"wiki/one/page-a.md", "foreign/page-a.md", "mirrors/page-a.md"},
+		"__foreign_roots": []string{"foreign", "mirrors"},
+	}
+	findings := ambiguousWikilinkCheck(doc, params)
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings (both foreign copies excluded), got %d", len(findings))
+	}
+}
+
+func TestAmbiguousWikilink_ForeignRoots_NoEffectWhenEmpty(t *testing.T) {
+	// Without __foreign_roots, the foreign-path file should count normally.
+	doc := &engine.Document{Body: "see [[page-a]] here", BodyOffset: 1}
+	params := map[string]any{
+		"roots":           []any{"**/*.md"},
+		"__scanned_paths": []string{"wiki/one/page-a.md", "foreign/other/page-a.md"},
+	}
+	findings := ambiguousWikilinkCheck(doc, params)
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding (no foreign_roots = both counted), got %d", len(findings))
+	}
+}
