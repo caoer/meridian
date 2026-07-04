@@ -22,6 +22,7 @@ import (
 	"github.com/caoer/meridian/internal/hooks"
 	"github.com/caoer/meridian/internal/mv"
 	"github.com/caoer/meridian/internal/rules"
+	"github.com/caoer/meridian/internal/schema"
 	"github.com/caoer/meridian/internal/vfs"
 	"github.com/caoer/meridian/internal/watch"
 )
@@ -144,6 +145,7 @@ func main() {
 	router.Handle("status", statusHandler(cfgPath, cfgErr))
 	router.Handle("run", runHandler())
 	router.Handle("read", readHandler())
+	router.Handle("schema", schemaHandler(cfg, cfgErr))
 
 	os.Exit(router.Run(os.Args[1:], stdinIfPiped()))
 }
@@ -438,6 +440,27 @@ func statusHandler(cfgPath string, cfgErr error) cli.Handler {
 		return &cli.Response{
 			Version: cli.ResponseVersion,
 			Data:    raw,
+		}
+	}
+}
+
+func schemaHandler(cfg *config.Config, cfgErr error) cli.Handler {
+	return func(req *cli.Request) *cli.Response {
+		// schema does not strictly require config — it needs a scan root
+		// to find SCHEMA.md. Fall back to cwd if config is absent.
+		root := "."
+		if cfg != nil {
+			root = cfg.Scan.Root
+		}
+
+		merged, err := schema.Effective(root)
+		if err != nil {
+			return cli.ErrorResponse(cli.ErrInvalidInput, err.Error())
+		}
+
+		return &cli.Response{
+			Version: cli.ResponseVersion,
+			Data:    cli.SchemaData{Schema: merged},
 		}
 	}
 }

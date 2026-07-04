@@ -241,6 +241,23 @@ func formatData(w io.Writer, data any) {
 			fmt.Fprintf(w, "TASK  %-15s ^%-15s %-7s %s\n", task.Name, task.BlockID, task.Lang, status)
 		}
 
+	case SchemaData:
+		// Human-readable: sorted keys, nested maps indented.
+		keys := make([]string, 0, len(d.Schema))
+		for k := range d.Schema {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			v := d.Schema[k]
+			if sub, ok := v.(map[string]any); ok {
+				fmt.Fprintf(w, "%s:\n", k)
+				formatMap(w, sub, "  ")
+			} else {
+				fmt.Fprintf(w, "%s: %v\n", k, v)
+			}
+		}
+
 	case RunListData:
 		for _, task := range d.Tasks {
 			target := task.Ref
