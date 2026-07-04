@@ -1,0 +1,5 @@
+property: contract-version
+on: "SCHEMA.md"
+required: true
+severity: error
+message: "SCHEMA.md: {{.Message}}"

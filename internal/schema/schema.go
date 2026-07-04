@@ -14,10 +14,9 @@ import (
 // contractSchemas maps contract version → baseline key/value pairs.
 // Each value is the contract-defined default for that key.
 //
-// SYNC OBLIGATION (P3): this ~70-LOC Go map duplicates facts held in
-// contract-v1.md and the P1 rule pack.  P3 must single-source it
-// (go:embed or a drift test).  Until then, manual sync is required —
-// any edit here must be mirrored in contract-v1.md and vice-versa.
+// Drift guard: internal/contract/drift_test.go asserts the shared
+// fields here match the embedded YAML rule pack. Edit either side
+// and the test catches the divergence.
 var contractSchemas = map[int]map[string]any{
 	1: {
 		"contract-version": 1,
@@ -137,6 +136,12 @@ func Effective(root string) (map[string]any, error) {
 	}
 
 	return merged, nil
+}
+
+// ContractV1 returns a shallow copy of the contract-version-1 schema map.
+// Exported for the drift guard test in internal/contract.
+func ContractV1() map[string]any {
+	return copyMap(contractSchemas[1])
 }
 
 // copyMap returns a shallow copy of a map[string]any.
