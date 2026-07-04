@@ -1,0 +1,510 @@
+{
+  "_doc": "Maps every collision class (basename) from probe B to its covering test case in manifest.json. Classes sharing a structural shape are consolidated under one representative case with rationale. 82 classes total.",
+  "summary": {
+    "total_classes": 82,
+    "directly_tested": 30,
+    "shape_consolidated": 52,
+    "shapes": {
+      "2-way domain+sources": "col2-easytier covers wiki/<domain>/X + wiki/sources/X pattern",
+      "2-way domain+outbox": "col2-conventions covers wiki/<domain>/X + wiki/outbox/.../X pattern",
+      "2-way two-domains": "col2-IDEAS covers wiki/<A>/X + wiki/<B>/X pattern",
+      "2-way outbox+outbox": "col2-agents covers wiki/outbox/.../X + wiki/outbox/.../X pattern",
+      "date-prefixed 2-way": "date-prefixed-2way covers wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG",
+      "high-N structural": "high-n-structural covers api/patterns/gotchas (60+ pages, all cloudflare references)"
+    }
+  },
+  "classes": [
+    {
+      "basename": "2026-04-23-fork-with-context-experiment",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-05-02-paseo-shadow-tmux-shim",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-05-05-agent-mode-alignment-tournament",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-05-09-lazycat-vm-lan-ipv6",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-05-18-vela-fozmoly-ble-protocol",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-05-28-robot-sessions-ingest",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-06-10-coscene-llm-wiki-consolidation",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-06-22-cfip-bench-throughput-subsystem",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-06-22-leonmax-ssh-lockout-recovery",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-06-25-fleet-telemetry-push-provision",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-06-26-sing-box-tproxy-gateway-stex",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-06-27-team-health-observability",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-07-01-gateway-sor-isolation",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-07-01-gateway-sor-isolation-2",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-07-01-mesh-ip-allocation-plan",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-07-02-ccc-verify-v2-rework",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-07-03-attic-push-retirement",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-07-03-cos-hq-config-placed-not-consumed",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-07-03-coscene-infra-dashboard-maps",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-07-03-maxli-kalibr-vio",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-07-03-rs-lax-1-nixos-conversion",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-07-03-rs-lax-1-nixos-conversion-2",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-07-03-shared-tree-wave-hygiene",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "2026-07-04-out-of-band-vm-teardown-reconcile",
+      "page_count": 2,
+      "covering_case": "date-prefixed-2way",
+      "consolidation": "All 24 date-prefixed classes share identical shape: wiki/logs/DATE-SLUG + wiki/sources/compound/DATE-SLUG. One representative case covers the shape."
+    },
+    {
+      "basename": "CLOUDFLARE",
+      "page_count": 2,
+      "covering_case": "col2-cloudflare-upper",
+      "consolidation": null
+    },
+    {
+      "basename": "IDEAS",
+      "page_count": 2,
+      "covering_case": "col2-ideas",
+      "consolidation": null
+    },
+    {
+      "basename": "README",
+      "page_count": 66,
+      "covering_case": "deep-readme",
+      "consolidation": null
+    },
+    {
+      "basename": "SKILL",
+      "page_count": 49,
+      "covering_case": "deep-skill",
+      "consolidation": null
+    },
+    {
+      "basename": "agents",
+      "page_count": 2,
+      "covering_case": "col2-agents",
+      "consolidation": null
+    },
+    {
+      "basename": "agents-sdk",
+      "page_count": 2,
+      "covering_case": "col2-agents",
+      "consolidation": "Structural shape: wiki/<domA>/X + wiki/<domB>/X \u2014 identical to col2-IDEAS (parent/basename disambiguation)"
+    },
+    {
+      "basename": "api",
+      "page_count": 62,
+      "covering_case": "high-n-structural",
+      "consolidation": null
+    },
+    {
+      "basename": "architecture",
+      "page_count": 18,
+      "covering_case": "deep-architecture",
+      "consolidation": null
+    },
+    {
+      "basename": "bases",
+      "page_count": 2,
+      "covering_case": "col2-bases",
+      "consolidation": null
+    },
+    {
+      "basename": "caveman",
+      "page_count": 3,
+      "covering_case": "col3-caveman",
+      "consolidation": null
+    },
+    {
+      "basename": "charm-tools",
+      "page_count": 2,
+      "covering_case": "col2-conventions",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/outbox/skills/.../X \u2014 identical to col2-conventions (parent/basename disambiguation)"
+    },
+    {
+      "basename": "cli",
+      "page_count": 2,
+      "covering_case": "col2-cli",
+      "consolidation": null
+    },
+    {
+      "basename": "cloakbrowser",
+      "page_count": 2,
+      "covering_case": "col2-cloakbrowser",
+      "consolidation": null
+    },
+    {
+      "basename": "commands",
+      "page_count": 3,
+      "covering_case": "col3-commands",
+      "consolidation": null
+    },
+    {
+      "basename": "configuration",
+      "page_count": 64,
+      "covering_case": "deep-configuration",
+      "consolidation": null
+    },
+    {
+      "basename": "conventions",
+      "page_count": 2,
+      "covering_case": "col2-conventions",
+      "consolidation": null
+    },
+    {
+      "basename": "dataview",
+      "page_count": 2,
+      "covering_case": "col2-dataview",
+      "consolidation": null
+    },
+    {
+      "basename": "deploy",
+      "page_count": 3,
+      "covering_case": "col3-deploy",
+      "consolidation": null
+    },
+    {
+      "basename": "design-decisions",
+      "page_count": 3,
+      "covering_case": "col3-design-decisions",
+      "consolidation": null
+    },
+    {
+      "basename": "dev-tasks",
+      "page_count": 2,
+      "covering_case": "col2-ideas",
+      "consolidation": "Structural shape: wiki/<domA>/X + wiki/<domB>/X \u2014 identical to col2-IDEAS (parent/basename disambiguation)"
+    },
+    {
+      "basename": "disko",
+      "page_count": 2,
+      "covering_case": "col2-disko",
+      "consolidation": null
+    },
+    {
+      "basename": "easytier",
+      "page_count": 2,
+      "covering_case": "col2-easytier",
+      "consolidation": null
+    },
+    {
+      "basename": "easytier-manager",
+      "page_count": 2,
+      "covering_case": "col2-easytier",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/sources/X \u2014 identical to col2-easytier (parent/basename disambiguation)"
+    },
+    {
+      "basename": "exploitarium",
+      "page_count": 2,
+      "covering_case": "col2-exploitarium",
+      "consolidation": null
+    },
+    {
+      "basename": "flake-architecture",
+      "page_count": 3,
+      "covering_case": "ambig-flake-architecture",
+      "consolidation": null
+    },
+    {
+      "basename": "go-network-benchmark-tools",
+      "page_count": 2,
+      "covering_case": "col2-easytier",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/sources/X \u2014 identical to col2-easytier (parent/basename disambiguation)"
+    },
+    {
+      "basename": "gotchas",
+      "page_count": 61,
+      "covering_case": "high-n-structural",
+      "consolidation": null
+    },
+    {
+      "basename": "harvest-contract",
+      "page_count": 2,
+      "covering_case": "col2-bases",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/outbox/skills/.../X \u2014 identical to col2-conventions (parent/basename disambiguation)"
+    },
+    {
+      "basename": "index",
+      "page_count": 3,
+      "covering_case": "col3-index",
+      "consolidation": null
+    },
+    {
+      "basename": "karing",
+      "page_count": 2,
+      "covering_case": "col2-easytier",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/sources/X \u2014 identical to col2-easytier (parent/basename disambiguation)"
+    },
+    {
+      "basename": "lazyvim-tips",
+      "page_count": 2,
+      "covering_case": "col2-lazyvim-tips",
+      "consolidation": null
+    },
+    {
+      "basename": "lean-lede",
+      "page_count": 2,
+      "covering_case": "col2-easytier",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/sources/X \u2014 identical to col2-easytier (parent/basename disambiguation)"
+    },
+    {
+      "basename": "lefthook",
+      "page_count": 2,
+      "covering_case": "col2-easytier",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/sources/X \u2014 identical to col2-easytier (parent/basename disambiguation)"
+    },
+    {
+      "basename": "luci-app-easytier",
+      "page_count": 2,
+      "covering_case": "col2-easytier",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/sources/X \u2014 identical to col2-easytier (parent/basename disambiguation)"
+    },
+    {
+      "basename": "mega-repo-commit",
+      "page_count": 2,
+      "covering_case": "col2-conventions",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/outbox/skills/.../X \u2014 identical to col2-conventions (parent/basename disambiguation)"
+    },
+    {
+      "basename": "networking",
+      "page_count": 2,
+      "covering_case": "col2-conventions",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/outbox/skills/.../X \u2014 identical to col2-conventions (parent/basename disambiguation)"
+    },
+    {
+      "basename": "observability",
+      "page_count": 2,
+      "covering_case": "col2-cli",
+      "consolidation": "Structural shape: wiki/outbox/skills/<A>/X + wiki/outbox/skills/<B>/X \u2014 identical to col2-agents (parent/basename disambiguation)"
+    },
+    {
+      "basename": "openwrt-build-system",
+      "page_count": 2,
+      "covering_case": "col2-easytier",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/sources/X \u2014 identical to col2-easytier (parent/basename disambiguation)"
+    },
+    {
+      "basename": "operations",
+      "page_count": 2,
+      "covering_case": "col2-ideas",
+      "consolidation": "Structural shape: wiki/<domA>/X + wiki/<domB>/X \u2014 identical to col2-IDEAS (parent/basename disambiguation)"
+    },
+    {
+      "basename": "patterns",
+      "page_count": 62,
+      "covering_case": "high-n-structural",
+      "consolidation": null
+    },
+    {
+      "basename": "posiwid",
+      "page_count": 2,
+      "covering_case": "col2-posiwid",
+      "consolidation": null
+    },
+    {
+      "basename": "protocols",
+      "page_count": 2,
+      "covering_case": "col2-cli",
+      "consolidation": "Structural shape: wiki/<domA>/X + wiki/<domB>/X \u2014 identical to col2-IDEAS (parent/basename disambiguation)"
+    },
+    {
+      "basename": "routing",
+      "page_count": 3,
+      "covering_case": "col3-routing",
+      "consolidation": null
+    },
+    {
+      "basename": "rules",
+      "page_count": 2,
+      "covering_case": "col2-agents",
+      "consolidation": "Structural shape: wiki/outbox/skills/<A>/X + wiki/outbox/skills/<B>/X \u2014 identical to col2-agents (parent/basename disambiguation)"
+    },
+    {
+      "basename": "setup",
+      "page_count": 2,
+      "covering_case": "col2-conventions",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/outbox/skills/.../X \u2014 identical to col2-conventions (parent/basename disambiguation)"
+    },
+    {
+      "basename": "skill-roster",
+      "page_count": 2,
+      "covering_case": "col2-agents",
+      "consolidation": "Structural shape: wiki/<domA>/X + wiki/<domB>/X \u2014 identical to col2-IDEAS (parent/basename disambiguation)"
+    },
+    {
+      "basename": "smartdns",
+      "page_count": 2,
+      "covering_case": "col2-easytier",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/sources/X \u2014 identical to col2-easytier (parent/basename disambiguation)"
+    },
+    {
+      "basename": "sop-icon-search",
+      "page_count": 2,
+      "covering_case": "col2-conventions",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/outbox/skills/.../X \u2014 identical to col2-conventions (parent/basename disambiguation)"
+    },
+    {
+      "basename": "sub-store",
+      "page_count": 2,
+      "covering_case": "col2-easytier",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/sources/X \u2014 identical to col2-easytier (parent/basename disambiguation)"
+    },
+    {
+      "basename": "surge-agent-skill",
+      "page_count": 2,
+      "covering_case": "col2-easytier",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/sources/X \u2014 identical to col2-easytier (parent/basename disambiguation)"
+    },
+    {
+      "basename": "tcp-over-redis",
+      "page_count": 2,
+      "covering_case": "col2-tcp-over-redis",
+      "consolidation": null
+    },
+    {
+      "basename": "testing",
+      "page_count": 3,
+      "covering_case": "col3-testing",
+      "consolidation": null
+    },
+    {
+      "basename": "troubleshooting",
+      "page_count": 2,
+      "covering_case": "col2-agents",
+      "consolidation": "Structural shape: wiki/outbox/skills/<A>/X + wiki/outbox/skills/<B>/X \u2014 identical to col2-agents (parent/basename disambiguation)"
+    },
+    {
+      "basename": "tui-patterns",
+      "page_count": 2,
+      "covering_case": "col2-conventions",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/outbox/skills/.../X \u2014 identical to col2-conventions (parent/basename disambiguation)"
+    },
+    {
+      "basename": "tuna-mirrors",
+      "page_count": 2,
+      "covering_case": "col2-easytier",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/sources/X \u2014 identical to col2-easytier (parent/basename disambiguation)"
+    },
+    {
+      "basename": "virtualap",
+      "page_count": 2,
+      "covering_case": "col2-easytier",
+      "consolidation": "Structural shape: wiki/<domain>/X + wiki/sources/X \u2014 identical to col2-easytier (parent/basename disambiguation)"
+    },
+    {
+      "basename": "workers",
+      "page_count": 2,
+      "covering_case": "col2-workers",
+      "consolidation": null
+    },
+    {
+      "basename": "workflows",
+      "page_count": 2,
+      "covering_case": "col2-cli",
+      "consolidation": "Structural shape: wiki/outbox/skills/<A>/X + wiki/outbox/skills/<B>/X \u2014 identical to col2-agents (parent/basename disambiguation)"
+    }
+  ]
+}
