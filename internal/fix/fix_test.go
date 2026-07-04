@@ -322,7 +322,7 @@ func TestFixer_FixFnErrorReportsUnfixable(t *testing.T) {
 // Fix #6: Write failure should move fixes to Unfixable, not return error.
 func TestFixer_WriteFailureMovesToUnfixable(t *testing.T) {
 	fsys := &failWriteFS{
-		MemFS:    testkit.Wiki(
+		MemFS: testkit.Wiki(
 			testkit.F("wiki/good.md", "---\ncreated: 2026-05-05\n---\n# Good\n"),
 			testkit.F("wiki/bad.md", "---\ncreated: 2026-05-05\n---\n# Bad\n"),
 		),
@@ -486,6 +486,128 @@ func TestFixer_EmptyScopeFixesAll(t *testing.T) {
 
 	if report.FixedCount != 2 {
 		t.Errorf("expected 2 fixed with empty scope, got %d", report.FixedCount)
+	}
+}
+
+// TestFixer_ScannedPathsInjected verifies that __scanned_paths is injected
+// into fix params (auto-derived from the filesystem when opts.Files is nil).
+func TestFixer_ScannedPathsInjected(t *testing.T) {
+	fsys := testkit.Wiki(
+		testkit.F("wiki/page-a.md", "---\ntags: []\n---\n# A\nContent with [[page-b]]\n"),
+		testkit.F("wiki/page-b.md", "---\ntags: []\n---\n# B\n"),
+	)
+
+	eng := setupEngine()
+
+	// Register a custom fix that captures the params it receives.
+	var capturedParams map[string]any
+	captureRegistry := map[string]fix.FixFunc{
+		"field-exists": func(content []byte, params map[string]any) (bool, []byte, []string, error) {
+			capturedParams = params
+			// Return changed=false — we just want to inspect params.
+			return false, content, nil, nil
+		},
+	}
+
+	ruleList := []rules.Rule{
+		testkit.Rule("required-fields",
+			testkit.Check("field-exists"),
+			testkit.On("wiki/**"),
+			testkit.Frontmatter("created"),
+			testkit.MessageTemplate("missing {{.Field}}"),
+		),
+	}
+
+	fixer := fix.New(eng, captureRegistry)
+	_, err := fixer.Fix(fsys, ruleList, fix.Options{})
+	if err != nil {
+		t.Fatalf("Fix error: %v", err)
+	}
+
+	if capturedParams == nil {
+		t.Fatal("fix function was never called")
+	}
+
+	paths, ok := capturedParams["__scanned_paths"].([]string)
+	if !ok {
+		t.Fatalf("__scanned_paths not injected or wrong type: %v", capturedParams["__scanned_paths"])
+	}
+	if len(paths) < 2 {
+		t.Errorf("expected at least 2 scanned paths, got %d: %v", len(paths), paths)
+	}
+
+	// Verify both files are present in the scanned paths.
+	pathSet := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		pathSet[p] = true
+	}
+	if !pathSet["wiki/page-a.md"] {
+		t.Errorf("__scanned_paths missing wiki/page-a.md: %v", paths)
+	}
+	if !pathSet["wiki/page-b.md"] {
+		t.Errorf("__scanned_paths missing wiki/page-b.md: %v", paths)
+	}
+}
+
+// TestFixer_FilesOptionOverridesAutoScan verifies that opts.Files is used
+// as __scanned_paths when provided, without scanning the filesystem.
+func TestFixer_FilesOptionOverridesAutoScan(t *testing.T) {
+	fsys := testkit.Wiki(
+		testkit.F("wiki/page-a.md", "---\ntags: []\n---\n# A\n"),
+		testkit.F("wiki/page-b.md", "---\ntags: []\n---\n# B\n"),
+	)
+
+	eng := setupEngine()
+
+	var capturedParams map[string]any
+	captureRegistry := map[string]fix.FixFunc{
+		"field-exists": func(content []byte, params map[string]any) (bool, []byte, []string, error) {
+			capturedParams = params
+			return false, content, nil, nil
+		},
+	}
+
+	ruleList := []rules.Rule{
+		testkit.Rule("required-fields",
+			testkit.Check("field-exists"),
+			testkit.On("wiki/**"),
+			testkit.Frontmatter("created"),
+			testkit.MessageTemplate("missing {{.Field}}"),
+		),
+	}
+
+	// Pass an explicit file universe that differs from what's on disk.
+	explicitFiles := []string{"wiki/page-a.md", "wiki/page-b.md", "wiki/page-c.md"}
+	fixer := fix.New(eng, captureRegistry)
+	_, err := fixer.Fix(fsys, ruleList, fix.Options{Files: explicitFiles})
+	if err != nil {
+		t.Fatalf("Fix error: %v", err)
+	}
+
+	if capturedParams == nil {
+		t.Fatal("fix function was never called")
+	}
+
+	paths, ok := capturedParams["__scanned_paths"].([]string)
+	if !ok {
+		t.Fatalf("__scanned_paths not injected or wrong type: %v", capturedParams["__scanned_paths"])
+	}
+
+	// Must be exactly the explicit list — not auto-derived.
+	if len(paths) != 3 {
+		t.Fatalf("expected 3 paths from explicit Files, got %d: %v", len(paths), paths)
+	}
+	for i, want := range explicitFiles {
+		if paths[i] != want {
+			t.Errorf("paths[%d] = %q, want %q", i, paths[i], want)
+		}
+	}
+}
+
+// TestFixer_ScannedPathsKeyConstant verifies the exported constant matches convention.
+func TestFixer_ScannedPathsKeyConstant(t *testing.T) {
+	if fix.ScannedPathsKey != "__scanned_paths" {
+		t.Errorf("ScannedPathsKey = %q, want %q", fix.ScannedPathsKey, "__scanned_paths")
 	}
 }
 
