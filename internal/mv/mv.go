@@ -43,13 +43,16 @@ func Move(fsys vfs.WriteFS, source, dest string, eng *engine.Engine, ruleList []
 	}
 	result.FilesCount = len(movedFiles)
 
-	// Step 2: Build stem map and update links
+	// Step 2: Build stem map and update links (skip when stems are preserved —
+	// directory-only moves don't change wikilink targets).
 	stemMap := buildStemMap(source, dest, movedFiles)
-	updates, err := UpdateLinks(fsys, stemMap)
-	if err != nil {
-		result.Warnings = append(result.Warnings, "link update error: "+err.Error())
-	} else {
-		result.LinkUpdates = updates
+	if len(stemMap) > 0 {
+		updates, err := UpdateLinks(fsys, stemMap)
+		if err != nil {
+			result.Warnings = append(result.Warnings, "link update error: "+err.Error())
+		} else {
+			result.LinkUpdates = updates
+		}
 	}
 
 	// Step 3: Re-lint moved files at new locations

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"io/fs"
 
 	"github.com/caoer/meridian/internal/rules"
@@ -57,4 +58,66 @@ func (e *Engine) Warnings() []types.Warning {
 // Delegates to RunCached with no cache store.
 func (e *Engine) Run(fsys fs.FS, ruleList []rules.Rule) []types.Finding {
 	return e.RunCached(fsys, ruleList, nil)
+}
+
+// RunForPaths evaluates rules against only the specified file paths.
+// It walks the tree cheaply (path names only, no reads) for cross-file
+// context (__scanned_paths), then parses and evaluates only the target files.
+// This is O(walk + len(targetPaths)) instead of O(N) full-file reads.
+func (e *Engine) RunForPaths(fsys fs.FS, ruleList []rules.Rule, targetPaths []string) []types.Finding {
+	e.warnings = nil
+
+	if len(targetPaths) == 0 {
+		return nil
+	}
+
+	// Cheap walk: collect all .md paths for cross-file context.
+	allPaths, err := CollectPaths(fsys, ScanOptions{Skip: e.skip})
+	if err != nil {
+		e.warnings = append(e.warnings, types.Warning{
+			Code:    "SCAN_ERROR",
+			Message: fmt.Sprintf("path scan error: %v", err),
+		})
+		return nil
+	}
+
+	// Parse only the target files into Documents.
+	docs, err := ScanFiles(fsys, targetPaths, e.maxFileSize)
+	if err != nil || len(docs) == 0 {
+		return nil
+	}
+
+	active := e.prepareActiveRules(ruleList)
+	if len(active) == 0 {
+		return nil
+	}
+
+	var findings []types.Finding
+	for _, doc := range docs {
+		for _, ar := range active {
+			if !Match(ar.rule.On, doc.Path, doc.Tags) {
+				continue
+			}
+			if doc.IsIgnored(ar.rule.ID) {
+				continue
+			}
+			result := e.evalDoc(doc, ar, allPaths)
+			if result.panicMsg != "" {
+				e.warnings = append(e.warnings, types.Warning{
+					Code:    "CHECK_PANIC",
+					Message: result.panicMsg,
+				})
+				continue
+			}
+			for _, f := range result.findings {
+				if doc.IsLineSuppressed(f.Line, ar.rule.ID) {
+					continue
+				}
+				findings = append(findings, f)
+			}
+		}
+	}
+
+	sortFindings(findings)
+	return findings
 }

@@ -164,6 +164,87 @@ func Scan(fsys fs.FS, skip ...string) ([]*Document, error) {
 	return scanImpl(fsys, skip, 0)
 }
 
+// CollectPaths walks the filesystem collecting all .md file paths without
+// reading file content. This is much faster than a full scan when only
+// the path list is needed (e.g. for __scanned_paths context).
+func CollectPaths(fsys fs.FS, opts ScanOptions) ([]string, error) {
+	skipNames := make(map[string]bool, len(opts.Skip))
+	skipPaths := make(map[string]bool, len(opts.Skip))
+	for _, s := range opts.Skip {
+		if strings.Contains(s, "/") {
+			skipPaths[strings.Trim(s, "/")] = true
+		} else {
+			skipNames[s] = true
+		}
+	}
+
+	var paths []string
+	err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path != "." && (skipNames[d.Name()] || skipPaths[path]) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(path, ".md") {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	return paths, err
+}
+
+// ScanFiles reads specific files by path and parses them into Documents.
+// Non-.md paths and unreadable files are silently skipped.
+func ScanFiles(fsys fs.FS, paths []string, maxFileSize int64) ([]*Document, error) {
+	var docs []*Document
+	for _, path := range paths {
+		if !strings.HasSuffix(path, ".md") {
+			continue
+		}
+		if maxFileSize > 0 {
+			if info, err := fs.Stat(fsys, path); err == nil && info.Size() > maxFileSize {
+				continue
+			}
+		}
+		data, err := fs.ReadFile(fsys, path)
+		if err != nil {
+			continue
+		}
+
+		doc := &Document{
+			Path:        path,
+			RawContent:  data,
+			Frontmatter: make(map[string]any),
+		}
+
+		parsed, parseErr := frontmatter.ParseBytes(data)
+		if parseErr != nil {
+			docs = append(docs, doc)
+			continue
+		}
+		if parsed != nil {
+			doc.Frontmatter = parsed.Meta
+			doc.Tags = parsed.Tags()
+			doc.Body = parsed.Body
+			doc.BodyOffset = parsed.BodyOffset
+			doc.LintIgnore = parsed.StringListField("lint-ignore")
+		} else {
+			doc.Body = string(data)
+			doc.BodyOffset = 1
+		}
+		lineSuppress, fileIgnores := parseInlineSuppress(doc.Body, doc.BodyOffset)
+		doc.InlineSuppress = lineSuppress
+		doc.LintIgnore = append(doc.LintIgnore, fileIgnores...)
+
+		docs = append(docs, doc)
+	}
+	return docs, nil
+}
+
 func scanImpl(fsys fs.FS, skip []string, maxFileSize int64) ([]*Document, error) {
 	skipNames := make(map[string]bool, len(skip))
 	skipPaths := make(map[string]bool, len(skip))

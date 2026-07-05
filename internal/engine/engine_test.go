@@ -461,6 +461,78 @@ func TestEngine_InjectsScannedPaths(t *testing.T) {
 	}
 }
 
+func TestEngine_RunForPaths_OnlyTargetFiles(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"wiki/target.md": "---\ncreated: 2026-05-05\n---\n# Target\n",
+		"wiki/other.md":  "---\ncreated: 2026-05-05\n---\n# Other\n",
+		"wiki/third.md":  "---\ncreated: 2026-05-05\n---\n# Third\n",
+	})
+
+	eng := New()
+	eng.RegisterCheck("stub", func(doc *Document, params map[string]any) []RawFinding {
+		return []RawFinding{{Line: 1, TemplateData: map[string]string{"File": doc.Path}}}
+	})
+
+	rule := rules.Rule{
+		ID: "r1", Check: "stub", Message: "found {{.File}}",
+		Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}),
+	}
+
+	findings := eng.RunForPaths(fs, []rules.Rule{rule}, []string{"wiki/target.md"})
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding, got %d", len(findings))
+	}
+	if findings[0].FilePath != "wiki/target.md" {
+		t.Errorf("path = %q, want wiki/target.md", findings[0].FilePath)
+	}
+}
+
+func TestEngine_RunForPaths_CrossFileContext(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"wiki/target.md": "---\ncreated: 2026-05-05\n---\n# Target\n",
+		"wiki/other.md":  "---\ncreated: 2026-05-05\n---\n# Other\n",
+	})
+
+	eng := New()
+	// Check that __scanned_paths includes ALL files, not just the target
+	eng.RegisterCheck("test-paths", func(doc *Document, params map[string]any) []RawFinding {
+		paths, _ := params["__scanned_paths"].([]string)
+		if len(paths) != 2 {
+			return []RawFinding{{TemplateData: map[string]string{"Issue": "wrong path count"}}}
+		}
+		return nil
+	})
+
+	rule := rules.Rule{
+		ID: "r1", Check: "test-paths", Message: "{{.Issue}}",
+		Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}),
+	}
+
+	findings := eng.RunForPaths(fs, []rules.Rule{rule}, []string{"wiki/target.md"})
+	if len(findings) != 0 {
+		t.Errorf("expected 0 findings (__scanned_paths should have 2 paths), got %d: %v", len(findings), findings)
+	}
+}
+
+func TestEngine_RunForPaths_EmptyPaths(t *testing.T) {
+	fs := makeFS(map[string]string{"wiki/a.md": "---\n---\n# A\n"})
+
+	eng := New()
+	eng.RegisterCheck("stub", func(doc *Document, params map[string]any) []RawFinding {
+		return []RawFinding{{Line: 1, TemplateData: map[string]string{}}}
+	})
+
+	rule := rules.Rule{
+		ID: "r1", Check: "stub", Message: "found",
+		Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}),
+	}
+
+	findings := eng.RunForPaths(fs, []rules.Rule{rule}, nil)
+	if len(findings) != 0 {
+		t.Errorf("want 0, got %d", len(findings))
+	}
+}
+
 // --- md:ignore integration tests ---
 
 func TestEngine_MdIgnore_NextLine(t *testing.T) {

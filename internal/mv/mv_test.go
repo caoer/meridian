@@ -1,6 +1,7 @@
 package mv
 
 import (
+	"fmt"
 	"io/fs"
 	"testing"
 
@@ -134,5 +135,28 @@ func TestMove_FolderWithLinkUpdates(t *testing.T) {
 	// since filenames stay the same
 	if len(result.LinkUpdates) != 0 {
 		t.Errorf("link updates = %d, want 0 (stems unchanged)", len(result.LinkUpdates))
+	}
+}
+
+func TestMove_StemPreservingDir_NoLinkScan(t *testing.T) {
+	// Verify that stem-preserving directory moves skip the link-update walk entirely.
+	// Before the fix, UpdateLinks walked+read every .md file even with an empty stemMap.
+	m := vfs.NewMemFS()
+	m.AddFile("wiki/old-dir/page.md", "---\n---\nContent")
+	// Many unrelated files that should NOT be read during a stem-preserving move
+	for i := 0; i < 100; i++ {
+		m.AddFile(fmt.Sprintf("wiki/other/file-%d.md", i), "---\n---\nUnrelated content")
+	}
+
+	result, err := Move(m, "wiki/old-dir", "wiki/new-dir", nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.FilesCount != 1 {
+		t.Errorf("files = %d, want 1", result.FilesCount)
+	}
+	// Stem "page" is preserved — should skip UpdateLinks entirely
+	if len(result.LinkUpdates) != 0 {
+		t.Errorf("link updates = %d, want 0", len(result.LinkUpdates))
 	}
 }
