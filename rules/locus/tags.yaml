@@ -5,7 +5,7 @@ on:
   - "!wiki/**/*.generated.md"
   # Obsidian Kanban boards (kanban-plugin: board) are UI artifacts, not knowledge
   # pages. on: can't filter on frontmatter, so the two boards are excluded by path.
-  - "!wiki/markup/network-ip-ranges.md"
+  - "!wiki/domains/net/network/network-ip-ranges.md"
   - "!wiki/outbox/markup/credential-book-xrefs/decision.md"
 required: true
 severity: warn
