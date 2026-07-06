@@ -146,6 +146,9 @@ func main() {
 	router.Handle("run", runHandler())
 	router.Handle("read", readHandler())
 	router.Handle("schema", schemaHandler(cfg, cfgErr))
+	// llm-wiki check is deliberately NOT config-gated: it is the environment
+	// doctor that must run on a machine with nothing set up yet.
+	router.Handle("llm-wiki check", llmWikiCheckHandler())
 
 	os.Exit(router.Run(os.Args[1:], stdinIfPiped()))
 }

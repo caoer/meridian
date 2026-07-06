@@ -196,6 +196,18 @@ func formatData(w io.Writer, data any) {
 		}
 		fmt.Fprintf(w, "\n%d sources\n", d.Total)
 
+	case LLMWikiCheckData:
+		fmt.Fprintf(w, "wiki:       %s (source: %s)\n", d.WikiPath, d.WikiSource)
+		fmt.Fprintf(w, "repos-root: %s\n", d.ReposRoot)
+		fmt.Fprintf(w, "repos:      %d cataloged · %d present (%d via symlink) · %d absent\n",
+			d.Total, d.Present, d.Symlinked, d.Absent)
+		if len(d.Drifted) > 0 {
+			fmt.Fprintf(w, "drifted:    %d — %s\n", len(d.Drifted), strings.Join(d.Drifted, ", "))
+		}
+		for _, p := range d.Problems {
+			fmt.Fprintf(w, "PROBLEM %-24s %-16s %s\n", p.Slug, p.State, p.Detail)
+		}
+
 	case RulesCheckData:
 		if len(d.Conflicts) > 0 {
 			fmt.Fprintln(w, "Conflicts:")

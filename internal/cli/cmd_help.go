@@ -85,6 +85,14 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 		"debt": {
 			Description: "List incorporation debt (wiki/sources flagged do/incorporate, not yet incorporated)",
 		},
+		"llm-wiki check": {
+			Description: "Environment doctor for the llm-wiki system: verifies CCC_LLM_WIKI_PATH / CCC_LLM_WIKI_REPOS_ROOT and that every cataloged repo (sources/git/<slug>/) resolves at <root>/<slug> with the right git identity. Failures point at skill-shipped setup references; absent repos are a state, not a failure",
+			Params: map[string]paramHelp{
+				"setup_dir": {Type: "string", Required: false},
+				"format":    {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "environment healthy", "1": "check failures (setup refs named)", "2": "tool failure"},
+		},
 		"domains tree": {
 			Description: "Show domain hierarchy from scanned wiki",
 			Params: map[string]paramHelp{
