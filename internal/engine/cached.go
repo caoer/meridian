@@ -60,6 +60,11 @@ func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 		scannedPaths[i] = d.Path
 	}
 
+	// Run-scoped scratchpad for checks to memoize per-run derived data
+	// (e.g. glob-filtered path indexes) that is identical across all docs.
+	// Fresh map per run so a reused Engine (md watch) never serves stale data.
+	indexCache := make(map[string]any)
+
 	var findings []types.Finding
 
 	for _, doc := range docs {
@@ -84,7 +89,7 @@ func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 			if doc.IsIgnored(ar.rule.ID) {
 				continue
 			}
-			result := e.evalDoc(doc, ar, scannedPaths)
+			result := e.evalDoc(doc, ar, scannedPaths, indexCache)
 			if result.panicMsg != "" {
 				e.warnings = append(e.warnings, types.Warning{
 					Code:    "CHECK_PANIC",
@@ -145,12 +150,15 @@ func (e *Engine) prepareActiveRules(ruleList []rules.Rule) []activeRule {
 }
 
 // evalDoc evaluates a single rule against a single doc. Recovers panics.
-func (e *Engine) evalDoc(doc *Document, ar activeRule, scannedPaths []string) evalResult {
-	effectiveParams := make(map[string]any, len(ar.rule.Params)+1)
+// indexCache is a run-scoped scratchpad shared across all docs so checks can
+// memoize expensive per-run derived data (see engine-injected __index_cache).
+func (e *Engine) evalDoc(doc *Document, ar activeRule, scannedPaths []string, indexCache map[string]any) evalResult {
+	effectiveParams := make(map[string]any, len(ar.rule.Params)+2)
 	for k, v := range ar.rule.Params {
 		effectiveParams[k] = v
 	}
 	effectiveParams["__scanned_paths"] = scannedPaths
+	effectiveParams["__index_cache"] = indexCache
 
 	var result evalResult
 	var raws []RawFinding

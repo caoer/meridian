@@ -92,6 +92,9 @@ func (e *Engine) RunForPaths(fsys fs.FS, ruleList []rules.Rule, targetPaths []st
 		return nil
 	}
 
+	// Run-scoped scratchpad shared across docs (see RunCached / __index_cache).
+	indexCache := make(map[string]any)
+
 	var findings []types.Finding
 	for _, doc := range docs {
 		for _, ar := range active {
@@ -101,7 +104,7 @@ func (e *Engine) RunForPaths(fsys fs.FS, ruleList []rules.Rule, targetPaths []st
 			if doc.IsIgnored(ar.rule.ID) {
 				continue
 			}
-			result := e.evalDoc(doc, ar, allPaths)
+			result := e.evalDoc(doc, ar, allPaths, indexCache)
 			if result.panicMsg != "" {
 				e.warnings = append(e.warnings, types.Warning{
 					Code:    "CHECK_PANIC",

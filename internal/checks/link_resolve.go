@@ -71,6 +71,27 @@ func linkResolveCheck(doc *engine.Document, params map[string]any) []engine.RawF
 	return out
 }
 
+// cachedGlobIndex returns buildGlobIndex(globs, paths), memoized in the
+// run-scoped __index_cache scratchpad injected by the engine. The index is a
+// pure function of (globs, paths); paths is constant for a run, so keying on
+// the glob set alone lets every doc under a rule share one built index instead
+// of rebuilding it per doc (O(docs*paths) -> O(paths) glob matching).
+// Without the scratchpad (e.g. direct check calls in tests) it falls back to
+// building each time.
+func cachedGlobIndex(params map[string]any, globs, paths []string) map[string]bool {
+	cache, ok := params["__index_cache"].(map[string]any)
+	if !ok {
+		return buildGlobIndex(globs, paths)
+	}
+	key := "glob\x00" + strings.Join(globs, "\x00")
+	if idx, ok := cache[key].(map[string]bool); ok {
+		return idx
+	}
+	idx := buildGlobIndex(globs, paths)
+	cache[key] = idx
+	return idx
+}
+
 // buildGlobIndex builds a case-insensitive lookup from paths matching globs.
 // Stores: basename stems, full relative paths (without .md), and directory
 // entries for INDEX.md files.
@@ -105,7 +126,7 @@ func buildResolvedIndex(params map[string]any) map[string]bool {
 	paths, _ := params["__scanned_paths"].([]string)
 
 	if len(roots) > 0 && len(paths) > 0 {
-		return buildGlobIndex(roots, paths)
+		return cachedGlobIndex(params, roots, paths)
 	}
 
 	// Fallback: resolved_index param (backward compat).

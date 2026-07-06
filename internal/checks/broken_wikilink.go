@@ -23,7 +23,7 @@ func brokenWikilinkCheck(doc *engine.Document, params map[string]any) []engine.R
 	paths, _ := params["__scanned_paths"].([]string)
 	var scopeIndex map[string]bool
 	if len(scope) > 0 && len(paths) > 0 {
-		scopeIndex = buildGlobIndex(scope, paths)
+		scopeIndex = cachedGlobIndex(params, scope, paths)
 	}
 
 	lines := strings.Split(doc.Body, "\n")

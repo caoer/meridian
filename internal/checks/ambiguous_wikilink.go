@@ -111,6 +111,16 @@ func buildBasenameIndex(params map[string]any) map[string][]string {
 		return nil
 	}
 
+	// Memoize in the run-scoped scratchpad: identical for every doc under a
+	// rule (see cachedGlobIndex). Falls back to rebuilding without a cache.
+	cache, cacheOK := params["__index_cache"].(map[string]any)
+	cacheKey := "basename\x00" + strings.Join(rootsRaw, "\x00")
+	if cacheOK {
+		if idx, ok := cache[cacheKey].(map[string][]string); ok {
+			return idx
+		}
+	}
+
 	var includes, excludes []string
 	for _, g := range rootsRaw {
 		if strings.HasPrefix(g, "!") {
@@ -135,6 +145,10 @@ func buildBasenameIndex(params map[string]any) map[string][]string {
 	for k, v := range idx {
 		sort.Strings(v)
 		idx[k] = dedupSortedStrings(v)
+	}
+
+	if cacheOK {
+		cache[cacheKey] = idx
 	}
 	return idx
 }
