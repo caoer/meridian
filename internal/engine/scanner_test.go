@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/caoer/meridian/internal/rules"
 	"github.com/caoer/meridian/internal/vfs"
 )
 
@@ -348,4 +349,95 @@ func TestScan_NoSkipPatternsIncludesAll(t *testing.T) {
 	if !paths[".git/config.md"] {
 		t.Error(".git/config.md should be included when no skip patterns")
 	}
+}
+
+// TestCollectPaths_IndexesBaseNotDocs proves the .base index fix: CollectPaths
+// (the wikilink resolve-index source) includes .base files, while the document
+// scanner (Scan/ScanWithOpts) stays .md-only so a .base file is never parsed or
+// checked. This is what lets [[X.base]]/![[X.base#View]] resolve without ever
+// linting a non-markdown Bases file.
+func TestCollectPaths_IndexesBaseNotDocs(t *testing.T) {
+	fs := vfs.NewMemFS()
+	fs.AddFile("a.md", "---\n---\nA")
+	fs.AddFile("bases/SOURCES.base", "filters:\n  - and: []\n") // Bases YAML, not markdown
+	fs.AddFile("bases/DOMAINS.base", "filters: []\n")
+
+	// Index source: must include .md AND .base.
+	collected, err := CollectPaths(fs, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := make(map[string]bool)
+	for _, p := range collected {
+		idx[p] = true
+	}
+	for _, want := range []string{"a.md", "bases/SOURCES.base", "bases/DOMAINS.base"} {
+		if !idx[want] {
+			t.Errorf("CollectPaths missing %q (index would not resolve it); got %v", want, collected)
+		}
+	}
+
+	// Document set: must stay .md-only — .base never becomes a checked doc.
+	docs, err := ScanWithOpts(fs, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range docs {
+		if strings.HasSuffix(d.Path, ".base") {
+			t.Errorf(".base file was parsed as a document: %s", d.Path)
+		}
+	}
+}
+
+// TestRunCached_BaseIndexedNotChecked is the end-to-end proof through the exact
+// path `md check` uses (RunCached): a .base file lands in __scanned_paths (the
+// resolve index) but is never evaluated by any rule, even one matching "**".
+func TestRunCached_BaseIndexedNotChecked(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"a.md":               "---\n---\nsee [[SOURCES.base]]",
+		"bases/SOURCES.base": "filters: []\n",
+	})
+
+	var scanned []string
+	var checkedDocs []string
+	eng := New()
+	eng.RegisterCheck("capture", func(doc *Document, params map[string]any) []RawFinding {
+		checkedDocs = append(checkedDocs, doc.Path)
+		if sp, ok := params["__scanned_paths"].([]string); ok {
+			scanned = sp
+		}
+		return nil
+	})
+	rl := []rules.Rule{{
+		ID:       "cap",
+		Check:    "capture",
+		Severity: rules.SeverityWarn,
+		On:       rules.ParseOnFilter([]string{"**"}),
+		Params:   map[string]any{},
+	}}
+
+	eng.RunCached(fs, rl, nil)
+
+	// .base is present as a resolvable link target...
+	if !containsPath(scanned, "bases/SOURCES.base") {
+		t.Errorf("__scanned_paths missing .base file (link would not resolve); got %v", scanned)
+	}
+	// ...but was never evaluated as a document.
+	for _, p := range checkedDocs {
+		if strings.HasSuffix(p, ".base") {
+			t.Errorf(".base file was checked as a doc: %s", p)
+		}
+	}
+	if !containsPath(checkedDocs, "a.md") {
+		t.Errorf("expected a.md to be checked; got %v", checkedDocs)
+	}
+}
+
+func containsPath(paths []string, want string) bool {
+	for _, p := range paths {
+		if p == want {
+			return true
+		}
+	}
+	return false
 }

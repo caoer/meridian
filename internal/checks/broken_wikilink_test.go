@@ -541,3 +541,35 @@ func TestBrokenWikilink_MultipleInlineCodeSpans(t *testing.T) {
 		t.Errorf("Target = %q, want real", findings[0].TemplateData["Target"])
 	}
 }
+
+// TestBrokenWikilink_BaseTarget_ResolvesNoHijack proves that once .base files
+// are in the resolve index (scanner .base fix): (1) [[X.base]] and the designed
+// ![[X.base#View]] embed pattern resolve; (2) resolution is anchor-insensitive
+// (target is stripped to "SOURCES.base" before lookup); and — the monotonicity
+// guard — (3) a bare [[SOURCES]] does NOT hijack onto the .base basename, since
+// the index key is "sources.base", not "sources". No collision with SOURCES.md.
+func TestBrokenWikilink_BaseTarget_ResolvesNoHijack(t *testing.T) {
+	params := map[string]any{
+		"roots":           []any{"**"},
+		"__scanned_paths": []string{"bases/SOURCES.base"}, // only the .base exists — no SOURCES.md
+	}
+
+	resolves := func(body string) int {
+		doc := &engine.Document{Body: body, BodyOffset: 1}
+		return len(brokenWikilinkCheck(doc, params))
+	}
+
+	if n := resolves("catalog [[SOURCES.base]] here"); n != 0 {
+		t.Errorf("[[SOURCES.base]] should resolve, got %d findings", n)
+	}
+	if n := resolves("full path [[bases/SOURCES.base]] here"); n != 0 {
+		t.Errorf("[[bases/SOURCES.base]] should resolve, got %d findings", n)
+	}
+	if n := resolves("embed ![[SOURCES.base#Buckets]] here"); n != 0 {
+		t.Errorf("![[SOURCES.base#Buckets]] (anchored embed) should resolve, got %d findings", n)
+	}
+	// No hijack: bare basename must NOT bind to the .base file.
+	if n := resolves("bare [[SOURCES]] here"); n != 1 {
+		t.Errorf("[[SOURCES]] must NOT hijack onto SOURCES.base, want 1 broken finding, got %d", n)
+	}
+}

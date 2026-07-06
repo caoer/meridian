@@ -54,10 +54,17 @@ func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 		}
 	}
 
-	// Build scanned paths for checks that need cross-file context.
-	scannedPaths := make([]string, len(docs))
-	for i, d := range docs {
-		scannedPaths[i] = d.Path
+	// Build scanned paths for checks that need cross-file context (the wikilink
+	// resolve index). Derive from CollectPaths — the canonical link-target set —
+	// rather than the checked-doc set, so first-class non-.md targets (.base
+	// files) resolve without ever being parsed or checked. Mirrors RunForPaths.
+	scannedPaths, err := CollectPaths(fsys, ScanOptions{Skip: e.skip})
+	if err != nil {
+		e.warnings = append(e.warnings, types.Warning{
+			Code:    "SCAN_ERROR",
+			Message: fmt.Sprintf("path scan error: %v", err),
+		})
+		return nil
 	}
 
 	// Run-scoped scratchpad for checks to memoize per-run derived data

@@ -164,9 +164,16 @@ func Scan(fsys fs.FS, skip ...string) ([]*Document, error) {
 	return scanImpl(fsys, skip, 0)
 }
 
-// CollectPaths walks the filesystem collecting all .md file paths without
+// CollectPaths walks the filesystem collecting link-target paths without
 // reading file content. This is much faster than a full scan when only
 // the path list is needed (e.g. for __scanned_paths context).
+//
+// It collects .md documents and .base files (Obsidian Bases). Bases are
+// first-class wikilink/embed targets — the wiki's designed ![[X.base#View]]
+// catalog pattern depends on them resolving — but they are NOT markdown
+// documents and are never parsed or checked (ScanFiles/scanImpl stay .md-only).
+// Indexing them here is purely additive: it lets [[X.base]] resolve, and can
+// never turn a currently-resolving link into a broken one.
 func CollectPaths(fsys fs.FS, opts ScanOptions) ([]string, error) {
 	skipNames := make(map[string]bool, len(opts.Skip))
 	skipPaths := make(map[string]bool, len(opts.Skip))
@@ -189,7 +196,7 @@ func CollectPaths(fsys fs.FS, opts ScanOptions) ([]string, error) {
 			}
 			return nil
 		}
-		if strings.HasSuffix(path, ".md") {
+		if strings.HasSuffix(path, ".md") || strings.HasSuffix(path, ".base") {
 			paths = append(paths, path)
 		}
 		return nil
