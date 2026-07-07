@@ -49,8 +49,10 @@ type effectPin struct {
 	Checksums []string
 }
 
-// parsePin extracts pin fields. present=false → page carries no pin at all.
-// problem is non-empty when the pin is present but malformed (missing fields,
+// parsePin extracts pin fields. The commit IS the pin: present=false when the
+// page carries no commit — deliberate tombstones (status: retired, source
+// lost, no commit fabricated) are not malformed pins, they are unpinned.
+// problem is non-empty when a pin is present but malformed (missing fields,
 // location/checksum count mismatch).
 func parsePin(doc *engine.Document) (pin effectPin, present bool, problem string) {
 	fm := doc.Frontmatter
@@ -84,14 +86,14 @@ func parsePin(doc *engine.Document) (pin effectPin, present bool, problem string
 	pin.Locations = list("location")
 	pin.Checksums = list("checksum")
 
-	present = pin.Commit != "" || len(pin.Checksums) > 0 || len(pin.Locations) > 0
-	if !present {
+	if pin.Commit == "" {
 		return pin, false, ""
 	}
+	present = true
 
 	var missing []string
 	for _, f := range []struct{ name, val string }{
-		{"repo", pin.Repo}, {"branch", pin.Branch}, {"commit", pin.Commit},
+		{"repo", pin.Repo}, {"branch", pin.Branch},
 	} {
 		if f.val == "" {
 			missing = append(missing, f.name)
@@ -174,14 +176,19 @@ func pinFinding(pin effectPin, reason string) engine.RawFinding {
 }
 
 // pinPreamble handles the shared skip/malformed/absent-repo ladder.
-// ok=true → repoDir is usable and the pin is well-formed.
-func pinPreamble(doc *engine.Document, params map[string]any) (pin effectPin, repoDir string, findings []engine.RawFinding, ok bool) {
+// ok=true → repoDir is usable and the pin is well-formed. Malformed pins are
+// reported only when reportProblems is set (effect-pin-resolves) so the four
+// rules never quadruple-report one bad pin.
+func pinPreamble(doc *engine.Document, params map[string]any, reportProblems bool) (pin effectPin, repoDir string, findings []engine.RawFinding, ok bool) {
 	pin, present, problem := parsePin(doc)
 	if !present {
 		return pin, "", nil, false
 	}
 	if problem != "" {
-		return pin, "", []engine.RawFinding{pinFinding(pin, problem)}, false
+		if reportProblems {
+			return pin, "", []engine.RawFinding{pinFinding(pin, problem)}, false
+		}
+		return pin, "", nil, false
 	}
 	repoDir, found := resolveRepoDir(pin.Repo)
 	if !found {
@@ -196,7 +203,7 @@ func pinPreamble(doc *engine.Document, params map[string]any) (pin effectPin, re
 
 // effectPinResolvesCheck: the pinned commit exists in the repo.
 func effectPinResolvesCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
-	pin, repoDir, findings, ok := pinPreamble(doc, params)
+	pin, repoDir, findings, ok := pinPreamble(doc, params, true)
 	if !ok {
 		return findings
 	}
@@ -211,7 +218,7 @@ func effectPinResolvesCheck(doc *engine.Document, params map[string]any) []engin
 // effectPinOnOriginCheck: the pinned commit is on origin/<branch> — a pin
 // that only exists in a local or stale checkout is the pilot-defect class.
 func effectPinOnOriginCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
-	pin, repoDir, findings, ok := pinPreamble(doc, params)
+	pin, repoDir, findings, ok := pinPreamble(doc, params, false)
 	if !ok {
 		return findings
 	}
@@ -241,7 +248,7 @@ func effectPinOnOriginCheck(doc *engine.Document, params map[string]any) []engin
 // effectChecksumReproducesCheck: per location, the pinned checksum reproduces
 // from the pin alone via git rev-parse <commit>:<location>.
 func effectChecksumReproducesCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
-	pin, repoDir, findings, ok := pinPreamble(doc, params)
+	pin, repoDir, findings, ok := pinPreamble(doc, params, false)
 	if !ok {
 		return findings
 	}
@@ -268,7 +275,7 @@ func effectChecksumReproducesCheck(doc *engine.Document, params map[string]any) 
 // location's content differs at origin — the pin is stale (content drifted).
 // Divergence (commit not an ancestor) is effect-pin-on-origin territory.
 func effectPinStaleCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
-	pin, repoDir, findings, ok := pinPreamble(doc, params)
+	pin, repoDir, findings, ok := pinPreamble(doc, params, false)
 	if !ok {
 		return findings
 	}

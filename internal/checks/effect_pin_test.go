@@ -106,13 +106,41 @@ func TestEffectPin_NoPinFields_NoFindings(t *testing.T) {
 	}
 }
 
-func TestEffectPin_IncompletePin_Reported(t *testing.T) {
+func TestEffectPin_IncompletePin_ReportedOnceByResolves(t *testing.T) {
 	fx := newPinFixture(t)
 	t.Setenv(envReposRoot, fx.reposRoot)
 	doc := pinDoc(map[string]any{"repo": "pinned", "commit": fx.commit1}) // no branch/location/checksum
 	got := effectPinResolvesCheck(doc, nil)
 	if len(got) != 1 || !strings.Contains(got[0].TemplateData["Reason"], "incomplete pin") {
-		t.Fatalf("expected incomplete-pin finding, got %v", got)
+		t.Fatalf("expected incomplete-pin finding from resolves, got %v", got)
+	}
+	// the other three stay silent on the same malformed pin — no quadruple-reporting
+	for name, fn := range map[string]engine.CheckFunc{
+		"on-origin": effectPinOnOriginCheck,
+		"checksum":  effectChecksumReproducesCheck,
+		"stale":     effectPinStaleCheck,
+	} {
+		if got := fn(doc, nil); len(got) != 0 {
+			t.Errorf("%s: expected silence on malformed pin, got %v", name, got)
+		}
+	}
+}
+
+func TestEffectPin_TombstoneWithoutCommit_Silent(t *testing.T) {
+	fx := newPinFixture(t)
+	t.Setenv(envReposRoot, fx.reposRoot)
+	// deliberate tombstone: no commit fabricated, sentinel checksum, empty location
+	doc := pinDoc(map[string]any{
+		"repo": "unknown-source-lost", "branch": "main",
+		"status": "retired", "location": []any{}, "checksum": "SOURCE-LOST",
+	})
+	for name, fn := range map[string]engine.CheckFunc{
+		"resolves": effectPinResolvesCheck, "on-origin": effectPinOnOriginCheck,
+		"checksum": effectChecksumReproducesCheck, "stale": effectPinStaleCheck,
+	} {
+		if got := fn(doc, nil); len(got) != 0 {
+			t.Errorf("%s: tombstone without commit must be silent, got %v", name, got)
+		}
 	}
 }
 
