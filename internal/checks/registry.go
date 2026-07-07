@@ -23,4 +23,8 @@ var All = map[string]engine.CheckFunc{
 	"broken-wikilink":            brokenWikilinkCheck,
 	"ambiguous-wikilink":         ambiguousWikilinkCheck,
 	"table-wikilink-pipe":        tableWikilinkPipeCheck,
+	"effect-pin-resolves":        effectPinResolvesCheck,
+	"effect-pin-on-origin":       effectPinOnOriginCheck,
+	"effect-checksum-reproduces": effectChecksumReproducesCheck,
+	"effect-pin-stale":           effectPinStaleCheck,
 }
