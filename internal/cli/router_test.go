@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"strings"
 	"testing"
 )
@@ -379,5 +381,47 @@ func TestRouter_HandlerVersionDefault(t *testing.T) {
 	resp := decodeResponse(t, buf)
 	if resp.Version != ResponseVersion {
 		t.Fatalf("version = %q, want %q (should be filled by router)", resp.Version, ResponseVersion)
+	}
+}
+
+func TestRouter_PositionalAdapter(t *testing.T) {
+	var got json.RawMessage
+	r := NewRouter()
+	r.SetOutput(io.Discard)
+	r.Handle("check", func(req *Request) *Response {
+		got = req.Params
+		return &Response{Version: ResponseVersion}
+	})
+	r.HandlePositional("check", func(arg string) (json.RawMessage, error) {
+		if arg == "bad" {
+			return nil, fmt.Errorf("no such path: %s", arg)
+		}
+		return json.RawMessage(`{"scope":"` + arg + `"}`), nil
+	})
+
+	// bare arg adapted to params
+	if code := r.Run([]string{"check", "some/path.md"}, nil); code != 0 {
+		t.Fatalf("adapted positional: exit %d, want 0", code)
+	}
+	if string(got) != `{"scope":"some/path.md"}` {
+		t.Errorf("params = %s", got)
+	}
+	// adapter error stays loud: exit 2
+	if code := r.Run([]string{"check", "bad"}, nil); code != 2 {
+		t.Errorf("adapter error: exit %d, want 2", code)
+	}
+	// JSON arg still takes the normal path
+	if code := r.Run([]string{"check", `{"scope":"x"}`}, nil); code != 0 {
+		t.Errorf("json arg: exit %d, want 0", code)
+	}
+	if string(got) != `{"scope":"x"}` {
+		t.Errorf("json params = %s", got)
+	}
+	// commands WITHOUT an adapter keep failing loud on non-JSON
+	r2 := NewRouter()
+	r2.SetOutput(io.Discard)
+	r2.Handle("fix", func(req *Request) *Response { return &Response{Version: ResponseVersion} })
+	if code := r2.Run([]string{"fix", "some/path.md"}, nil); code != 2 {
+		t.Errorf("no adapter: exit %d, want 2", code)
 	}
 }

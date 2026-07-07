@@ -136,6 +136,19 @@ func main() {
 	router.Handle("rules check", requireConfig(cfgErr, cli.RulesCheckHandler(allRules, profiles)))
 	router.Handle("debug", requireConfig(cfgErr, cli.DebugHandler(loadedRules, registeredChecks)))
 	router.Handle("check", checkHandler(eng, loadedRules, cfg, cfgErr))
+	// `md check <path>` — positional sugar for {"scope": "<path>"}. The bare
+	// path must exist (relative to cwd), otherwise fail loud: a typo'd path
+	// must never read as a clean scoped check.
+	router.HandlePositional("check", func(arg string) (json.RawMessage, error) {
+		if _, err := os.Stat(arg); err != nil {
+			return nil, fmt.Errorf("check: %q is neither JSON params nor an existing path", arg)
+		}
+		params, err := json.Marshal(map[string]string{"scope": arg})
+		if err != nil {
+			return nil, err
+		}
+		return params, nil
+	})
 	router.Handle("debt", debtHandler(cfg, cfgErr))
 	router.Handle("domains tree", domainsTreeHandler(cfg, cfgErr))
 	router.Handle("domains show", domainsShowHandler(cfg, cfgErr))

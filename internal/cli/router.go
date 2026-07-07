@@ -23,19 +23,29 @@ const (
 	FormatJSON
 )
 
+// PositionalAdapter converts one bare (non-JSON) argument into JSON params.
+type PositionalAdapter func(arg string) (json.RawMessage, error)
+
 // Router dispatches subcommands to registered handlers.
 type Router struct {
-	handlers map[string]Handler
-	stdout   io.Writer
-	format   OutputFormat
+	handlers   map[string]Handler
+	positional map[string]PositionalAdapter
+	stdout     io.Writer
+	format     OutputFormat
 }
 
 // NewRouter creates a router that writes to os.Stdout.
 func NewRouter() *Router {
 	return &Router{
-		handlers: make(map[string]Handler),
-		stdout:   os.Stdout,
+		handlers:   make(map[string]Handler),
+		positional: make(map[string]PositionalAdapter),
+		stdout:     os.Stdout,
 	}
+}
+
+// HandlePositional registers a positional-argument adapter for a command.
+func (r *Router) HandlePositional(command string, adapt PositionalAdapter) {
+	r.positional[command] = adapt
 }
 
 // Handle registers a handler for a subcommand.
@@ -83,9 +93,21 @@ func (r *Router) Run(args []string, stdin io.Reader) int {
 	if len(args) > paramIdx {
 		raw := args[paramIdx]
 		if !json.Valid([]byte(raw)) {
-			return r.respond(ErrorResponse(ErrInvalidInput, "malformed JSON argument"))
+			// Positional sugar: commands with an adapter accept one bare
+			// (non-JSON) argument — `md check <path>` — instead of failing
+			// on the most natural invocation agents reach for.
+			if adapt, found := r.positional[command]; found && len(args) == paramIdx+1 {
+				adapted, err := adapt(raw)
+				if err != nil {
+					return r.respond(ErrorResponse(ErrInvalidInput, err.Error()))
+				}
+				params = adapted
+			} else {
+				return r.respond(ErrorResponse(ErrInvalidInput, "malformed JSON argument"))
+			}
+		} else {
+			params = json.RawMessage(raw)
 		}
-		params = json.RawMessage(raw)
 	} else if stdin != nil {
 		data, err := io.ReadAll(io.LimitReader(stdin, int64(MaxInputSize)+1))
 		if err != nil {

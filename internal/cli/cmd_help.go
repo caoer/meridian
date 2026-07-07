@@ -44,7 +44,7 @@ type SearchFunc func(query string) HelpSearchData
 func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 	registry := map[string]commandHelp{
 		"check": {
-			Description: "Scan files, match rules, evaluate, return findings",
+			Description: "Scan files, match rules, evaluate, return findings. Positional sugar: `md check <path>` = `md check '{\"scope\":\"<path>\"}'` (path must exist)",
 			Params: map[string]paramHelp{
 				"scope":   {Type: "string", Required: false},
 				"profile": {Type: "string", Required: false},
