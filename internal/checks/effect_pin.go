@@ -300,3 +300,33 @@ func effectPinStaleCheck(doc *engine.Document, params map[string]any) []engine.R
 	}
 	return out
 }
+
+// effectUnpinnedCheck: silence must be earned — a page tagged type/effect
+// with no commit pin is either a declared tombstone (status: retired or
+// pending) or an authoring accident worth surfacing. Tag-scoped on parsed
+// frontmatter tags, never on path or body text: index pages (type/index)
+// and colocated content under effects/ stay silent.
+func effectUnpinnedCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
+	isEffect := false
+	for _, tag := range doc.Tags {
+		if tag == "type/effect" {
+			isEffect = true
+			break
+		}
+	}
+	if !isEffect {
+		return nil
+	}
+	if _, present, _ := parsePin(doc); present {
+		return nil
+	}
+	if status, _ := doc.Frontmatter["status"].(string); status == "retired" || status == "pending" {
+		return nil
+	}
+	return []engine.RawFinding{{
+		Line: 1,
+		TemplateData: map[string]string{
+			"Reason": "type/effect page has no commit pin — pin it (repo/branch/commit/location/checksum) or declare status: retired|pending",
+		},
+	}}
+}

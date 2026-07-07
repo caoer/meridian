@@ -243,3 +243,36 @@ func TestEffectPinStale_DriftWarns_NoDriftSilent(t *testing.T) {
 		t.Fatalf("non-ancestor pin should be silent in stale check, got %v", got)
 	}
 }
+
+func TestEffectUnpinned_TagScoped(t *testing.T) {
+	fx := newPinFixture(t)
+	t.Setenv(envReposRoot, fx.reposRoot)
+
+	effectTags := []string{"domain/x", "type/effect"}
+	cases := []struct {
+		name string
+		doc  *engine.Document
+		want int
+	}{
+		{"unpinned effect page fires", &engine.Document{
+			Path: "effects/skills/x.md", Tags: effectTags,
+			Frontmatter: map[string]any{"tags": []any{"type/effect"}}}, 1},
+		{"pinned effect page silent", &engine.Document{
+			Path: "effects/skills/x.md", Tags: effectTags,
+			Frontmatter: fullPin(fx, fx.treeSha1)}, 0},
+		{"retired tombstone silent", &engine.Document{
+			Path: "effects/sites/x.md", Tags: effectTags,
+			Frontmatter: map[string]any{"status": "retired"}}, 0},
+		{"pending marker silent", &engine.Document{
+			Path: "effects/sites/x.md", Tags: effectTags,
+			Frontmatter: map[string]any{"status": "pending"}}, 0},
+		{"index page mentioning type/effect in body silent", &engine.Document{
+			Path: "effects/EFFECTS.md", Tags: []string{"type/index"},
+			Frontmatter: map[string]any{}, Body: "the type/effect tag registry"}, 0},
+	}
+	for _, c := range cases {
+		if got := effectUnpinnedCheck(c.doc, nil); len(got) != c.want {
+			t.Errorf("%s: got %d findings (%v), want %d", c.name, len(got), got, c.want)
+		}
+	}
+}

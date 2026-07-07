@@ -27,4 +27,5 @@ var All = map[string]engine.CheckFunc{
 	"effect-pin-on-origin":       effectPinOnOriginCheck,
 	"effect-checksum-reproduces": effectChecksumReproducesCheck,
 	"effect-pin-stale":           effectPinStaleCheck,
+	"effect-unpinned":            effectUnpinnedCheck,
 }
