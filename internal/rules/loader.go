@@ -36,7 +36,8 @@ var typeBlockNames = map[string]bool{
 	"text":     true,
 }
 
-// LoadDir loads all .yaml/.yml rule files from a directory.
+// LoadDir loads all rule files from a directory: .yaml/.yml plain rules and
+// .md literate rule pages (frontmatter `md-rule:` → ^id yaml fence).
 // Returns parsed rules, warnings, and any fatal error.
 func LoadDir(dir string) ([]Rule, []string, error) {
 	entries, err := os.ReadDir(dir)
@@ -51,17 +52,25 @@ func LoadDir(dir string) ([]Rule, []string, error) {
 		if e.IsDir() {
 			continue
 		}
-		ext := strings.ToLower(filepath.Ext(e.Name()))
-		if ext != ".yaml" && ext != ".yml" {
-			continue
+		path := filepath.Join(dir, e.Name())
+		switch strings.ToLower(filepath.Ext(e.Name())) {
+		case ".yaml", ".yml":
+			r, warns, err := loadFile(path)
+			if err != nil {
+				return nil, nil, fmt.Errorf("rule %s: %w", e.Name(), err)
+			}
+			warnings = append(warnings, warns...)
+			rules = append(rules, r)
+		case ".md":
+			r, ok, warns, err := loadMarkdownFile(path)
+			if err != nil {
+				return nil, nil, fmt.Errorf("rule %s: %w", e.Name(), err)
+			}
+			warnings = append(warnings, warns...)
+			if ok {
+				rules = append(rules, r)
+			}
 		}
-
-		r, warns, err := loadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			return nil, nil, fmt.Errorf("rule %s: %w", e.Name(), err)
-		}
-		warnings = append(warnings, warns...)
-		rules = append(rules, r)
 	}
 
 	return rules, warnings, nil
@@ -112,7 +121,13 @@ func loadFile(path string) (Rule, []string, error) {
 	if err != nil {
 		return Rule{}, nil, err
 	}
+	return loadYAMLBytes(data, path)
+}
 
+// loadYAMLBytes parses rule YAML — from a .yaml file or a literate page's
+// yaml fence — and routes it to the check/property loader. The rule ID comes
+// from path's filename stem.
+func loadYAMLBytes(data []byte, path string) (Rule, []string, error) {
 	// Validate YAML complexity before full unmarshal.
 	if err := validateYAMLComplexity(data); err != nil {
 		return Rule{}, nil, err

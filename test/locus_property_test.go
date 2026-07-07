@@ -123,14 +123,14 @@ func TestLocusProperty_Tags_KanbanBoardExcluded(t *testing.T) {
 	eng := newEngine()
 
 	fs := testkit.Wiki(
-		testkit.FM("wiki/markup/network-ip-ranges.md", map[string]any{
+		testkit.FM("wiki/domains/net/network/network-ip-ranges.md", map[string]any{
 			"kanban-plugin": "board",
 			"topic":         "Network IP Range Inventory",
 		}, "## Clean\n"),
 	)
 
 	results := eng.Run(fs, []rules.Rule{rule})
-	testkit.AssertNoFinding(t, results, "tags", "wiki/markup/network-ip-ranges.md")
+	testkit.AssertNoFinding(t, results, "tags", "wiki/domains/net/network/network-ip-ranges.md")
 }
 
 // --- created.yaml ---
@@ -228,7 +228,8 @@ func TestLocusProperty_PromptDeployTarget_Fires(t *testing.T) {
 
 	results := eng.Run(fs, []rules.Rule{rule})
 	testkit.AssertFindings(t, results,
-		testkit.Finding("prompt-deploy-target", "wiki/outbox/prompts/bar.md", "error"),
+		// 792bd70 downgraded prompt-deploy-target to warn.
+		testkit.Finding("prompt-deploy-target", "wiki/outbox/prompts/bar.md", "warn"),
 	)
 }
 
