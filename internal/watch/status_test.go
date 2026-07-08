@@ -22,6 +22,8 @@ func TestStatusServer_ReturnsCounters(t *testing.T) {
 		EventsProcessed: 42,
 		HooksFired:      18,
 		LastEvent:       time.Now(),
+		OnChangeRuns:    7,
+		OnChangeFailed:  3,
 	}
 
 	sockPath := shortSockPath(t, "cnt")
@@ -40,6 +42,8 @@ func TestStatusServer_ReturnsCounters(t *testing.T) {
 		EventsProcessed int    `json:"events_processed"`
 		HooksFired      int    `json:"hooks_fired"`
 		RunningSince    string `json:"running_since"`
+		OnChangeRuns    int    `json:"on_change_runs"`
+		OnChangeFailed  int    `json:"on_change_failed"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatalf("unmarshal: %v\nraw: %s", err, data)
@@ -49,6 +53,15 @@ func TestStatusServer_ReturnsCounters(t *testing.T) {
 	}
 	if resp.HooksFired != 18 {
 		t.Errorf("hooks_fired = %d, want 18", resp.HooksFired)
+	}
+	// Serialization-boundary regression: DaemonStats counts on-change runs, but
+	// handleConn's response struct once omitted them, so `md status` never
+	// surfaced them despite the counters existing (watch-on-change gate finding).
+	if resp.OnChangeRuns != 7 {
+		t.Errorf("on_change_runs = %d, want 7", resp.OnChangeRuns)
+	}
+	if resp.OnChangeFailed != 3 {
+		t.Errorf("on_change_failed = %d, want 3", resp.OnChangeFailed)
 	}
 }
 

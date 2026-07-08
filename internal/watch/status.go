@@ -91,9 +91,11 @@ func (s *StatusServer) handleConn(conn net.Conn) {
 
 	resp := struct {
 		RunningSince    string `json:"running_since"`
-		EventsProcessed int   `json:"events_processed"`
+		EventsProcessed int    `json:"events_processed"`
 		LastEvent       string `json:"last_event,omitempty"`
-		HooksFired      int   `json:"hooks_fired"`
+		HooksFired      int    `json:"hooks_fired"`
+		OnChangeRuns    int    `json:"on_change_runs"`
+		OnChangeFailed  int    `json:"on_change_failed"`
 	}{}
 	resp.RunningSince = snap.RunningSince.Format(time.RFC3339)
 	resp.EventsProcessed = snap.EventsProcessed
@@ -101,6 +103,8 @@ func (s *StatusServer) handleConn(conn net.Conn) {
 		resp.LastEvent = snap.LastEvent.Format(time.RFC3339)
 	}
 	resp.HooksFired = snap.HooksFired
+	resp.OnChangeRuns = snap.OnChangeRuns
+	resp.OnChangeFailed = snap.OnChangeFailed
 
 	json.NewEncoder(conn).Encode(resp)
 }
