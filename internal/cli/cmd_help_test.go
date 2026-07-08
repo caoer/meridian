@@ -76,7 +76,10 @@ func TestHelp_CommandInfo(t *testing.T) {
 	if !ok {
 		t.Fatalf("params type = %T, want map[string]any", data["params"])
 	}
-	for _, key := range []string{"scope", "profile", "rules", "config"} {
+	// Help must list exactly what the strict param parse accepts — the old
+	// profile/rules/config entries documented params the handler silently
+	// ignored (the mis-scope hazard class).
+	for _, key := range []string{"scope", "skill_tree", "format"} {
 		if _, exists := params[key]; !exists {
 			t.Errorf("missing param %q", key)
 		}

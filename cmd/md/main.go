@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -587,14 +588,21 @@ func skillTreeCheck(dir string) *cli.Response {
 func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config, cfgErr error) cli.Handler {
 	store := cache.NewStore("") // in-memory; persists across handler calls within same process
 	return func(req *cli.Request) *cli.Response {
-		// Parse scope from params
+		// Parse params — strict: an unknown key is rejected, never silently
+		// ignored. A stale binary that drops a param it doesn't know
+		// mis-scopes the run and reports a clean check that never happened
+		// (the skill_tree hazard); the class dies here.
 		var params struct {
 			Scope     string `json:"scope"`
 			SkillTree string `json:"skill_tree"`
+			Format    string `json:"format"` // router-consumed (output rendering); listed so strict parse admits it
 		}
 		if req.Params != nil {
-			if err := json.Unmarshal(req.Params, &params); err != nil {
-				return cli.ErrorResponse(cli.ErrInvalidParams, "invalid params: "+err.Error())
+			dec := json.NewDecoder(bytes.NewReader(req.Params))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&params); err != nil {
+				return cli.ErrorResponse(cli.ErrInvalidParams,
+					fmt.Sprintf("invalid params: %v — md check accepts: scope, skill_tree, format (assert the binary with `md version`)", err))
 			}
 		}
 

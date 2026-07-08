@@ -441,3 +441,25 @@ func TestCheckSkillTree_BadInputs(t *testing.T) {
 		t.Errorf("skill_tree+scope must exit 2, got %d: %s", code, out.String())
 	}
 }
+
+func TestCheckRejectsUnknownParams(t *testing.T) {
+	// A stale binary silently dropping a param it doesn't know mis-scopes
+	// the run (the skill_tree hazard) — unknown keys must fail loud.
+	var out bytes.Buffer
+	r := cli.NewRouter()
+	r.SetOutput(&out)
+	cfg := &config.Config{Scan: config.ScanConfig{Root: t.TempDir()}}
+	r.Handle("check", checkHandler(engine.New(), nil, cfg, nil))
+
+	if code := r.Run([]string{"check", `{"bogus_param":"x"}`}, nil); code != 2 {
+		t.Fatalf("unknown param must exit 2, got %d: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "bogus_param") || !strings.Contains(out.String(), "md version") {
+		t.Errorf("error must name the key and the version assertion: %s", out.String())
+	}
+	// Known params still work.
+	out.Reset()
+	if code := r.Run([]string{"check", `{"scope":"nothing"}`}, nil); code != 0 {
+		t.Errorf("known param must still run, got %d: %s", code, out.String())
+	}
+}

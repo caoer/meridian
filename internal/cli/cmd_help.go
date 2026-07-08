@@ -48,9 +48,7 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 			Params: map[string]paramHelp{
 				"scope":      {Type: "string", Required: false},
 				"skill_tree": {Type: "string", Required: false},
-				"profile":    {Type: "string", Required: false},
-				"rules":      {Type: "array", Required: false},
-				"config":     {Type: "string", Required: false},
+				"format":     {Type: "string", Required: false},
 			},
 			ExitCodes: map[string]string{"0": "clean", "1": "findings", "2": "error"},
 		},
