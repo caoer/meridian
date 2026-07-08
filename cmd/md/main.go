@@ -158,6 +158,9 @@ func main() {
 		eng.SetSkip(cfg.Scan.Skip)
 		eng.SetMaxFileSize(cfg.Scan.MaxFileSize)
 		eng.SetForeignRoots(cfg.ForeignRoots)
+		// Checks that leave the FS abstraction (probe execution) need the OS
+		// root the scanned DirFS is rooted at — same root checkHandler scans.
+		eng.SetScanRoot(cfg.Scan.Root)
 	}
 	registeredChecks := map[string]bool{}
 	for name, fn := range checks.All {

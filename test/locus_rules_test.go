@@ -23,9 +23,9 @@ func TestLocusRules_Load(t *testing.T) {
 		t.Errorf("unexpected warning: %s", w)
 	}
 
-	// Expect exactly 16 rules
-	if len(loaded) != 16 {
-		t.Fatalf("got %d rules, want 16", len(loaded))
+	// Expect exactly 17 rules
+	if len(loaded) != 17 {
+		t.Fatalf("got %d rules, want 17", len(loaded))
 	}
 
 	// No duplicate IDs
@@ -45,6 +45,7 @@ func TestLocusRules_Load(t *testing.T) {
 		"draws-from",
 		"filename-lowercase-dash",
 		"heading-structure",
+		"probe",
 		"prompt-deploy-target",
 		"skill-fields",
 		"source",
@@ -82,6 +83,7 @@ func TestLocusRules_Load(t *testing.T) {
 		"broken-wikilink":         "broken-wikilink",
 		"filename-lowercase-dash": "pattern",
 		"heading-structure":       "heading-structure",
+		"probe":                   "probe",
 		"table-wikilink-pipe":     "table-wikilink-pipe",
 		"stale-run-record":        "stale-run-record",
 	}

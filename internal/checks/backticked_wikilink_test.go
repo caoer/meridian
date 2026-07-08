@@ -25,7 +25,7 @@ func TestBacktickedWikilink_InlineCode(t *testing.T) {
 
 func TestBacktickedWikilink_FencedCodeBlock_Skip(t *testing.T) {
 	doc := &engine.Document{
-		Body: "normal\n```\n`code [[link]]`\n```\nafter",
+		Body:       "normal\n```\n`code [[link]]`\n```\nafter",
 		BodyOffset: 1,
 	}
 	findings := backtickWikilinkCheck(doc, nil)
