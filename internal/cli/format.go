@@ -288,6 +288,12 @@ func formatData(w io.Writer, data any) {
 				target = strings.Join(task.Composition, ",")
 			}
 			fmt.Fprintf(w, "  %-15s %-40s %s\n", task.Name, target, task.Language)
+			if len(task.Args) > 0 {
+				fmt.Fprintf(w, "    requires args: %s\n", strings.Join(task.Args, ", "))
+			}
+			if len(task.Env) > 0 {
+				fmt.Fprintf(w, "    requires env: %s\n", strings.Join(task.Env, ", "))
+			}
 			if task.Error != "" {
 				fmt.Fprintf(w, "    ERROR: %s\n", task.Error)
 			}

@@ -87,6 +87,8 @@ type TaskInfo struct {
 	Name        string
 	Ref         string
 	Composition []string
+	Args        []string // required positional arg names (md-<name>-args contract)
+	Env         []string // required env var names (md-<name>-env contract)
 	Language    string
 	Error       string
 }
@@ -255,6 +257,11 @@ func RunTasks(mdPath string, names, args []string, timeout time.Duration, stdout
 		if _, done := blocks[name]; done {
 			continue
 		}
+		// Parameter contract gates first — the cheapest resolution-time check,
+		// and the whole point is failing before any side effect.
+		if err := checkContract(tasks[name], args); err != nil {
+			return nil, "", err
+		}
 		b, definingPath, err := resolveTaskBlock(mdPath, content, tasks[name], res)
 		if err != nil {
 			return nil, "", err
@@ -338,7 +345,7 @@ func ListTasks(mdPath string) ([]TaskInfo, error) {
 	infos := make([]TaskInfo, 0, len(tasks))
 	for _, name := range TaskNames(tasks) {
 		task := tasks[name]
-		info := TaskInfo{Name: name, Ref: task.Ref, Composition: task.Composition}
+		info := TaskInfo{Name: name, Ref: task.Ref, Composition: task.Composition, Args: task.Args, Env: task.Env}
 		if task.Ref != "" {
 			if b, _, err := resolveTaskBlock(mdPath, content, task, res); err != nil {
 				info.Error = err.Error()

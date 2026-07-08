@@ -62,6 +62,7 @@ func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 			for _, ti := range infos {
 				data.Tasks = append(data.Tasks, cli.RunListTaskData{
 					Name: ti.Name, Ref: ti.Ref, Composition: ti.Composition,
+					Args: ti.Args, Env: ti.Env,
 					Language: ti.Language, Error: ti.Error,
 				})
 			}
