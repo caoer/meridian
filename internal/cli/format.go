@@ -252,16 +252,16 @@ func formatData(w io.Writer, data any) {
 		}
 
 	case RunData:
-		// Task-report rows are diagnostics, not block output: stdout is the
-		// render contract's byte-for-byte channel (it IS the skill-load
-		// injection), so the rows go to stderr — same class as response
-		// warnings. JSON format keeps them in the envelope.
+		// Task rows follow the silence-is-ok law: success prints nothing
+		// (harness fenced-! blocks merge stderr into the capture, so even
+		// stderr ok-rows pollute the injected render); failure prints loud
+		// on stderr. stdout stays the byte-for-byte block-output channel.
+		// JSON format keeps the full task list, both statuses.
 		for _, task := range d.Tasks {
-			status := "ok"
-			if task.ExitCode != 0 {
-				status = fmt.Sprintf("FAILED (exit %d)", task.ExitCode)
+			if task.ExitCode == 0 {
+				continue
 			}
-			fmt.Fprintf(os.Stderr, "TASK  %-15s ^%-15s %-7s %s\n", task.Name, task.BlockID, task.Lang, status)
+			fmt.Fprintf(os.Stderr, "TASK  %-15s ^%-15s %-7s FAILED (exit %d)\n", task.Name, task.BlockID, task.Lang, task.ExitCode)
 		}
 
 	case SchemaData:

@@ -15,8 +15,8 @@ func renderData(data any) string {
 }
 
 func TestFormatRunData(t *testing.T) {
-	// Task-report rows are diagnostics: stdout stays byte-pure (it is the
-	// skill-load injection), rows go to stderr.
+	// Silence-is-ok: success rows print nowhere (merged 2>&1 captures must
+	// stay clean); failure rows print loud on stderr; stdout byte-pure.
 	errOut := captureStderr(t, func() {
 		out := renderData(RunData{
 			File: "note.md",
@@ -31,14 +31,14 @@ func TestFormatRunData(t *testing.T) {
 		}
 	})
 	lines := strings.Split(strings.TrimRight(errOut, "\n"), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("want 2 task rows on stderr, got %q", errOut)
+	if len(lines) != 1 {
+		t.Fatalf("want exactly 1 task row on stderr (failure only, success silent), got %q", errOut)
 	}
-	if !strings.Contains(lines[0], "TASK") || !strings.Contains(lines[0], "check") || !strings.HasSuffix(strings.TrimRight(lines[0], " "), "ok") {
-		t.Errorf("ok row = %q", lines[0])
+	if strings.Contains(errOut, " ok") {
+		t.Errorf("success row must not print anywhere, got %q", errOut)
 	}
-	if !strings.Contains(lines[1], "FAILED (exit 3)") {
-		t.Errorf("failed row = %q", lines[1])
+	if !strings.Contains(lines[0], "TASK") || !strings.Contains(lines[0], "deploy") || !strings.Contains(lines[0], "FAILED (exit 3)") {
+		t.Errorf("failure row must stay loud on stderr, got %q", lines[0])
 	}
 }
 
