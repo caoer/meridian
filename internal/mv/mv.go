@@ -43,16 +43,13 @@ func Move(fsys vfs.WriteFS, source, dest string, eng *engine.Engine, ruleList []
 	}
 	result.FilesCount = len(movedFiles)
 
-	// Step 2: Build stem map and update links (skip when stems are preserved —
-	// directory-only moves don't change wikilink targets).
-	stemMap := buildStemMap(source, dest, movedFiles)
-	if len(stemMap) > 0 {
-		updates, err := UpdateLinks(fsys, stemMap)
-		if err != nil {
-			result.Warnings = append(result.Warnings, "link update error: "+err.Error())
-		} else {
-			result.LinkUpdates = updates
-		}
+	// Step 2: Build path mappings and update links (path-aware + anchor-aware)
+	pathMappings := buildPathMappings(source, dest, movedFiles)
+	updates, err := UpdateLinksForMove(fsys, pathMappings)
+	if err != nil {
+		result.Warnings = append(result.Warnings, "link update error: "+err.Error())
+	} else {
+		result.LinkUpdates = updates
 	}
 
 	// Step 3: Re-lint moved files at new locations
@@ -109,18 +106,18 @@ func dryRunMove(fsys vfs.WriteFS, source, dest string, eng *engine.Engine, ruleL
 	}
 	result.FilesCount = len(srcFiles)
 
-	// Compute stem map
-	stemMap := make(map[string]string, len(srcFiles))
+	// Compute path mappings for link rewriting
+	var pathMappings []PathMapping
 	for i, sf := range srcFiles {
-		oldStem := StemFromPath(sf)
-		newStem := StemFromPath(destFiles[i])
-		if oldStem != newStem {
-			stemMap[oldStem] = newStem
+		oldP := PathWithoutExt(sf)
+		newP := PathWithoutExt(destFiles[i])
+		if oldP != newP {
+			pathMappings = append(pathMappings, PathMapping{OldPath: oldP, NewPath: newP})
 		}
 	}
 
 	// Scan for links that would change (without writing)
-	if len(stemMap) > 0 {
+	if len(pathMappings) > 0 {
 		err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, walkErr error) error {
 			if walkErr != nil || d.IsDir() || !strings.HasSuffix(p, ".md") {
 				return nil
@@ -130,13 +127,13 @@ func dryRunMove(fsys vfs.WriteFS, source, dest string, eng *engine.Engine, ruleL
 				return nil
 			}
 			content := string(data)
-			for oldStem, newStem := range stemMap {
-				_, n := RewriteWikilinks(content, oldStem, newStem)
+			for _, pm := range pathMappings {
+				_, n := RewriteWikilinksForMove(content, pm.OldPath, pm.NewPath)
 				if n > 0 {
 					result.LinkUpdates = append(result.LinkUpdates, LinkUpdate{
 						File:    p,
-						OldLink: oldStem,
-						NewLink: newStem,
+						OldLink: pm.OldPath,
+						NewLink: pm.NewPath,
 						Count:   n,
 					})
 				}
@@ -182,13 +179,12 @@ func dryRunMove(fsys vfs.WriteFS, source, dest string, eng *engine.Engine, ruleL
 	return result, nil
 }
 
-// buildStemMap creates oldStem→newStem mapping from source/dest paths.
-func buildStemMap(source, dest string, movedFiles []string) map[string]string {
-	stemMap := make(map[string]string)
+// buildPathMappings creates PathMapping entries for all moved files.
+// Each entry carries the full path (without .md) for path-aware link rewriting.
+func buildPathMappings(source, dest string, movedFiles []string) []PathMapping {
+	var mappings []PathMapping
 
-	// For each moved file, compute old and new stems
 	for _, newPath := range movedFiles {
-		newStem := StemFromPath(newPath)
 		// Reconstruct old path from new
 		rel := strings.TrimPrefix(newPath, dest)
 		rel = strings.TrimPrefix(rel, "/")
@@ -198,11 +194,13 @@ func buildStemMap(source, dest string, movedFiles []string) map[string]string {
 		} else {
 			oldPath = source + "/" + rel
 		}
-		oldStem := StemFromPath(oldPath)
-		if oldStem != newStem {
-			stemMap[oldStem] = newStem
+
+		oldP := PathWithoutExt(oldPath)
+		newP := PathWithoutExt(newPath)
+		if oldP != newP {
+			mappings = append(mappings, PathMapping{OldPath: oldP, NewPath: newP})
 		}
 	}
 
-	return stemMap
+	return mappings
 }

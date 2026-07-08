@@ -50,8 +50,8 @@ func TestToStringSlice_MixedElements(t *testing.T) {
 
 func TestToStringSlice_PlainString(t *testing.T) {
 	got := toStringSlice("just a string")
-	if got != nil {
-		t.Fatalf("got %v, want nil for non-slice input", got)
+	if len(got) != 1 || got[0] != "just a string" {
+		t.Fatalf("got %v, want [just a string] for scalar string input", got)
 	}
 }
 

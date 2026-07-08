@@ -16,15 +16,21 @@ type LinkUpdate struct {
 	Count   int    `json:"count"`
 }
 
-// UpdateLinks scans all .md files in fsys, rewrites wikilinks from old stems to new stems.
-// stemMap: old stem → new stem (for each moved file).
+// PathMapping represents a moved file's old and new paths (without .md extension).
+type PathMapping struct {
+	OldPath string // e.g. "wiki/locus/design-doc"
+	NewPath string // e.g. "wiki/infra/arch-doc"
+}
+
+// UpdateLinksForMove scans all .md files in fsys, rewrites wikilinks for moved files.
+// Handles bare stems, path-qualified links, and anchored links.
 // Returns list of LinkUpdates.
-func UpdateLinks(fsys vfs.WriteFS, stemMap map[string]string) ([]LinkUpdate, error) {
+func UpdateLinksForMove(fsys vfs.WriteFS, mappings []PathMapping) ([]LinkUpdate, error) {
 	var updates []LinkUpdate
 
 	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil // skip errors
+			return nil
 		}
 		if d.IsDir() || !strings.HasSuffix(p, ".md") {
 			return nil
@@ -32,19 +38,19 @@ func UpdateLinks(fsys vfs.WriteFS, stemMap map[string]string) ([]LinkUpdate, err
 
 		data, err := fs.ReadFile(fsys, p)
 		if err != nil {
-			return nil // skip unreadable
+			return nil
 		}
 
 		content := string(data)
 		changed := false
 
-		for oldStem, newStem := range stemMap {
-			newContent, n := RewriteWikilinks(content, oldStem, newStem)
+		for _, pm := range mappings {
+			newContent, n := RewriteWikilinksForMove(content, pm.OldPath, pm.NewPath)
 			if n > 0 {
 				updates = append(updates, LinkUpdate{
 					File:    p,
-					OldLink: oldStem,
-					NewLink: newStem,
+					OldLink: pm.OldPath,
+					NewLink: pm.NewPath,
 					Count:   n,
 				})
 				content = newContent
@@ -73,4 +79,9 @@ func StemFromPath(p string) string {
 	}
 	stem := strings.TrimSuffix(base, ".md")
 	return strings.ToLower(stem)
+}
+
+// PathWithoutExt returns the file path without the .md extension.
+func PathWithoutExt(p string) string {
+	return strings.TrimSuffix(p, ".md")
 }

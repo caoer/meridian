@@ -17,6 +17,7 @@ import (
 	"github.com/caoer/meridian/internal/checks"
 	"github.com/caoer/meridian/internal/cli"
 	"github.com/caoer/meridian/internal/config"
+	"github.com/caoer/meridian/internal/contract"
 	"github.com/caoer/meridian/internal/domains"
 	"github.com/caoer/meridian/internal/engine"
 	"github.com/caoer/meridian/internal/fix"
@@ -79,20 +80,40 @@ func main() {
 
 	// Load rules from all packs. Failures are deferred like config failures:
 	// run/read/version/help must keep working beside a broken rule pack.
+	//
+	// Override order: explicit config rule_packs > filesystem > embedded pack.
+	// When config specifies rule_packs, those are used (filesystem).
+	// When no config or no rule_packs, the compiled-in contract pack is the
+	// fallback so the binary always has contract rules available.
 	if cfg != nil {
-		for _, pack := range cfg.RulePacks {
-			rs, _, err := rules.LoadDir(pack.Path)
-			if err != nil {
-				cfgErr = fmt.Errorf("invalid rule pack %s: %w", pack.Path, err)
-				break
+		if len(cfg.RulePacks) > 0 {
+			for _, pack := range cfg.RulePacks {
+				rs, _, err := rules.LoadDir(pack.Path)
+				if err != nil {
+					cfgErr = fmt.Errorf("invalid rule pack %s: %w", pack.Path, err)
+					break
+				}
+				loadedRules = append(loadedRules, rs...)
 			}
-			loadedRules = append(loadedRules, rs...)
+		} else {
+			// No rule_packs in config → fall back to embedded contract pack.
+			rs, _, err := rules.LoadFS(contract.FS())
+			if err != nil {
+				cfgErr = fmt.Errorf("embedded contract pack: %w", err)
+			} else {
+				loadedRules = append(loadedRules, rs...)
+			}
 		}
 
 		if cfgErr == nil {
 			if err := rules.DetectDuplicates(loadedRules); err != nil {
 				cfgErr = fmt.Errorf("duplicate rule: %w", err)
 			}
+		}
+
+		// Apply config-level rule params (shallow merge, config wins).
+		if cfgErr == nil && len(cfg.RuleParams) > 0 {
+			loadedRules = rules.ApplyConfigParams(loadedRules, cfg.RuleParams)
 		}
 
 		if cfgErr != nil {
@@ -135,6 +156,7 @@ func main() {
 	if cfg != nil {
 		eng.SetSkip(cfg.Scan.Skip)
 		eng.SetMaxFileSize(cfg.Scan.MaxFileSize)
+		eng.SetForeignRoots(cfg.ForeignRoots)
 	}
 	registeredChecks := map[string]bool{}
 	for name, fn := range checks.All {
@@ -291,7 +313,9 @@ func fixHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config
 			DryRun bool     `json:"dry-run"`
 		}
 		if req.Params != nil {
-			if err := json.Unmarshal(req.Params, &params); err != nil {
+			dec := json.NewDecoder(bytes.NewReader(req.Params))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&params); err != nil {
 				return cli.ErrorResponse(cli.ErrInvalidParams, "invalid params: "+err.Error())
 			}
 		}
@@ -369,7 +393,9 @@ func mvHandlerFS(eng *engine.Engine, loadedRules []rules.Rule, cfgErr error, mak
 			DryRun bool   `json:"dry-run"`
 		}
 		if req.Params != nil {
-			if err := json.Unmarshal(req.Params, &params); err != nil {
+			dec := json.NewDecoder(bytes.NewReader(req.Params))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&params); err != nil {
 				return cli.ErrorResponse(cli.ErrInvalidParams, "invalid params: "+err.Error())
 			}
 		}

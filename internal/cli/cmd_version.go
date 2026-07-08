@@ -3,6 +3,8 @@ package cli
 import (
 	"runtime"
 	"runtime/debug"
+
+	"github.com/caoer/meridian/internal/version"
 )
 
 // buildRevision extracts the vcs revision (+ dirty marker) embedded by the Go
@@ -38,7 +40,7 @@ func NewVersionHandler() Handler {
 		return &Response{
 			Version: ResponseVersion,
 			Data: map[string]string{
-				"meridian": "0.1.0",
+				"meridian": version.Info(),
 				"build":    buildRevision(),
 				"go":       runtime.Version(),
 				"platform": runtime.GOOS + "/" + runtime.GOARCH,

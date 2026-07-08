@@ -37,8 +37,10 @@ func TestVersion_Output(t *testing.T) {
 		}
 	}
 
-	if data["meridian"] != "0.1.0" {
-		t.Errorf("meridian version = %q, want %q", data["meridian"], "0.1.0")
+	// Version is injected via ldflags at build time; in test context
+	// it falls back to "dev" or "dev+<vcs-sha>". Just verify it's non-empty.
+	if v, ok := data["meridian"].(string); !ok || v == "" {
+		t.Errorf("meridian version = %q, want non-empty string", data["meridian"])
 	}
 	if data["go"] != runtime.Version() {
 		t.Errorf("go version = %q, want %q", data["go"], runtime.Version())

@@ -1,0 +1,8 @@
+check: broken-wikilink
+on: "**"
+severity: error
+message: "{{.Type}} wikilink: [[{{.Target}}]]"
+roots: ["**"]
+skip-prefixes:
+  - "foreign/"
+  - "http"
