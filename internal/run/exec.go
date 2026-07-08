@@ -111,14 +111,31 @@ func GitToplevel(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if top, ok := walkToGit(abs); ok {
+		return top, nil
+	}
+	// Literal walk missed: skill installs address files via symlink farms
+	// (~/.local/share/ucc/...) whose literal ancestry has no .git — the
+	// real file lives inside a checkout, and that is the repo the cwd
+	// contract means. Resolved only on miss so literal-path callers keep
+	// byte-stable cwds (no /var → /private/var canonicalization surprise).
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil && resolved != abs {
+		if top, ok := walkToGit(resolved); ok {
+			return top, nil
+		}
+	}
+	return "", fmt.Errorf("no git toplevel above %s — md run requires the markdown file to live in a git repo (cwd contract)", path)
+}
+
+func walkToGit(abs string) (string, bool) {
 	dir := filepath.Dir(abs)
 	for {
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return dir, nil
+			return dir, true
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", fmt.Errorf("no git toplevel above %s — md run requires the markdown file to live in a git repo (cwd contract)", path)
+			return "", false
 		}
 		dir = parent
 	}

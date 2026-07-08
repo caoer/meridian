@@ -202,3 +202,33 @@ func TestExecBlockNoTimeoutUnbounded(t *testing.T) {
 		t.Fatalf("code=%d timedOut=%v err=%v, want 0/false/nil", code, timedOut, err)
 	}
 }
+
+func TestGitToplevelThroughSymlink(t *testing.T) {
+	// Skill installs address files via symlink farms whose literal ancestry
+	// has no .git — the walk must follow the link to the real checkout.
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(repo, "note.md")
+	if err := os.WriteFile(target, []byte("# note"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	farm := t.TempDir() // no .git anywhere in its literal ancestry
+	link := filepath.Join(farm, "note.md")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := GitToplevel(link)
+	if err != nil {
+		t.Fatalf("GitToplevel through symlink: %v", err)
+	}
+	wantRepo, err := filepath.EvalSymlinks(repo) // TempDir itself may be a symlink (macOS /var)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != wantRepo {
+		t.Errorf("GitToplevel = %q, want real checkout %q", got, wantRepo)
+	}
+}
