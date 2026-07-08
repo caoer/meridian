@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 )
@@ -66,9 +67,15 @@ func RenderText(w io.Writer, resp *Response) {
 		return
 	}
 
-	// Data payloads (rules ls, debug, help, version) — structured text
+	// Data payloads (rules ls, debug, help, version) — structured text.
+	// Warnings go to stderr: a strict-decode flag invisible in default
+	// output would be silent normalization from the caller's seat; stdout
+	// stays pure data (the md read precedent).
 	if resp.Data != nil {
 		formatData(w, resp.Data)
+		for _, w2 := range resp.Warnings {
+			fmt.Fprintf(os.Stderr, "WARN  [%s] %s\n", w2.Code, w2.Message)
+		}
 		return
 	}
 
