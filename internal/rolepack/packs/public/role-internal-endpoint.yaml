@@ -1,0 +1,9 @@
+# Public pack — external-voice boundary, mechanical subset (contract C45).
+# Internal endpoints must not appear in a public repo: RFC1918 addresses
+# and internal-zone hostnames.
+check: pattern
+on: ["**"]
+severity: error
+target: content
+match: "\\b(?:10\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}|192\\.168\\.[0-9]{1,3}\\.[0-9]{1,3}|172\\.(?:1[6-9]|2[0-9]|3[01])\\.[0-9]{1,3}\\.[0-9]{1,3})\\b|\\b[a-z0-9][a-z0-9-]*\\.(?:internal|lan|corp)\\b"
+message: "internal endpoint in public repo ({{.Match}}) — public role forbids internal addresses/hostnames; describe the service, not its address"

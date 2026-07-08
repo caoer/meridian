@@ -12,6 +12,7 @@ import (
 // Config represents a parsed meridian.yaml.
 type Config struct {
 	Version        string             `yaml:"version"`
+	Role           string             `yaml:"role"` // companion-repo role (C45); wikis declare wiki-role: in LLM_WIKI.md instead
 	RulePacks      []RulePack         `yaml:"rule_packs"`
 	Profiles       map[string]Profile `yaml:"profiles"`
 	DefaultProfile string             `yaml:"default_profile"`

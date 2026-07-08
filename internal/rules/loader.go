@@ -2,7 +2,9 @@ package rules
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -73,6 +75,38 @@ func LoadDir(dir string) ([]Rule, []string, error) {
 		}
 	}
 
+	return rules, warnings, nil
+}
+
+// LoadFS loads all .yaml/.yml rules under dir in fsys — the embedded-pack
+// twin of LoadDir. Literate .md rules are a disk convention and are not
+// supported in embedded packs.
+func LoadFS(fsys fs.FS, dir string) ([]Rule, []string, error) {
+	entries, err := fs.ReadDir(fsys, dir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading rule dir %s: %w", dir, err)
+	}
+
+	var rules []Rule
+	var warnings []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		switch strings.ToLower(filepath.Ext(e.Name())) {
+		case ".yaml", ".yml":
+			data, err := fs.ReadFile(fsys, path.Join(dir, e.Name()))
+			if err != nil {
+				return nil, nil, fmt.Errorf("rule %s: %w", e.Name(), err)
+			}
+			r, warns, err := loadYAMLBytes(data, e.Name())
+			if err != nil {
+				return nil, nil, fmt.Errorf("rule %s: %w", e.Name(), err)
+			}
+			warnings = append(warnings, warns...)
+			rules = append(rules, r)
+		}
+	}
 	return rules, warnings, nil
 }
 

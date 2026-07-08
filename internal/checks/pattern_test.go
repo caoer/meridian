@@ -117,3 +117,38 @@ func TestPattern_FilenameInTemplateData(t *testing.T) {
 		t.Errorf("Filename = %q, want bad_file.md", findings[0].TemplateData["Filename"])
 	}
 }
+
+func TestPatternContentScan(t *testing.T) {
+	doc := &engine.Document{
+		Path: "page.md",
+		RawContent: []byte(`---
+key: AKIAIOSFODNN7EXAMPLE
+---
+line three
+token ghp_0123456789012345678901234567890123456789 here
+`),
+	}
+	findings := patternCheck(doc, map[string]any{
+		"target": "content",
+		"match":  `\bAKIA[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{36,}\b`,
+	})
+	if len(findings) != 2 {
+		t.Fatalf("findings = %+v, want 2", findings)
+	}
+	if findings[0].Line != 2 || findings[1].Line != 5 {
+		t.Errorf("lines = %d,%d, want 2,5 (frontmatter is scanned too)", findings[0].Line, findings[1].Line)
+	}
+	for _, f := range findings {
+		m := f.TemplateData["Match"]
+		if len(m) > 9+len("…") || !strings.HasSuffix(m, "…") {
+			t.Errorf("match must be masked, got %q", m)
+		}
+	}
+}
+
+func TestPatternContentNoMatch(t *testing.T) {
+	doc := &engine.Document{Path: "p.md", RawContent: []byte("clean text\n")}
+	if fs := patternCheck(doc, map[string]any{"target": "content", "match": `\bAKIA[0-9A-Z]{16}\b`}); len(fs) != 0 {
+		t.Errorf("clean doc must produce no findings: %+v", fs)
+	}
+}

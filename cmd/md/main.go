@@ -21,6 +21,7 @@ import (
 	"github.com/caoer/meridian/internal/fix"
 	"github.com/caoer/meridian/internal/hooks"
 	"github.com/caoer/meridian/internal/mv"
+	"github.com/caoer/meridian/internal/rolepack"
 	"github.com/caoer/meridian/internal/rules"
 	"github.com/caoer/meridian/internal/schema"
 	"github.com/caoer/meridian/internal/vfs"
@@ -103,6 +104,26 @@ func main() {
 		if cfg.DefaultProfile != "" {
 			if p, ok := cfg.Profiles[cfg.DefaultProfile]; ok {
 				loadedRules = p.Resolve(loadedRules)
+			}
+		}
+
+		// Role-selected lint pack (C45): the repo's role mechanically appends
+		// the embedded pack — after profile resolution, so per-wiki profiles
+		// can never filter policy off. Resolution failures (role drift,
+		// invalid enum) are config errors: they must block, not degrade.
+		if cfgErr == nil {
+			role, _, err := rolepack.Resolve(cfg.Role, cfg.Scan.Root)
+			if err == nil {
+				var packRules []rules.Rule
+				if packRules, err = rolepack.Rules(role); err == nil {
+					loadedRules = append(loadedRules, packRules...)
+					allRules = append(allRules, packRules...)
+				}
+			}
+			if err != nil {
+				cfgErr = err
+				loadedRules = nil
+				allRules = nil
 			}
 		}
 	}

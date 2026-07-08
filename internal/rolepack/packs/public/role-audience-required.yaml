@@ -1,0 +1,8 @@
+# Public pack — external-voice boundary, mechanical subset (contract C45).
+# Every page in a public repo declares its audience; the voice norm itself
+# is audit-tier prose review, this is the write-time mechanical anchor.
+property: audience
+on: ["**"]
+required: true
+severity: error
+message: "public repo page missing audience: frontmatter — declare who this page speaks to (C45 external-voice mechanical subset)"
