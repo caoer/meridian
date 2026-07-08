@@ -453,6 +453,12 @@ func watchHandler(cfg *config.Config, cfgErr error, cfgPath string) cli.Handler 
 		}
 
 		d := watch.NewDaemon(w, parsedHooks, os.Stdout)
+		// md-on-change: docs declare their own reactivity; runs are receipted
+		// via sidecar run records (record:true semantics).
+		onChangeTimeout := time.Duration(cfg.Watch.OnChangeTimeoutMs) * time.Millisecond
+		d.SetOnChangeRunner(func(p string) *watch.OnChangeResult {
+			return watch.RunOnChange(p, onChangeTimeout)
+		})
 
 		// Start status socket
 		sockPath := watch.SocketPath(cfgPath)

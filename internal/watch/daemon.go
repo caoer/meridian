@@ -12,26 +12,31 @@ import (
 
 // BatchOutput is one JSON line emitted per debounced batch.
 type BatchOutput struct {
-	Event   string         `json:"event"`
-	Files   []hooks.Event  `json:"files"`
-	Results []hooks.HookResult `json:"results,omitempty"`
-	Time    string         `json:"time"`
+	Event    string             `json:"event"`
+	Files    []hooks.Event      `json:"files"`
+	Results  []hooks.HookResult `json:"results,omitempty"`
+	OnChange []OnChangeResult   `json:"on_change,omitempty"`
+	Time     string             `json:"time"`
 }
 
 // DaemonStats tracks daemon runtime counters.
 type DaemonStats struct {
 	mu              sync.Mutex
 	RunningSince    time.Time `json:"running_since"`
-	EventsProcessed int      `json:"events_processed"`
+	EventsProcessed int       `json:"events_processed"`
 	LastEvent       time.Time `json:"last_event"`
-	HooksFired      int      `json:"hooks_fired"`
+	HooksFired      int       `json:"hooks_fired"`
+	OnChangeRuns    int       `json:"on_change_runs"`
+	OnChangeFailed  int       `json:"on_change_failed"`
 }
 
-func (s *DaemonStats) record(batchSize, hookCount int) {
+func (s *DaemonStats) record(batchSize, hookCount, onChangeRuns, onChangeFailed int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.EventsProcessed += batchSize
 	s.HooksFired += hookCount
+	s.OnChangeRuns += onChangeRuns
+	s.OnChangeFailed += onChangeFailed
 	s.LastEvent = time.Now()
 }
 
@@ -44,6 +49,8 @@ func (s *DaemonStats) Snapshot() DaemonStats {
 		EventsProcessed: s.EventsProcessed,
 		LastEvent:       s.LastEvent,
 		HooksFired:      s.HooksFired,
+		OnChangeRuns:    s.OnChangeRuns,
+		OnChangeFailed:  s.OnChangeFailed,
 	}
 }
 
@@ -56,6 +63,17 @@ type Daemon struct {
 	done     chan struct{}
 	stopOnce sync.Once
 	wg       sync.WaitGroup
+
+	// md-on-change execution. lastRunEnd is touched only from the Run loop
+	// goroutine (processBatch is sequential) — no lock needed.
+	onChange   OnChangeRunner
+	lastRunEnd map[string]time.Time
+}
+
+// SetOnChangeRunner wires md-on-change execution into the daemon. Call
+// before Run.
+func (d *Daemon) SetOnChangeRunner(r OnChangeRunner) {
+	d.onChange = r
 }
 
 // NewDaemon creates a daemon. Call Run() to start the loop.
@@ -66,8 +84,9 @@ func NewDaemon(w *Watcher, parsedHooks []hooks.Hook, output io.Writer) *Daemon {
 		stats: &DaemonStats{
 			RunningSince: time.Now(),
 		},
-		output: output,
-		done:   make(chan struct{}),
+		output:     output,
+		done:       make(chan struct{}),
+		lastRunEnd: make(map[string]time.Time),
 	}
 }
 
@@ -106,13 +125,21 @@ func (d *Daemon) Stop() {
 
 func (d *Daemon) processBatch(batch []hooks.Event) {
 	results := hooks.Dispatch(batch, d.hooks)
-	d.stats.record(len(batch), len(results))
+	onChange := d.dispatchOnChange(batch)
+	failed := 0
+	for _, r := range onChange {
+		if r.Exit != 0 || r.Error != "" {
+			failed++
+		}
+	}
+	d.stats.record(len(batch), len(results), len(onChange), failed)
 
 	out := BatchOutput{
-		Event:   "batch",
-		Files:   batch,
-		Results: results,
-		Time:    time.Now().Format(time.RFC3339),
+		Event:    "batch",
+		Files:    batch,
+		Results:  results,
+		OnChange: onChange,
+		Time:     time.Now().Format(time.RFC3339),
 	}
 
 	data, err := json.Marshal(out)

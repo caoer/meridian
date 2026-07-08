@@ -28,6 +28,10 @@ type WatchConfig struct {
 	DebounceMs int                      `yaml:"debounce_ms"`
 	Ignore     []string                 `yaml:"ignore"`
 	Hooks      map[string]hooks.HookDef `yaml:"hooks"`
+
+	// OnChangeTimeoutMs bounds each md-on-change task run (default 2m) —
+	// a wedged block must not wedge the daemon loop.
+	OnChangeTimeoutMs int `yaml:"on_change_timeout_ms"`
 }
 
 // RulePack is a directory containing rule YAML files.
@@ -83,6 +87,12 @@ func Parse(data []byte, configDir string) (*Config, error) {
 		}
 		if cfg.Watch.DebounceMs == 0 {
 			cfg.Watch.DebounceMs = 6000
+		}
+		if cfg.Watch.OnChangeTimeoutMs < 0 {
+			return nil, fmt.Errorf("watch: on_change_timeout_ms must be non-negative, got %d", cfg.Watch.OnChangeTimeoutMs)
+		}
+		if cfg.Watch.OnChangeTimeoutMs == 0 {
+			cfg.Watch.OnChangeTimeoutMs = 120000
 		}
 		for _, pattern := range cfg.Watch.Ignore {
 			if !doublestar.ValidatePattern(pattern) {
