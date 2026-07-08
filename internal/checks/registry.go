@@ -30,4 +30,5 @@ var All = map[string]engine.CheckFunc{
 	"effect-unpinned":            effectUnpinnedCheck,
 	"wikilink-canonicalize":      wikilinkCanonicalizeCheck,
 	"tier-downgrade":             tierDowngradeCheck,
+	"wiki-navlink":               wikiNavlinkCheck,
 }

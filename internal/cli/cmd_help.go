@@ -134,6 +134,20 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 			},
 			ExitCodes: map[string]string{"0": "all tasks succeeded", "1": "a task exited non-zero (124 = timed out)", "2": "resolution or tool failure"},
 		},
+		"encode": {
+			Description: "The ONE cross-wiki reference encoder (C24 canon): (slug, path[, fragment]) → canonical obsidian://open (no fragment) or advanced-uri (heading/^block) navigation URI; form nav = [display](uri) with caller display, form citation = [wiki://slug/path[@commit]](uri). parse extracts the triple from either grammar (strict decode: non-canonical encoding is flagged, never normalized). Config-less, pure grammar",
+			Params: map[string]paramHelp{
+				"slug":     {Type: "string", Required: false},
+				"path":     {Type: "string", Required: false},
+				"fragment": {Type: "string", Required: false},
+				"commit":   {Type: "string", Required: false},
+				"display":  {Type: "string", Required: false},
+				"form":     {Type: "string", Required: false},
+				"parse":    {Type: "string", Required: false},
+				"format":   {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "encoded/parsed", "2": "invalid params or unrecognized grammar"},
+		},
 		"read": {
 			Description: "Read vault-addressed content: path, [[note]], [[note#Heading]], or [[note#^block]]; text mode prints verification metadata (base, matches, warnings) to stderr, stdout stays pure content. With embeds:true, ![[...]] embeds are recursively inlined (frontmatter stripped from whole-note embeds). With strip-frontmatter:true, the matched file's own frontmatter is dropped — returns the deployable body",
 			Params: map[string]paramHelp{

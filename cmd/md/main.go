@@ -203,6 +203,8 @@ func main() {
 	router.Handle("status", statusHandler(cfgPath, cfgErr))
 	router.Handle("run", runHandler())
 	router.Handle("read", readHandler())
+	// encode is deliberately NOT config-gated: the encoder is pure grammar.
+	router.Handle("encode", encodeHandler())
 	router.Handle("schema", schemaHandler(cfg, cfgErr))
 	// llm-wiki check is deliberately NOT config-gated: it is the environment
 	// doctor that must run on a machine with nothing set up yet.

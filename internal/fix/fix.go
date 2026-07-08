@@ -33,6 +33,7 @@ var All = map[string]FixFunc{
 	"property":              PropertyFix,
 	"table-wikilink-pipe":   TableWikilinkPipeFix,
 	"wikilink-canonicalize": WikilinkCanonicalizeFix,
+	"wiki-navlink":          WikiNavlinkFix,
 }
 
 // ParamSpec declares accepted param names and types for a fixer.
@@ -106,6 +107,7 @@ var ParamSpecs = map[string]ParamSpec{
 			"match":  "",
 		},
 	},
+	"wiki-navlink":               {Accepted: map[string]string{"mapping": "map[string]any"}},
 	"effect-pin-resolves":        {Accepted: map[string]string{"absent-repo": ""}},
 	"effect-pin-on-origin":       {Accepted: map[string]string{"absent-repo": ""}},
 	"effect-checksum-reproduces": {Accepted: map[string]string{"absent-repo": ""}},
