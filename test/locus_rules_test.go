@@ -23,9 +23,9 @@ func TestLocusRules_Load(t *testing.T) {
 		t.Errorf("unexpected warning: %s", w)
 	}
 
-	// Expect exactly 15 rules
-	if len(loaded) != 15 {
-		t.Fatalf("got %d rules, want 15", len(loaded))
+	// Expect exactly 16 rules
+	if len(loaded) != 16 {
+		t.Fatalf("got %d rules, want 16", len(loaded))
 	}
 
 	// No duplicate IDs
@@ -48,6 +48,7 @@ func TestLocusRules_Load(t *testing.T) {
 		"prompt-deploy-target",
 		"skill-fields",
 		"source",
+		"stale-run-record",
 		"table-wikilink-pipe",
 		"tags",
 	}

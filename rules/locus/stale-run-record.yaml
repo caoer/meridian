@@ -1,0 +1,8 @@
+# A sidecar run record (<stem>.runs.md, from `md run` record:true) pins the
+# git blob id of each task's block at run time. Block edited since → the
+# recorded output predates the code. Opt-in by construction: docs without a
+# sidecar are never checked.
+check: stale-run-record
+message: "Stale run record — task {{.Task}}: {{.Issue}}"
+severity: warn
+on: "**/*.md"

@@ -128,7 +128,7 @@ func (e *Engine) RunForPaths(fsys fs.FS, ruleList []rules.Rule, targetPaths []st
 			if doc.IsIgnored(ar.rule.ID) {
 				continue
 			}
-			result := e.evalDoc(doc, ar, allPaths, indexCache)
+			result := e.evalDoc(doc, ar, fsys, allPaths, indexCache)
 			if result.panicMsg != "" {
 				e.warnings = append(e.warnings, types.Warning{
 					Code:    "CHECK_PANIC",

@@ -19,8 +19,8 @@ func TestLoader_LocusRulePack(t *testing.T) {
 		t.Fatalf("LoadDir(rules/locus) error: %v", err)
 	}
 
-	if len(rules) != 15 {
-		t.Fatalf("got %d rules, want 15", len(rules))
+	if len(rules) != 16 {
+		t.Fatalf("got %d rules, want 16", len(rules))
 	}
 
 	// Verify no duplicates

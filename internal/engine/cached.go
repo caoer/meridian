@@ -106,7 +106,7 @@ func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 			if doc.IsIgnored(ar.rule.ID) {
 				continue
 			}
-			result := e.evalDoc(doc, ar, scannedPaths, indexCache)
+			result := e.evalDoc(doc, ar, fsys, scannedPaths, indexCache)
 			if result.panicMsg != "" {
 				e.warnings = append(e.warnings, types.Warning{
 					Code:    "CHECK_PANIC",
@@ -169,13 +169,16 @@ func (e *Engine) prepareActiveRules(ruleList []rules.Rule) []activeRule {
 // evalDoc evaluates a single rule against a single doc. Recovers panics.
 // indexCache is a run-scoped scratchpad shared across all docs so checks can
 // memoize expensive per-run derived data (see engine-injected __index_cache).
-func (e *Engine) evalDoc(doc *Document, ar activeRule, scannedPaths []string, indexCache map[string]any) evalResult {
+func (e *Engine) evalDoc(doc *Document, ar activeRule, fsys fs.FS, scannedPaths []string, indexCache map[string]any) evalResult {
 	effectiveParams := make(map[string]any, len(ar.rule.Params)+2)
 	for k, v := range ar.rule.Params {
 		effectiveParams[k] = v
 	}
 	effectiveParams["__scanned_paths"] = scannedPaths
 	effectiveParams["__index_cache"] = indexCache
+	// The FS the engine scanned — cross-file checks (e.g. stale-run-record
+	// reading a sidecar) read through it so VFS tests exercise the real path.
+	effectiveParams["__fs"] = fsys
 	if len(e.foreignRoots) > 0 {
 		effectiveParams["__foreign_roots"] = e.foreignRoots
 	}

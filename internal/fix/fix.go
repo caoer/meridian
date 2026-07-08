@@ -113,6 +113,7 @@ var ParamSpecs = map[string]ParamSpec{
 	"effect-checksum-reproduces": {Accepted: map[string]string{"absent-repo": ""}},
 	"effect-pin-stale":           {Accepted: map[string]string{"absent-repo": ""}},
 	"effect-unpinned":            {Accepted: map[string]string{"absent-repo": ""}},
+	"stale-run-record":           {},
 	"heading-structure": {
 		Accepted: map[string]string{
 			"allow_multiple_h1": "",
