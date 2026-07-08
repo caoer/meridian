@@ -311,6 +311,7 @@ func fixHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config
 			Scope  string   `json:"scope"`
 			Rules  []string `json:"rules"`
 			DryRun bool     `json:"dry-run"`
+			Format string   `json:"format"` // router-consumed (output rendering); listed so strict parse admits it
 		}
 		if req.Params != nil {
 			dec := json.NewDecoder(bytes.NewReader(req.Params))
