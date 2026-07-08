@@ -16,7 +16,9 @@ import (
 // TaskResult is the outcome of one executed task. Stderr carries the tail of
 // the task's standard error and is populated only on a non-zero exit — the
 // failure detail travels with the result so callers can surface *why* a script
-// failed, not just that it did.
+// failed, not just that it did. The record fields (Output, BlockSHA, StartedAt,
+// Duration) are populated only under the Record() option — capture is opt-in
+// so a chatty task costs nothing on a plain run.
 type TaskResult struct {
 	Name     string
 	BlockID  string
@@ -24,6 +26,27 @@ type TaskResult struct {
 	ExitCode int
 	TimedOut bool // killed at the wall-clock deadline (ExitCode = TimeoutExitCode)
 	Stderr   string
+
+	Output          string // interleaved stdout+stderr tail (≤ recordOutputMax)
+	OutputTruncated bool
+	BlockSHA        string // git blob object id of the executed block's code
+	StartedAt       time.Time
+	Duration        time.Duration
+}
+
+// RunOpt configures a RunTasks invocation.
+type RunOpt func(*runConfig)
+
+type runConfig struct {
+	record bool
+}
+
+// Record enables per-task output capture for a sidecar run record: each task's
+// stdout+stderr is teed into a bounded per-task buffer (the caller's writers
+// still stream live) and the record fields of TaskResult are populated.
+// Pair with WriteRecord to persist. The source document is never mutated.
+func Record() RunOpt {
+	return func(c *runConfig) { c.record = true }
 }
 
 // stderrTailMax bounds how much of a failing task's stderr is retained — enough
@@ -131,7 +154,11 @@ func resolveTaskBlock(mdPath, content string, task Task) (Block, error) {
 // execution error the results so far are returned alongside the error.
 // A positive timeout bounds EACH task's wall clock (see ExecBlock) — a wedged
 // block must not hang the caller (e.g. a skill-load preflight) indefinitely.
-func RunTasks(mdPath string, names, args []string, timeout time.Duration, stdout, stderr io.Writer) ([]TaskResult, string, error) {
+func RunTasks(mdPath string, names, args []string, timeout time.Duration, stdout, stderr io.Writer, opts ...RunOpt) ([]TaskResult, string, error) {
+	var cfg runConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	tasks, content, err := loadTasks(mdPath)
 	if err != nil {
 		return nil, "", err
@@ -176,11 +203,29 @@ func RunTasks(mdPath string, names, args []string, timeout time.Duration, stdout
 		// live (text mode) or into the capture buffer (JSON mode), and the tail
 		// lets us attach the failure detail to the result.
 		tail := &tailWriter{}
-		code, timedOut, err := ExecBlock(b, args, cwd, timeout, stdout, io.MultiWriter(stderr, tail))
+		outW, errW := stdout, io.MultiWriter(stderr, tail)
+		var capture *cappedWriter
+		var startedAt time.Time
+		if cfg.record {
+			// One interleaved per-task buffer: the record shows the task's
+			// output as a terminal would, not two disjoint streams.
+			capture = &cappedWriter{max: recordOutputMax}
+			outW = io.MultiWriter(outW, capture)
+			errW = io.MultiWriter(errW, capture)
+			startedAt = time.Now()
+		}
+		code, timedOut, err := ExecBlock(b, args, cwd, timeout, outW, errW)
 		if err != nil {
 			return results, cwd, fmt.Errorf("task %s: %w", name, err)
 		}
 		res := TaskResult{Name: name, BlockID: b.ID, Lang: b.Lang, ExitCode: code, TimedOut: timedOut}
+		if cfg.record {
+			res.Output = capture.String()
+			res.OutputTruncated = capture.truncated
+			res.BlockSHA = BlobSHA(b.Code)
+			res.StartedAt = startedAt
+			res.Duration = time.Since(startedAt)
+		}
 		if code != 0 {
 			res.Stderr = tail.tail()
 			results = append(results, res)

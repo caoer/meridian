@@ -31,6 +31,7 @@ func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 			List    bool            `json:"list"`
 			Format  string          `json:"format"`
 			Timeout string          `json:"timeout"`
+			Record  bool            `json:"record"`
 		}
 		if req.Params != nil {
 			if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -84,10 +85,30 @@ func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 			outW, errW = &outBuf, &errBuf
 		}
 
-		results, cwd, runErr := run.RunTasks(params.File, names, params.Args, timeout, outW, errW)
+		var opts []run.RunOpt
+		if params.Record {
+			opts = append(opts, run.Record())
+		}
+		results, cwd, runErr := run.RunTasks(params.File, names, params.Args, timeout, outW, errW, opts...)
 
 		data := cli.RunData{File: params.File, Cwd: cwd}
 		var findings []cli.Finding
+		if params.Record && len(results) > 0 {
+			// Record whatever actually ran — a failing chain's receipt is
+			// exactly the record worth keeping. A record-write failure must
+			// not mask the run outcome: warn, don't fail the run.
+			recPath, recErr := run.WriteRecord(params.File, results)
+			if recErr != nil {
+				findings = append(findings, cli.Finding{
+					RuleID:   "md-run-record",
+					Severity: "warn",
+					FilePath: params.File,
+					Message:  "run record not written: " + recErr.Error(),
+				})
+			} else {
+				data.RecordPath = recPath
+			}
+		}
 		for _, r := range results {
 			data.Tasks = append(data.Tasks, cli.RunTaskData{
 				Name: r.Name, BlockID: r.BlockID, Lang: r.Lang, ExitCode: r.ExitCode, TimedOut: r.TimedOut,

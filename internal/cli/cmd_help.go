@@ -123,7 +123,7 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 			},
 		},
 		"run": {
-			Description: "Execute frontmatter-addressed task blocks (md-<name> keys → ^id fences); format json captures task stdout/stderr into the envelope, text streams it live. timeout bounds each task's wall clock (Go duration, e.g. \"30s\") — at the deadline the process group is killed and the task reports exit 124",
+			Description: "Execute frontmatter-addressed task blocks (md-<name> keys → ^id fences); format json captures task stdout/stderr into the envelope, text streams it live. timeout bounds each task's wall clock (Go duration, e.g. \"30s\") — at the deadline the process group is killed and the task reports exit 124. record:true writes each task's outcome + output to a sidecar run record (<stem>.runs.md, block-addressable per task as ^<task>) without ever mutating the source doc; response carries record_path",
 			Params: map[string]paramHelp{
 				"file":    {Type: "string", Required: true},
 				"name":    {Type: "string|array", Required: false},
@@ -131,6 +131,7 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 				"list":    {Type: "bool", Required: false},
 				"format":  {Type: "string", Required: false},
 				"timeout": {Type: "string", Required: false},
+				"record":  {Type: "bool", Required: false},
 			},
 			ExitCodes: map[string]string{"0": "all tasks succeeded", "1": "a task exited non-zero (124 = timed out)", "2": "resolution or tool failure"},
 		},

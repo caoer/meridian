@@ -12,11 +12,12 @@ type RunTaskData struct {
 // RunData is the payload for `md run`. In text mode child output streams
 // live to the terminal; in JSON mode it is captured into Stdout/Stderr.
 type RunData struct {
-	File   string        `json:"file"`
-	Cwd    string        `json:"cwd"`
-	Tasks  []RunTaskData `json:"tasks"`
-	Stdout string        `json:"stdout,omitempty"`
-	Stderr string        `json:"stderr,omitempty"`
+	File       string        `json:"file"`
+	Cwd        string        `json:"cwd"`
+	Tasks      []RunTaskData `json:"tasks"`
+	Stdout     string        `json:"stdout,omitempty"`
+	Stderr     string        `json:"stderr,omitempty"`
+	RecordPath string        `json:"record_path,omitempty"`
 }
 
 // RunListTaskData is one row of `md run` list-mode introspection.

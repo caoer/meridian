@@ -265,3 +265,57 @@ func TestRunHandlerTimeoutAbortsWedgedTask(t *testing.T) {
 		t.Errorf("finding must state the timeout, got %+v", resp.Findings)
 	}
 }
+
+func TestRunHandlerRecordWritesSidecar(t *testing.T) {
+	md := writeRunRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"check","format":"json","record":true}`
+	code := r.Run([]string{"run", params}, nil)
+	if code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	_, data := decodeRunData(t, out)
+	want := filepath.Join(filepath.Dir(md), "note.runs.md")
+	if data.RecordPath != want {
+		t.Fatalf("record_path = %q, want %q", data.RecordPath, want)
+	}
+	rec, err := os.ReadFile(want)
+	if err != nil {
+		t.Fatalf("sidecar not written: %v", err)
+	}
+	if !strings.Contains(string(rec), "check ok") || !strings.Contains(string(rec), "block_sha: ") {
+		t.Errorf("sidecar content wrong:\n%s", rec)
+	}
+	src, _ := os.ReadFile(md)
+	if string(src) != runHandlerDoc {
+		t.Error("source doc mutated by record run")
+	}
+}
+
+func TestRunHandlerRecordFailedChainStillRecordsAndExitsOne(t *testing.T) {
+	md := writeRunRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"fail","format":"json","record":true}`
+	code := r.Run([]string{"run", params}, nil)
+	if code != 1 {
+		t.Fatalf("exit = %d (want 1: task failure), out: %s", code, out.String())
+	}
+	rec, err := os.ReadFile(filepath.Join(filepath.Dir(md), "note.runs.md"))
+	if err != nil {
+		t.Fatalf("failed chain left no record: %v", err)
+	}
+	if !strings.Contains(string(rec), "exit: 3") {
+		t.Errorf("record missing failure exit:\n%s", rec)
+	}
+}
+
+func TestRunHandlerNoRecordByDefault(t *testing.T) {
+	md := writeRunRepo(t)
+	r, _ := newRunRouter()
+	if code := r.Run([]string{"run", `{"file":"` + md + `","name":"check","format":"json"}`}, nil); code != 0 {
+		t.Fatal(code)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(md), "note.runs.md")); !os.IsNotExist(err) {
+		t.Fatal("sidecar written without record param")
+	}
+}
