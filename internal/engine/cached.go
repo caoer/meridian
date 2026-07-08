@@ -39,6 +39,10 @@ func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 		return nil
 	}
 
+	// Config lint: bare skip entries shadowing indexed trees surface with the
+	// scan they distort, so the doctor signal travels with every check run.
+	e.warnings = append(e.warnings, SkipShadowWarnings(fsys, e.skip)...)
+
 	// Prepare active rules (filter off, validate check registration, parse templates).
 	active := e.prepareActiveRules(ruleList)
 	if len(active) == 0 {
