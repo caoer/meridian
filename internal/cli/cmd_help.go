@@ -124,15 +124,16 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 			},
 		},
 		"run": {
-			Description: "Execute frontmatter-addressed task blocks (md-<name> keys → ^id fences); format json captures task stdout/stderr into the envelope, text streams it live",
+			Description: "Execute frontmatter-addressed task blocks (md-<name> keys → ^id fences); format json captures task stdout/stderr into the envelope, text streams it live. timeout bounds each task's wall clock (Go duration, e.g. \"30s\") — at the deadline the process group is killed and the task reports exit 124",
 			Params: map[string]paramHelp{
-				"file":   {Type: "string", Required: true},
-				"name":   {Type: "string|array", Required: false},
-				"args":   {Type: "array", Required: false},
-				"list":   {Type: "bool", Required: false},
-				"format": {Type: "string", Required: false},
+				"file":    {Type: "string", Required: true},
+				"name":    {Type: "string|array", Required: false},
+				"args":    {Type: "array", Required: false},
+				"list":    {Type: "bool", Required: false},
+				"format":  {Type: "string", Required: false},
+				"timeout": {Type: "string", Required: false},
 			},
-			ExitCodes: map[string]string{"0": "all tasks succeeded", "1": "a task exited non-zero", "2": "resolution or tool failure"},
+			ExitCodes: map[string]string{"0": "all tasks succeeded", "1": "a task exited non-zero (124 = timed out)", "2": "resolution or tool failure"},
 		},
 		"read": {
 			Description: "Read vault-addressed content: path, [[note]], [[note#Heading]], or [[note#^block]]; text mode prints verification metadata (base, matches, warnings) to stderr, stdout stays pure content. With embeds:true, ![[...]] embeds are recursively inlined (frontmatter stripped from whole-note embeds). With strip-frontmatter:true, the matched file's own frontmatter is dropped — returns the deployable body",

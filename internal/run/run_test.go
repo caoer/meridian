@@ -61,7 +61,7 @@ exit 3
 func TestRunTasksComposite(t *testing.T) {
 	md := writeRepo(t, "inbox/note.md", runDoc)
 	var stdout, stderr bytes.Buffer
-	results, cwd, err := RunTasks(md, []string{"all"}, []string{"x"}, &stdout, &stderr)
+	results, cwd, err := RunTasks(md, []string{"all"}, []string{"x"}, 0, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("RunTasks: %v (stderr: %s)", err, stderr.String())
 	}
@@ -86,7 +86,7 @@ func TestRunTasksComposite(t *testing.T) {
 func TestRunTasksFailFast(t *testing.T) {
 	md := writeRepo(t, "note.md", runDoc)
 	var stdout, stderr bytes.Buffer
-	results, _, err := RunTasks(md, []string{"fail", "demo"}, nil, &stdout, &stderr)
+	results, _, err := RunTasks(md, []string{"fail", "demo"}, nil, 0, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("RunTasks: %v", err)
 	}
@@ -121,7 +121,7 @@ exit 7
 `
 	md := writeRepo(t, "note.md", doc)
 	var stdout, stderr bytes.Buffer
-	results, _, err := RunTasks(md, []string{"loud"}, nil, &stdout, &stderr)
+	results, _, err := RunTasks(md, []string{"loud"}, nil, 0, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("RunTasks: %v", err)
 	}
@@ -141,7 +141,7 @@ exit 7
 
 func TestRunTasksUnknownName(t *testing.T) {
 	md := writeRepo(t, "note.md", runDoc)
-	_, _, err := RunTasks(md, []string{"nope"}, nil, nil, nil)
+	_, _, err := RunTasks(md, []string{"nope"}, nil, 0, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "demo") {
 		t.Fatalf("unknown task should fail loud listing available, got: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestRunTasksUnknownName(t *testing.T) {
 
 func TestRunTasksDanglingRef(t *testing.T) {
 	md := writeRepo(t, "note.md", runDoc)
-	_, _, err := RunTasks(md, []string{"dangling"}, nil, nil, nil)
+	_, _, err := RunTasks(md, []string{"dangling"}, nil, 0, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "[[note#^ghost]]") {
 		t.Fatalf("dangling ref should fail loud with the unresolved wikilink, got: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestRunTasksDanglingRef(t *testing.T) {
 
 func TestRunTasksCrossFileRejected(t *testing.T) {
 	md := writeRepo(t, "note.md", runDoc)
-	_, _, err := RunTasks(md, []string{"cross"}, nil, nil, nil)
+	_, _, err := RunTasks(md, []string{"cross"}, nil, 0, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "same-file") {
 		t.Fatalf("cross-file ref should be rejected, got: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestRunTasksSameStemOtherDirRejected(t *testing.T) {
 	doc := strings.Replace(runDoc, `md-cross: "[[elsewhere#^x]]"`,
 		`md-cross: "[[elsewhere/note#^demo]]"`, 1)
 	md := writeRepo(t, "note.md", doc)
-	_, _, err := RunTasks(md, []string{"cross"}, nil, nil, nil)
+	_, _, err := RunTasks(md, []string{"cross"}, nil, 0, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "same-file") {
 		t.Fatalf("stem-suffix ref into another dir should be rejected, got: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestRunTasksPathQualifiedSameFileAccepted(t *testing.T) {
 		`md-demo: "[[inbox/note#^demo]]"`, 1)
 	md := writeRepo(t, "inbox/note.md", doc)
 	var stdout bytes.Buffer
-	results, _, err := RunTasks(md, []string{"demo"}, nil, &stdout, nil)
+	results, _, err := RunTasks(md, []string{"demo"}, nil, 0, &stdout, nil)
 	if err != nil {
 		t.Fatalf("path-qualified same-file ref should resolve, got: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestRunTasksResolveBeforeExecute(t *testing.T) {
 	// demo is valid, dangling is not — nothing must execute.
 	md := writeRepo(t, "note.md", runDoc)
 	var stdout bytes.Buffer
-	_, _, err := RunTasks(md, []string{"demo", "dangling"}, nil, &stdout, nil)
+	_, _, err := RunTasks(md, []string{"demo", "dangling"}, nil, 0, &stdout, nil)
 	if err == nil {
 		t.Fatal("expected resolution error")
 	}
@@ -240,7 +240,7 @@ func TestRunTasksMissingInterpreterPreflight(t *testing.T) {
 	t.Setenv("PATH", binDir)
 
 	var stdout bytes.Buffer
-	results, _, err := RunTasks(md, []string{"shell", "typed"}, nil, &stdout, nil)
+	results, _, err := RunTasks(md, []string{"shell", "typed"}, nil, 0, &stdout, nil)
 	if err == nil {
 		t.Fatal("missing interpreter must fail at preflight")
 	}
@@ -276,7 +276,7 @@ func TestRunTasksPartialResultsOnExecError(t *testing.T) {
 	// error (not an exit code). The results so far must come back with it.
 	md := writeRepo(t, "note.md", nukeDoc)
 	var stdout, stderr bytes.Buffer
-	results, cwd, err := RunTasks(md, []string{"nuke", "after"}, nil, &stdout, &stderr)
+	results, cwd, err := RunTasks(md, []string{"nuke", "after"}, nil, 0, &stdout, &stderr)
 	if err == nil {
 		t.Fatalf("expected exec error after cwd removal, results=%+v", results)
 	}

@@ -1,13 +1,20 @@
 package run
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
+	"time"
 )
+
+// TimeoutExitCode is reported when a block is killed at its deadline —
+// the shell convention for SIGKILL-after-timeout (cf. timeout(1)).
+const TimeoutExitCode = 124
 
 // Interpreter maps a fence language token to the interpreter argv prefix and
 // the temp-file extension. Unknown languages fail loud.
@@ -32,44 +39,68 @@ func Interpreter(lang string) (argv []string, ext string, err error) {
 // script: interpreter + file + args (argv). The process inherits the
 // environment; cwd is set by the caller. stdin is /dev/null — a task that
 // prompts for input fails or reads EOF instead of hanging an agent pipeline.
+// A positive timeout is a wall-clock deadline: at expiry the whole process
+// group is SIGKILLed (a wedged grandchild must not keep the pipes open) and
+// the block reports TimeoutExitCode with timedOut=true. Zero means no limit.
 // Returns the script's exit code.
-func ExecBlock(b Block, args []string, cwd string, stdout, stderr io.Writer) (int, error) {
+func ExecBlock(b Block, args []string, cwd string, timeout time.Duration, stdout, stderr io.Writer) (code int, timedOut bool, err error) {
 	if !b.Fence {
-		return 0, fmt.Errorf("block ^%s is not a fenced code block", b.ID)
+		return 0, false, fmt.Errorf("block ^%s is not a fenced code block", b.ID)
 	}
 	interp, ext, err := Interpreter(b.Lang)
 	if err != nil {
-		return 0, fmt.Errorf("block ^%s: %w", b.ID, err)
+		return 0, false, fmt.Errorf("block ^%s: %w", b.ID, err)
 	}
 
 	tmp, err := os.CreateTemp("", "md-run-"+b.ID+"-*"+ext)
 	if err != nil {
-		return 0, fmt.Errorf("temp file: %w", err)
+		return 0, false, fmt.Errorf("temp file: %w", err)
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.WriteString(b.Code); err != nil {
 		tmp.Close()
-		return 0, fmt.Errorf("write temp file: %w", err)
+		return 0, false, fmt.Errorf("write temp file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return 0, fmt.Errorf("close temp file: %w", err)
+		return 0, false, fmt.Errorf("close temp file: %w", err)
+	}
+
+	ctx := context.Background()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
 
 	cmdArgs := append(append([]string{}, interp[1:]...), tmp.Name())
 	cmdArgs = append(cmdArgs, args...)
-	cmd := exec.Command(interp[0], cmdArgs...)
+	cmd := exec.CommandContext(ctx, interp[0], cmdArgs...)
 	cmd.Dir = cwd
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	if timeout > 0 {
+		// Own process group so the deadline kill reaches every descendant —
+		// killing only the interpreter would leave a wedged child holding
+		// stdout/stderr open, and Wait would block past the deadline anyway.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error {
+			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		// Backstop: unblock Wait even if something survives the group kill.
+		cmd.WaitDelay = 2 * time.Second
+	}
 
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return TimeoutExitCode, true, nil
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			return exitErr.ExitCode(), nil
+			return exitErr.ExitCode(), false, nil
 		}
-		return 0, fmt.Errorf("exec %s: %w", interp[0], err)
+		return 0, false, fmt.Errorf("exec %s: %w", interp[0], err)
 	}
-	return 0, nil
+	return 0, false, nil
 }
 
 // GitToplevel walks up from a file's directory to the nearest ancestor

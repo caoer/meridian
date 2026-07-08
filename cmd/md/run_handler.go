@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/caoer/meridian/internal/cli"
 	"github.com/caoer/meridian/internal/run"
@@ -24,11 +25,12 @@ func runHandler() cli.Handler {
 func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 	return func(req *cli.Request) *cli.Response {
 		var params struct {
-			File   string          `json:"file"`
-			Name   json.RawMessage `json:"name"`
-			Args   []string        `json:"args"`
-			List   bool            `json:"list"`
-			Format string          `json:"format"`
+			File    string          `json:"file"`
+			Name    json.RawMessage `json:"name"`
+			Args    []string        `json:"args"`
+			List    bool            `json:"list"`
+			Format  string          `json:"format"`
+			Timeout string          `json:"timeout"`
 		}
 		if req.Params != nil {
 			if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -37,6 +39,17 @@ func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 		}
 		if params.File == "" {
 			return cli.ErrorResponse(cli.ErrInvalidParams, "missing required param: file")
+		}
+		// Per-task wall-clock deadline — a wedged block must not hang the
+		// caller (e.g. a skill-load preflight) indefinitely.
+		var timeout time.Duration
+		if params.Timeout != "" {
+			d, err := time.ParseDuration(params.Timeout)
+			if err != nil || d <= 0 {
+				return cli.ErrorResponse(cli.ErrInvalidParams,
+					fmt.Sprintf("invalid timeout %q — need a positive Go duration (e.g. \"30s\", \"2m\")", params.Timeout))
+			}
+			timeout = d
 		}
 
 		if params.List {
@@ -71,16 +84,19 @@ func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 			outW, errW = &outBuf, &errBuf
 		}
 
-		results, cwd, runErr := run.RunTasks(params.File, names, params.Args, outW, errW)
+		results, cwd, runErr := run.RunTasks(params.File, names, params.Args, timeout, outW, errW)
 
 		data := cli.RunData{File: params.File, Cwd: cwd}
 		var findings []cli.Finding
 		for _, r := range results {
 			data.Tasks = append(data.Tasks, cli.RunTaskData{
-				Name: r.Name, BlockID: r.BlockID, Lang: r.Lang, ExitCode: r.ExitCode,
+				Name: r.Name, BlockID: r.BlockID, Lang: r.Lang, ExitCode: r.ExitCode, TimedOut: r.TimedOut,
 			})
 			if r.ExitCode != 0 {
 				msg := fmt.Sprintf("task %s (^%s) exited %d — chain aborted", r.Name, r.BlockID, r.ExitCode)
+				if r.TimedOut {
+					msg = fmt.Sprintf("task %s (^%s) timed out after %s (process group killed, exit %d) — chain aborted", r.Name, r.BlockID, params.Timeout, r.ExitCode)
+				}
 				if r.Stderr != "" {
 					msg += "\n" + r.Stderr
 				}

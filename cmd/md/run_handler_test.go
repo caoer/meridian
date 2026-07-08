@@ -228,3 +228,40 @@ func TestRunHandlerMissingName(t *testing.T) {
 		t.Fatalf("missing name (without list) must exit 2, got %d", code)
 	}
 }
+
+func TestRunHandlerTimeoutInvalid(t *testing.T) {
+	md := writeRunRepo(t)
+	r, out := newRunRouter()
+	for _, bad := range []string{"nope", "-5s", "0s"} {
+		out.Reset()
+		params := `{"file":"` + md + `","name":"demo","timeout":"` + bad + `"}`
+		if code := r.Run([]string{"run", params}, nil); code != 2 {
+			t.Errorf("timeout %q must exit 2, got %d: %s", bad, code, out.String())
+		}
+	}
+}
+
+func TestRunHandlerTimeoutAbortsWedgedTask(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	doc := "---\nmd-wedge: \"[[note#^wedge]]\"\n---\n\n```bash\nsleep 30\n```\n\n^wedge\n"
+	md := filepath.Join(root, "note.md")
+	if err := os.WriteFile(md, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"wedge","timeout":"300ms","format":"json"}`
+	code := r.Run([]string{"run", params}, nil)
+	if code != 1 {
+		t.Fatalf("timed-out task must exit 1 (finding), got %d: %s", code, out.String())
+	}
+	resp, data := decodeRunData(t, out)
+	if len(data.Tasks) != 1 || !data.Tasks[0].TimedOut || data.Tasks[0].ExitCode != 124 {
+		t.Errorf("tasks = %+v, want timed_out=true exit=124", data.Tasks)
+	}
+	if len(resp.Findings) == 0 || !strings.Contains(resp.Findings[0].Message, "timed out after 300ms") {
+		t.Errorf("finding must state the timeout, got %+v", resp.Findings)
+	}
+}

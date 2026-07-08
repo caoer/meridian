@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/caoer/meridian/internal/frontmatter"
 )
@@ -21,6 +22,7 @@ type TaskResult struct {
 	BlockID  string
 	Lang     string
 	ExitCode int
+	TimedOut bool // killed at the wall-clock deadline (ExitCode = TimeoutExitCode)
 	Stderr   string
 }
 
@@ -127,7 +129,9 @@ func resolveTaskBlock(mdPath, content string, task Task) (Block, error) {
 // last TaskResult). cwd is the file's git toplevel and is returned so
 // callers report the directory tasks actually ran in. On a mid-chain
 // execution error the results so far are returned alongside the error.
-func RunTasks(mdPath string, names, args []string, stdout, stderr io.Writer) ([]TaskResult, string, error) {
+// A positive timeout bounds EACH task's wall clock (see ExecBlock) — a wedged
+// block must not hang the caller (e.g. a skill-load preflight) indefinitely.
+func RunTasks(mdPath string, names, args []string, timeout time.Duration, stdout, stderr io.Writer) ([]TaskResult, string, error) {
 	tasks, content, err := loadTasks(mdPath)
 	if err != nil {
 		return nil, "", err
@@ -172,11 +176,11 @@ func RunTasks(mdPath string, names, args []string, stdout, stderr io.Writer) ([]
 		// live (text mode) or into the capture buffer (JSON mode), and the tail
 		// lets us attach the failure detail to the result.
 		tail := &tailWriter{}
-		code, err := ExecBlock(b, args, cwd, stdout, io.MultiWriter(stderr, tail))
+		code, timedOut, err := ExecBlock(b, args, cwd, timeout, stdout, io.MultiWriter(stderr, tail))
 		if err != nil {
 			return results, cwd, fmt.Errorf("task %s: %w", name, err)
 		}
-		res := TaskResult{Name: name, BlockID: b.ID, Lang: b.Lang, ExitCode: code}
+		res := TaskResult{Name: name, BlockID: b.ID, Lang: b.Lang, ExitCode: code, TimedOut: timedOut}
 		if code != 0 {
 			res.Stderr = tail.tail()
 			results = append(results, res)

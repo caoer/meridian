@@ -6,6 +6,7 @@ type RunTaskData struct {
 	BlockID  string `json:"block_id"`
 	Lang     string `json:"lang"`
 	ExitCode int    `json:"exit_code"`
+	TimedOut bool   `json:"timed_out,omitempty"`
 }
 
 // RunData is the payload for `md run`. In text mode child output streams
