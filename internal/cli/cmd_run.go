@@ -26,6 +26,8 @@ type RunListTaskData struct {
 	Name        string   `json:"name"`
 	Ref         string   `json:"ref,omitempty"`
 	Composition []string `json:"composition,omitempty"`
+	Args        []string `json:"args,omitempty"` // required positional arg names (md-<name>-args)
+	Env         []string `json:"env,omitempty"`  // required env var names (md-<name>-env)
 	Language    string   `json:"language,omitempty"`
 	Error       string   `json:"error,omitempty"`
 }
