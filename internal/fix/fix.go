@@ -106,6 +106,11 @@ var ParamSpecs = map[string]ParamSpec{
 			"match":  "",
 		},
 	},
+	"effect-pin-resolves":        {Accepted: map[string]string{"absent-repo": ""}},
+	"effect-pin-on-origin":       {Accepted: map[string]string{"absent-repo": ""}},
+	"effect-checksum-reproduces": {Accepted: map[string]string{"absent-repo": ""}},
+	"effect-pin-stale":           {Accepted: map[string]string{"absent-repo": ""}},
+	"effect-unpinned":            {Accepted: map[string]string{"absent-repo": ""}},
 	"heading-structure": {
 		Accepted: map[string]string{
 			"allow_multiple_h1": "",
