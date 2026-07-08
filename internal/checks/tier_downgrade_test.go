@@ -81,7 +81,7 @@ func TestTierDowngrade_SecretIntoInternalPage(t *testing.T) {
 		Path: "domains/analysis.md",
 		Frontmatter: map[string]any{
 			"foreign-touched": []any{"secret-wiki"},
-			"audience":        "internal",
+			"confidential":    "internal",
 		},
 	}
 	params := map[string]any{
@@ -147,6 +147,8 @@ func TestTierDowngrade_UsesTargetTierWhenPageHasNoOwnTier(t *testing.T) {
 }
 
 func TestTierDowngrade_ConfidentialFieldTakesPriorityOverAudience(t *testing.T) {
+	// audience: is a human-audience field (C45) — even a value that happens
+	// to spell a tier name must not affect the comparison.
 	doc := &engine.Document{
 		Path: "sources/both-fields.md",
 		Frontmatter: map[string]any{
@@ -220,24 +222,17 @@ func TestTierDowngrade_FailClosed_PageTypoConfidential(t *testing.T) {
 	}
 }
 
-func TestTierDowngrade_FailClosed_PageTypoAudience(t *testing.T) {
-	doc := &engine.Document{
-		Path: "sources/typo2.md",
-		Frontmatter: map[string]any{
-			"audience": "publik", // typo
-		},
-	}
-	params := map[string]any{}
-	findings := tierDowngradeCheck(doc, params)
-	if len(findings) != 1 {
-		t.Fatalf("REFUSAL PROOF (fail-closed): typo audience must produce finding, got %d", len(findings))
-	}
-	f := findings[0]
-	if f.TemplateData["Source"] != "field audience" {
-		t.Errorf("Source = %q, want 'field audience'", f.TemplateData["Source"])
-	}
-	if f.TemplateData["SourceTier"] != "publik" {
-		t.Errorf("SourceTier = %q, want 'publik' (the invalid value)", f.TemplateData["SourceTier"])
+func TestTierDowngrade_AudienceIsFreeForm_NeverAFinding(t *testing.T) {
+	// The home-wiki misfire class: audience: carries human names, team
+	// strings, CJK — it is the C45 audience declaration, not a tier enum.
+	for _, aud := range []string{"jessie", "coscene-engineering-team", "ZT (morning review)", "所有工程师", "publik"} {
+		doc := &engine.Document{
+			Path:        "sources/human-audience.md",
+			Frontmatter: map[string]any{"audience": aud},
+		}
+		if findings := tierDowngradeCheck(doc, map[string]any{}); len(findings) != 0 {
+			t.Errorf("audience=%q must never produce a tier finding, got %d", aud, len(findings))
+		}
 	}
 }
 
@@ -251,8 +246,12 @@ func TestTierDowngrade_FailClosed_BothFieldsTypo(t *testing.T) {
 	}
 	params := map[string]any{}
 	findings := tierDowngradeCheck(doc, params)
-	if len(findings) != 2 {
-		t.Fatalf("REFUSAL PROOF (fail-closed): both typo fields must produce 2 findings, got %d", len(findings))
+	// Only confidential: is a tier field — the audience typo is free-form text.
+	if len(findings) != 1 {
+		t.Fatalf("REFUSAL PROOF (fail-closed): confidential typo must produce exactly 1 finding, got %d", len(findings))
+	}
+	if findings[0].TemplateData["Source"] != "field confidential" {
+		t.Errorf("Source = %q, want 'field confidential'", findings[0].TemplateData["Source"])
 	}
 }
 
@@ -295,20 +294,21 @@ func TestTierDowngrade_FailClosed_WikiTiersMultipleInvalid(t *testing.T) {
 }
 
 func TestTierDowngrade_FailClosed_TypoDoesNotExemptFromDowngrade(t *testing.T) {
-	// Page has valid audience + typo confidential + foreign-touched.
-	// The typo gets its own finding; the downgrade check uses audience.
+	// Page has typo confidential + foreign-touched. The typo gets its own
+	// finding; the downgrade comparison falls back to target-tier (audience
+	// is never a tier source).
 	doc := &engine.Document{
 		Path: "sources/typo-plus-downgrade.md",
 		Frontmatter: map[string]any{
 			"foreign-touched": []any{"secret-wiki"},
 			"confidential":    "secrit", // typo — own finding
-			"audience":        "public", // valid — used for downgrade comparison
 		},
 	}
 	params := map[string]any{
 		"wiki-tiers": map[string]any{
 			"secret-wiki": "secret",
 		},
+		"target-tier": "public",
 	}
 	findings := tierDowngradeCheck(doc, params)
 	// Expect: 1 typo finding + 1 downgrade finding = 2
@@ -499,7 +499,10 @@ func TestTierDowngrade_ForeignTouchedAsStringSlice(t *testing.T) {
 	}
 }
 
-func TestTierDowngrade_AudienceFallback(t *testing.T) {
+func TestTierDowngrade_AudienceNeverATierSource(t *testing.T) {
+	// audience: is free-form (C45) — even "public" there is a human word,
+	// not a tier. With no confidential: and no target-tier, the page has no
+	// tier to compare against: no downgrade finding.
 	doc := &engine.Document{
 		Path: "sources/audience-only.md",
 		Frontmatter: map[string]any{
@@ -512,13 +515,8 @@ func TestTierDowngrade_AudienceFallback(t *testing.T) {
 			"secret-wiki": "secret",
 		},
 	}
-	findings := tierDowngradeCheck(doc, params)
-	found := findByField(findings, "foreign-touched")
-	if found == nil {
-		t.Fatalf("want downgrade finding using audience fallback, got none among %d", len(findings))
-	}
-	if found.TemplateData["PageTier"] != "public" {
-		t.Errorf("PageTier = %q, want public (from audience)", found.TemplateData["PageTier"])
+	if findings := tierDowngradeCheck(doc, params); len(findings) != 0 {
+		t.Fatalf("audience must not feed the tier comparison, got %d findings", len(findings))
 	}
 }
 
@@ -639,15 +637,15 @@ func TestEffectivePageTier_ConfidentialFirst(t *testing.T) {
 	}
 }
 
-func TestEffectivePageTier_AudienceFallback(t *testing.T) {
+func TestEffectivePageTier_AudienceIgnored(t *testing.T) {
+	// audience: is free-form (C45), never a tier source.
 	doc := &engine.Document{
 		Frontmatter: map[string]any{
 			"audience": "internal",
 		},
 	}
-	got := effectivePageTier(doc, map[string]any{})
-	if got != "internal" {
-		t.Errorf("got %q, want internal (audience fallback)", got)
+	if got := effectivePageTier(doc, map[string]any{}); got != "" {
+		t.Errorf("got %q, want empty (audience is not a tier source)", got)
 	}
 }
 
@@ -672,16 +670,15 @@ func TestEffectivePageTier_NoTier(t *testing.T) {
 }
 
 func TestEffectivePageTier_TypoSkipped(t *testing.T) {
-	// Typo in confidential → skipped, falls to audience.
+	// Typo in confidential → skipped (separately reported), falls to target-tier.
 	doc := &engine.Document{
 		Frontmatter: map[string]any{
 			"confidential": "secrit",
-			"audience":     "public",
 		},
 	}
-	got := effectivePageTier(doc, map[string]any{})
+	got := effectivePageTier(doc, map[string]any{"target-tier": "public"})
 	if got != "public" {
-		t.Errorf("got %q, want public (typo confidential skipped, audience fallback)", got)
+		t.Errorf("got %q, want public (typo confidential skipped, target-tier fallback)", got)
 	}
 }
 

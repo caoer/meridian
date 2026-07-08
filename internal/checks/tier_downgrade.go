@@ -144,37 +144,20 @@ func validatePageTierFields(doc *engine.Document) []engine.RawFinding {
 		}
 	}
 
-	if v, ok := doc.Frontmatter["audience"]; ok {
-		if s, ok := v.(string); ok && s != "" {
-			if tierLevel(s) < 0 {
-				out = append(out, engine.RawFinding{
-					Line: 1,
-					TemplateData: map[string]string{
-						"PageTier":   "(unrecognized)",
-						"SourceTier": s,
-						"Source":     "field audience",
-						"Field":      fmt.Sprintf("%q is not a recognized tier (%s)", s, knownTierNames()),
-					},
-				})
-			}
-		}
-	}
+	// audience: is deliberately NOT validated here. It is the C45 public-pack
+	// human-audience declaration — free-form by design ("jessie", a team
+	// name, CJK strings). Reading it as a tier enum turned every role-less
+	// wiki's audience field into 13 pre-push-blocking ERRORs. Tier semantics
+	// live in confidential: (and target-tier) only.
 
 	return out
 }
 
 // effectivePageTier returns the page's effective confidentiality tier.
-// Priority: page's own confidential > page's own audience > target-tier param.
-// Skips unrecognized values (those are separately reported as errors).
+// Priority: page's own confidential > target-tier param. audience: is a
+// human-audience field (C45), never a tier source — see validatePageTierFields.
 func effectivePageTier(doc *engine.Document, params map[string]any) string {
 	if v, ok := doc.Frontmatter["confidential"]; ok {
-		if s, ok := v.(string); ok && s != "" {
-			if tierLevel(s) >= 0 {
-				return strings.ToLower(strings.TrimSpace(s))
-			}
-		}
-	}
-	if v, ok := doc.Frontmatter["audience"]; ok {
 		if s, ok := v.(string); ok && s != "" {
 			if tierLevel(s) >= 0 {
 				return strings.ToLower(strings.TrimSpace(s))
