@@ -197,6 +197,11 @@ func (e *Engine) evalDoc(doc *Document, ar activeRule, fsys fs.FS, scannedPaths 
 	// The FS the engine scanned — cross-file checks (e.g. stale-run-record
 	// reading a sidecar) read through it so VFS tests exercise the real path.
 	effectiveParams["__fs"] = fsys
+	// OS root of the scanned FS (SetScanRoot) — only for checks that must
+	// leave the FS abstraction (probe execution). Absent on pure-VFS runs.
+	if e.scanRoot != "" {
+		effectiveParams["__scan_root"] = e.scanRoot
+	}
 	if len(e.foreignRoots) > 0 {
 		effectiveParams["__foreign_roots"] = e.foreignRoots
 	}

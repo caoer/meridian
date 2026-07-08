@@ -20,7 +20,7 @@ var fencedOpenRe = regexp.MustCompile("^\\s*(`{3,}|~{3,})")
 // sits between a closing run and a later opening run is NOT inside code.
 //
 // This is the distinction the old single-regex approach missed: it matched any
-// `` `...[[link]]...` `` shape, so a wikilink in the gap between two adjacent
+// “ `...[[link]]...` “ shape, so a wikilink in the gap between two adjacent
 // inline-code spans (e.g. "`a` [[link]] `b`") was falsely reported as
 // backticked. Segmenting into real spans first eliminates that false positive
 // while still catching genuinely-backticked wikilinks.

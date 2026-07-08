@@ -28,6 +28,7 @@ var All = map[string]engine.CheckFunc{
 	"effect-checksum-reproduces": effectChecksumReproducesCheck,
 	"effect-pin-stale":           effectPinStaleCheck,
 	"effect-unpinned":            effectUnpinnedCheck,
+	"probe":                      probeCheck,
 	"stale-run-record":           staleRunRecordCheck,
 	"wikilink-canonicalize":      wikilinkCanonicalizeCheck,
 	"tier-downgrade":             tierDowngradeCheck,

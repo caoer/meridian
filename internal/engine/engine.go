@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"io/fs"
+	"path/filepath"
 	"strings"
 
 	"github.com/caoer/meridian/internal/rules"
@@ -26,6 +27,7 @@ type Engine struct {
 	skip         []string // directory names to skip during scan
 	maxFileSize  int64    // max file size in bytes; 0 = no limit
 	foreignRoots []string // root-relative path prefixes for foreign (resolution-only) content
+	scanRoot     string   // OS path of the scanned FS root; "" = pure-VFS run (no real paths)
 }
 
 // SetSkip configures directory names to skip during filesystem scan.
@@ -37,6 +39,17 @@ func (e *Engine) SetSkip(patterns []string) {
 // Files larger than this are silently skipped. 0 means no limit.
 func (e *Engine) SetMaxFileSize(n int64) {
 	e.maxFileSize = n
+}
+
+// SetScanRoot records the OS path the scanned fs.FS is rooted at, for checks
+// that must leave the FS abstraction (e.g. probe executes blocks — an
+// interpreter needs a real cwd). Absolutized so doc paths join cleanly.
+// Unset (pure-VFS runs) means such checks skip: no real paths exist.
+func (e *Engine) SetScanRoot(root string) {
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	e.scanRoot = root
 }
 
 // SetForeignRoots configures root-relative directory prefixes whose files

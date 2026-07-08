@@ -52,9 +52,9 @@ func TestPropertyCheck_WikilinkResolve(t *testing.T) {
 		Frontmatter: map[string]any{"source": "[[missing-target]]"},
 	}
 	params := map[string]any{
-		"property":         "source",
-		"required":         false,
-		"__scanned_paths":  []string{"wiki/other.md"},
+		"property":        "source",
+		"required":        false,
+		"__scanned_paths": []string{"wiki/other.md"},
 		"wikilink": map[string]any{
 			"resolve": "file_exists",
 		},
@@ -74,9 +74,9 @@ func TestPropertyCheck_WikilinkResolved(t *testing.T) {
 		Frontmatter: map[string]any{"source": "[[other]]"},
 	}
 	params := map[string]any{
-		"property":         "source",
-		"required":         false,
-		"__scanned_paths":  []string{"wiki/other.md"},
+		"property":        "source",
+		"required":        false,
+		"__scanned_paths": []string{"wiki/other.md"},
 		"wikilink": map[string]any{
 			"resolve": "file_exists",
 		},

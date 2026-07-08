@@ -1,0 +1,11 @@
+# Executable claims: md-probe-<name> frontmatter tasks run during `md check`;
+# exit != 0, timeout, or an unresolvable probe block is a finding on the
+# declaring doc. DELIBERATELY OFF — probes execute code, so enabling is a
+# per-wiki decision: flip severity to warn AND narrow `on:` to the tree (or
+# tag) that opts in. `timeout` bounds each probe's wall clock (md run kill
+# semantics, exit 124).
+check: probe
+message: "Probe {{.Probe}} failed: {{.Detail}}"
+severity: off
+on: "**/*.md"
+timeout: "30s"
