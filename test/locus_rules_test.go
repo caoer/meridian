@@ -83,6 +83,7 @@ func TestLocusRules_Load(t *testing.T) {
 		"filename-lowercase-dash": "pattern",
 		"heading-structure":       "heading-structure",
 		"table-wikilink-pipe":     "table-wikilink-pipe",
+		"stale-run-record":        "stale-run-record",
 	}
 
 	for _, r := range loaded {
