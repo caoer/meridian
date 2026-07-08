@@ -5,6 +5,7 @@ type RunTaskData struct {
 	Name     string `json:"name"`
 	BlockID  string `json:"block_id"`
 	Lang     string `json:"lang"`
+	Cwd      string `json:"cwd,omitempty"` // set when it differs from the run's base cwd (cross-file ref into a nested repo)
 	ExitCode int    `json:"exit_code"`
 	TimedOut bool   `json:"timed_out,omitempty"`
 }

@@ -155,23 +155,48 @@ func TestRunTasksDanglingRef(t *testing.T) {
 	}
 }
 
-func TestRunTasksCrossFileRejected(t *testing.T) {
+func TestRunTasksCrossFileDangling(t *testing.T) {
+	// [[elsewhere#^x]] resolves vault-wide; no elsewhere.md exists → fail loud
+	// with the wikilink (cross-file refs are supported; dangling ones are not).
 	md := writeRepo(t, "note.md", runDoc)
 	_, _, err := RunTasks(md, []string{"cross"}, nil, 0, nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "same-file") {
-		t.Fatalf("cross-file ref should be rejected, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "[[elsewhere#^x]]") {
+		t.Fatalf("dangling cross-file ref should fail loud with the wikilink, got: %v", err)
 	}
 }
 
-func TestRunTasksSameStemOtherDirRejected(t *testing.T) {
+func TestRunTasksSameStemOtherDirRunsTarget(t *testing.T) {
 	// [[elsewhere/note#^demo]] from /repo/note.md shares the basename stem but
-	// addresses a different note — must be rejected, not silently run locally.
+	// addresses a different note — it must run THAT note's block, never
+	// silently fall back to the local ^demo.
 	doc := strings.Replace(runDoc, `md-cross: "[[elsewhere#^x]]"`,
 		`md-cross: "[[elsewhere/note#^demo]]"`, 1)
 	md := writeRepo(t, "note.md", doc)
-	_, _, err := RunTasks(md, []string{"cross"}, nil, 0, nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "same-file") {
-		t.Fatalf("stem-suffix ref into another dir should be rejected, got: %v", err)
+	target := `# Elsewhere
+
+` + "```bash" + `
+echo "elsewhere demo ran"
+` + "```" + `
+
+^demo
+`
+	root := filepath.Dir(md)
+	if err := os.MkdirAll(filepath.Join(root, "elsewhere"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "elsewhere", "note.md"), []byte(target), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	results, _, err := RunTasks(md, []string{"cross"}, nil, 0, &stdout, nil)
+	if err != nil {
+		t.Fatalf("path-qualified cross-file ref should resolve, got: %v", err)
+	}
+	if len(results) != 1 || !strings.Contains(stdout.String(), "elsewhere demo ran") {
+		t.Fatalf("target note's block must run: results=%+v stdout=%q", results, stdout.String())
+	}
+	if strings.Contains(stdout.String(), "demo argv") {
+		t.Error("local ^demo must not shadow the path-qualified target")
 	}
 }
 
