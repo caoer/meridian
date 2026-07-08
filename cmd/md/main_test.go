@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/caoer/meridian/internal/checks"
@@ -381,5 +384,60 @@ func TestCheckHandler_CacheStats_ZeroFiles(t *testing.T) {
 	}
 	if resp.Stats.CacheHitRate != 0 {
 		t.Errorf("CacheHitRate: want 0 (no files), got %f", resp.Stats.CacheHitRate)
+	}
+}
+
+func TestCheckSkillTree_ConfigLess(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "references"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	skill := "---\ntags: [type/skill]\n---\nSee [[references/good]] and [[missing-ref]].\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(skill), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "references", "good.md"), []byte("# good\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// cfgErr set: skill_tree must run anyway — a skill tree has no meridian.yaml.
+	var out bytes.Buffer
+	r := cli.NewRouter()
+	r.SetOutput(&out)
+	r.Handle("check", checkHandler(engine.New(), nil, nil, errors.New("no meridian.yaml")))
+
+	params := `{"skill_tree":"` + dir + `","format":"json"}`
+	code := r.Run([]string{"check", params}, nil)
+	if code != 0 {
+		t.Fatalf("exit = %d (warn findings exit 0), out: %s", code, out.String())
+	}
+	var resp cli.Response
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v\n%s", err, out.String())
+	}
+	if len(resp.Findings) != 1 {
+		t.Fatalf("findings = %+v, want exactly the dangling ref", resp.Findings)
+	}
+	f := resp.Findings[0]
+	if f.RuleID != "broken-wikilink" || !strings.Contains(f.Message, "missing-ref") || f.FilePath != "SKILL.md" {
+		t.Errorf("finding = %+v", f)
+	}
+	if resp.Stats == nil || resp.Stats.RulesApplied != 4 {
+		t.Errorf("stats = %+v, want 4 pack rules", resp.Stats)
+	}
+}
+
+func TestCheckSkillTree_BadInputs(t *testing.T) {
+	var out bytes.Buffer
+	r := cli.NewRouter()
+	r.SetOutput(&out)
+	r.Handle("check", checkHandler(engine.New(), nil, nil, nil))
+
+	if code := r.Run([]string{"check", `{"skill_tree":"/nonexistent/dir"}`}, nil); code != 2 {
+		t.Errorf("missing dir must exit 2, got %d: %s", code, out.String())
+	}
+	out.Reset()
+	if code := r.Run([]string{"check", `{"skill_tree":"` + t.TempDir() + `","scope":"x"}`}, nil); code != 2 {
+		t.Errorf("skill_tree+scope must exit 2, got %d: %s", code, out.String())
 	}
 }

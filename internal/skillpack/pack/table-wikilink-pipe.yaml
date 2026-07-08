@@ -1,0 +1,4 @@
+check: table-wikilink-pipe
+on: ["**"]
+severity: warn
+message: "table column misalignment: expected {{.Expected}} columns, got {{.Actual}} (wikilinks: {{.Wikilinks}})"

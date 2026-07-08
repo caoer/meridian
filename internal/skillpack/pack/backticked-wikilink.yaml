@@ -1,0 +1,4 @@
+check: backticked-wikilink
+on: ["**"]
+severity: warn
+message: "Wikilink inside backticks won't render: {{.Match}}"

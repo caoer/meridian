@@ -1,0 +1,9 @@
+# Skill-tree pack — a shipped skill's links must resolve within the tree
+# (R9 detector-gap #2: dangling reference/setup pointers).
+check: broken-wikilink
+on: ["**"]
+severity: warn
+message: "{{.Type}} wikilink: [[{{.Target}}]]"
+roots: ["**"]
+skip-prefixes:
+  - "http"

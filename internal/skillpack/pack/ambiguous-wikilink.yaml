@@ -1,0 +1,7 @@
+check: ambiguous-wikilink
+on: ["**"]
+severity: warn
+message: "ambiguous wikilink [[{{.Target}}]] resolves to {{.Count}} files: {{.Paths}}"
+roots: ["**"]
+skip-prefixes:
+  - "http"

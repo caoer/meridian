@@ -24,6 +24,7 @@ import (
 	"github.com/caoer/meridian/internal/rolepack"
 	"github.com/caoer/meridian/internal/rules"
 	"github.com/caoer/meridian/internal/schema"
+	"github.com/caoer/meridian/internal/skillpack"
 	"github.com/caoer/meridian/internal/vfs"
 	"github.com/caoer/meridian/internal/watch"
 )
@@ -544,23 +545,74 @@ func schemaHandler(cfg *config.Config, cfgErr error) cli.Handler {
 	}
 }
 
+// skillTreeCheck runs the embedded skill-tree pack over one directory —
+// its own engine (default skips, no config, no cache: skill trees are
+// small and the run is one-shot).
+func skillTreeCheck(dir string) *cli.Response {
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return cli.ErrorResponse(cli.ErrInvalidParams, fmt.Sprintf("skill_tree: %q is not an existing directory", dir))
+	}
+	packRules, err := skillpack.Rules()
+	if err != nil {
+		return cli.ErrorResponse(cli.ErrInvalidConfig, err.Error())
+	}
+
+	eng := engine.New()
+	eng.SetSkip([]string{".git", ".obsidian", "node_modules"})
+	for name, fn := range checks.All {
+		eng.RegisterCheck(name, fn)
+	}
+
+	start := time.Now()
+	findings := eng.Run(os.DirFS(dir), packRules)
+	warnings := eng.Warnings()
+
+	cliWarnings := make([]cli.Warning, len(warnings))
+	for i, w := range warnings {
+		cliWarnings[i] = cli.Warning(w)
+	}
+	return &cli.Response{
+		Version:  cli.ResponseVersion,
+		Findings: findings,
+		Stats: &cli.Stats{
+			RulesApplied:  len(packRules),
+			FindingsCount: len(findings),
+			DurationMs:    int(time.Since(start).Milliseconds()),
+		},
+		Warnings: cliWarnings,
+	}
+}
+
 func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config, cfgErr error) cli.Handler {
 	store := cache.NewStore("") // in-memory; persists across handler calls within same process
 	return func(req *cli.Request) *cli.Response {
-		if cfgErr != nil {
-			return cli.ErrorResponseWithHint(cli.ErrNoConfig,
-				cfgErr.Error(),
-				"create meridian.yaml or set MERIDIAN_CONFIG env var")
-		}
-
 		// Parse scope from params
 		var params struct {
-			Scope string `json:"scope"`
+			Scope     string `json:"scope"`
+			SkillTree string `json:"skill_tree"`
 		}
 		if req.Params != nil {
 			if err := json.Unmarshal(req.Params, &params); err != nil {
 				return cli.ErrorResponse(cli.ErrInvalidParams, "invalid params: "+err.Error())
 			}
+		}
+
+		// skill_tree: config-less scoped run over a shipped skill directory
+		// with the embedded wikilink-integrity pack. Deliberately NOT
+		// config-gated (llm-wiki check precedent): a skill tree lives outside
+		// any wiki — no meridian.yaml is its normal state, not an error.
+		if params.SkillTree != "" {
+			if params.Scope != "" {
+				return cli.ErrorResponse(cli.ErrInvalidParams, "skill_tree and scope are mutually exclusive — skill_tree already scopes the run")
+			}
+			return skillTreeCheck(params.SkillTree)
+		}
+
+		if cfgErr != nil {
+			return cli.ErrorResponseWithHint(cli.ErrNoConfig,
+				cfgErr.Error(),
+				"create meridian.yaml or set MERIDIAN_CONFIG env var")
 		}
 
 		start := time.Now()
