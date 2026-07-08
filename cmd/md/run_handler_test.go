@@ -209,8 +209,8 @@ func TestRunHandlerTextModeStreams(t *testing.T) {
 	if !strings.Contains(childOut.String(), "demo argv: x") {
 		t.Errorf("text mode must stream child stdout live, got %q", childOut.String())
 	}
-	if !strings.Contains(envelope.String(), "TASK") || !strings.Contains(envelope.String(), "demo") {
-		t.Errorf("text envelope should render the task row, got %q", envelope.String())
+	if strings.Contains(envelope.String(), "TASK") {
+		t.Errorf("text stdout must carry zero TASK lines (render contract: stdout = block output byte-for-byte), got %q", envelope.String())
 	}
 }
 

@@ -209,7 +209,7 @@ func formatData(w io.Writer, data any) {
 		fmt.Fprintf(w, "repos:      %d cataloged · %d present (%d via symlink) · %d absent\n",
 			d.Total, d.Present, d.Symlinked, d.Absent)
 		if len(d.Drifted) > 0 {
-			fmt.Fprintf(w, "drifted:    %d — %s\n", len(d.Drifted), strings.Join(d.Drifted, ", "))
+			fmt.Fprintf(w, "catalog-stale (HEAD != sources/git catalog commit): %d — %s\n", len(d.Drifted), strings.Join(d.Drifted, ", "))
 		}
 		for _, p := range d.Problems {
 			fmt.Fprintf(w, "PROBLEM %-24s %-16s %s\n", p.Slug, p.State, p.Detail)
@@ -252,12 +252,16 @@ func formatData(w io.Writer, data any) {
 		}
 
 	case RunData:
+		// Task-report rows are diagnostics, not block output: stdout is the
+		// render contract's byte-for-byte channel (it IS the skill-load
+		// injection), so the rows go to stderr — same class as response
+		// warnings. JSON format keeps them in the envelope.
 		for _, task := range d.Tasks {
 			status := "ok"
 			if task.ExitCode != 0 {
 				status = fmt.Sprintf("FAILED (exit %d)", task.ExitCode)
 			}
-			fmt.Fprintf(w, "TASK  %-15s ^%-15s %-7s %s\n", task.Name, task.BlockID, task.Lang, status)
+			fmt.Fprintf(os.Stderr, "TASK  %-15s ^%-15s %-7s %s\n", task.Name, task.BlockID, task.Lang, status)
 		}
 
 	case SchemaData:
