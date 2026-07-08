@@ -110,9 +110,13 @@ func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 			}
 		}
 		for _, r := range results {
-			data.Tasks = append(data.Tasks, cli.RunTaskData{
+			td := cli.RunTaskData{
 				Name: r.Name, BlockID: r.BlockID, Lang: r.Lang, ExitCode: r.ExitCode, TimedOut: r.TimedOut,
-			})
+			}
+			if r.Cwd != "" && r.Cwd != cwd {
+				td.Cwd = r.Cwd
+			}
+			data.Tasks = append(data.Tasks, td)
 			if r.ExitCode != 0 {
 				msg := fmt.Sprintf("task %s (^%s) exited %d — chain aborted", r.Name, r.BlockID, r.ExitCode)
 				if r.TimedOut {
