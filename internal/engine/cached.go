@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"io/fs"
+	"path"
 	"sort"
+	"strings"
 	"text/template"
 
 	"github.com/caoer/meridian/internal/cache"
@@ -89,6 +91,14 @@ func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 		var combined string
 		if store != nil {
 			contentHash := cache.FileHash(doc.RawContent)
+			// A doc's findings can depend on its sidecar run record
+			// (stale-run-record compares recorded block hashes) — fold the
+			// sidecar bytes into the key so a re-record invalidates a
+			// long-lived store (md watch) even when the doc itself is
+			// untouched.
+			if recData, err := fs.ReadFile(fsys, runRecordSidecar(doc.Path)); err == nil {
+				contentHash = cache.CombinedHash(contentHash, []string{cache.FileHash(recData)})
+			}
 			combined = cache.CombinedHash(contentHash, ruleHashes)
 			if cached, ok := store.Get(doc.Path, combined); ok {
 				findings = append(findings, cached...)
@@ -164,6 +174,14 @@ func (e *Engine) prepareActiveRules(ruleList []rules.Rule) []activeRule {
 		active = append(active, activeRule{rule: rule, checkFn: checkFn, tmpl: tmpl})
 	}
 	return active
+}
+
+// runRecordSidecar returns the sidecar run-record path for a document:
+// <dir>/<stem>.runs.md (fs.FS slash paths). Mirrors run.RecordPath, which
+// operates on OS paths — keep the convention in sync.
+func runRecordSidecar(docPath string) string {
+	stem := strings.TrimSuffix(path.Base(docPath), ".md")
+	return path.Join(path.Dir(docPath), stem+".runs.md")
 }
 
 // evalDoc evaluates a single rule against a single doc. Recovers panics.

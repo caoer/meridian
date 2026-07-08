@@ -23,6 +23,18 @@ import (
 	"github.com/caoer/meridian/internal/run"
 )
 
+// sameFileTarget mirrors md run's same-file semantics (run.isSameFile) on
+// scan-root-relative paths: empty target, the file's stem, or a path suffix
+// of the file's path — [[wiki/doc#^x]] from wiki/doc.md is same-file.
+func sameFileTarget(docPath, stem, target string) bool {
+	if target == "" || target == stem {
+		return true
+	}
+	target = strings.TrimSuffix(target, ".md")
+	pathStem := strings.TrimSuffix(docPath, ".md")
+	return pathStem == target || strings.HasSuffix(pathStem, "/"+target)
+}
+
 func staleRunRecordCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
 	fsys, _ := params["__fs"].(fs.FS)
 	if fsys == nil {
@@ -59,7 +71,7 @@ func staleRunRecordCheck(doc *engine.Document, params map[string]any) []engine.R
 			continue // compositions have no block to hash
 		}
 		link, err := run.ParseWikilink(task.Ref)
-		if err != nil || link.BlockID == "" || (link.Target != "" && link.Target != stem) {
+		if err != nil || link.BlockID == "" || !sameFileTarget(doc.Path, stem, link.Target) {
 			continue // cross-file and malformed refs are md run's domain
 		}
 		b, err := run.FindBlock(content, link.BlockID)

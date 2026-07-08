@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -664,6 +665,16 @@ func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Conf
 		store.ResetStats() // per-invocation stats, not cumulative
 		findings := eng.RunCached(fsys, loadedRules, store)
 
+		// Normalize scope: findings carry scan-root-relative paths with no
+		// "./" prefix, so "." (and "./x" forms) must be cleaned or the filter
+		// silently drops every finding — a clean scoped check that never
+		// happened. "." means the whole root: unscoped.
+		if params.Scope != "" {
+			params.Scope = path.Clean(filepath.ToSlash(params.Scope))
+			if params.Scope == "." {
+				params.Scope = ""
+			}
+		}
 		// Filter by scope prefix if set
 		if params.Scope != "" {
 			var scoped []cli.Finding

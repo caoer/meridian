@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"io/fs"
+	"strings"
 	"testing"
 
 	"github.com/caoer/meridian/internal/cache"
@@ -177,5 +179,52 @@ func TestRunCached_NilStore_FallsBack(t *testing.T) {
 	findings := eng.RunCached(fs, rl, nil)
 	if len(findings) != 1 {
 		t.Fatalf("nil store should fall back to regular Run, got %d findings", len(findings))
+	}
+}
+
+// F3 (review finding, f65ba3f0): a doc's cached findings can depend on its
+// sidecar run record — re-recording (sidecar changes, doc unchanged) must
+// invalidate the cache entry, or a long-lived store (md watch) serves stale
+// staleness.
+func TestRunCached_SidecarChangeInvalidatesDocEntry(t *testing.T) {
+	sidecarCheck := func(doc *Document, params map[string]any) []RawFinding {
+		fsys, _ := params["__fs"].(fs.FS)
+		if fsys == nil {
+			return nil
+		}
+		data, err := fs.ReadFile(fsys, runRecordSidecar(doc.Path))
+		if err != nil || strings.Contains(string(data), "fresh") {
+			return nil
+		}
+		return []RawFinding{{TemplateData: map[string]string{"Issue": "stale"}}}
+	}
+
+	rl := []rules.Rule{{
+		ID:       "sidecar-dep",
+		Check:    "sidecar-dep",
+		Message:  "{{.Issue}}",
+		Severity: rules.SeverityWarn,
+		On:       rules.ParseOnFilter([]string{"wiki/doc.md"}),
+		Params:   map[string]any{},
+	}}
+	store := cache.NewStore("")
+
+	mk := func(sidecar string) fs.FS {
+		return makeFS(map[string]string{
+			"wiki/doc.md":      "---\ntags: [x]\n---\nbody\n",
+			"wiki/doc.runs.md": sidecar,
+		})
+	}
+
+	eng := New()
+	eng.RegisterCheck("sidecar-dep", sidecarCheck)
+
+	if got := eng.RunCached(mk("---\nstate: stale\n---\n"), rl, store); len(got) != 1 {
+		t.Fatalf("run 1: want 1 finding, got %d", len(got))
+	}
+	// Same doc bytes, sidecar now fresh — a stale cache key would replay the
+	// old finding from the store.
+	if got := eng.RunCached(mk("---\nstate: fresh\n---\n"), rl, store); len(got) != 0 {
+		t.Fatalf("run 2: sidecar change did not invalidate cache — got %d findings", len(got))
 	}
 }

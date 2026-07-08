@@ -153,3 +153,17 @@ func TestStaleRunRecord_DanglingRefSkipped(t *testing.T) {
 		t.Fatalf("dangling ref should be skipped, got %v", msgs)
 	}
 }
+
+// F2 (review finding, f65ba3f0): path-qualified same-file refs must be
+// staleness-checked exactly as md run's isSameFile resolves them.
+func TestStaleRunRecord_PathQualifiedSameFileRef(t *testing.T) {
+	doc := strings.Replace(staleSrcDoc, `[[doc#^check]]`, `[[wiki/doc#^check]]`, 1)
+	edited := strings.Replace(doc, "echo hi", "echo hi CHANGED", 1)
+	msgs := runStale(t,
+		testkit.F("wiki/doc.md", edited),
+		testkit.F("wiki/doc.runs.md", staleRecordDoc(blobSHAHi)),
+	)
+	if len(msgs) != 1 {
+		t.Fatalf("path-qualified same-file ref must be staleness-checked like md run resolves it, got %v", msgs)
+	}
+}
