@@ -88,9 +88,34 @@ func (r *Router) Run(args []string, stdin io.Reader) int {
 		return r.respond(ErrorResponse(ErrUnknownCommand, "unknown command: "+command))
 	}
 
-	// Parse JSON params: arg takes precedence over stdin.
+	// Parse JSON params. Stdin is explicit opt-in via "-": auto-reading a
+	// piped stdin blocks to EOF, and an inherited open pipe (hooks, daemons,
+	// tmux spawns) never EOFs — even `md version` would hang before dispatch.
+	// A mode check on the fd cannot distinguish a live pipe from a closed
+	// one; only the convention can.
 	var params json.RawMessage
-	if len(args) > paramIdx {
+	switch {
+	case len(args) > paramIdx && args[paramIdx] == "-":
+		if stdin == nil {
+			return r.respond(ErrorResponse(ErrInvalidInput, `params argument "-" requires piped stdin (md <verb> - < params.json)`))
+		}
+		data, err := io.ReadAll(io.LimitReader(stdin, int64(MaxInputSize)+1))
+		if err != nil {
+			return r.respond(ErrorResponse(ErrInvalidInput, "failed to read stdin: "+err.Error()))
+		}
+		if len(data) > MaxInputSize {
+			return r.respond(ErrorResponse(ErrInputTooLarge, "input exceeds 10MB limit"))
+		}
+		if len(data) > 0 {
+			trimmed := bytes.TrimSpace(data)
+			if len(trimmed) > 0 {
+				if !json.Valid(trimmed) {
+					return r.respond(ErrorResponse(ErrInvalidInput, "malformed JSON on stdin"))
+				}
+				params = json.RawMessage(trimmed)
+			}
+		}
+	case len(args) > paramIdx:
 		raw := args[paramIdx]
 		if !json.Valid([]byte(raw)) {
 			// Positional sugar: commands with an adapter accept one bare
@@ -108,23 +133,10 @@ func (r *Router) Run(args []string, stdin io.Reader) int {
 		} else {
 			params = json.RawMessage(raw)
 		}
-	} else if stdin != nil {
-		data, err := io.ReadAll(io.LimitReader(stdin, int64(MaxInputSize)+1))
-		if err != nil {
-			return r.respond(ErrorResponse(ErrInvalidInput, "failed to read stdin: "+err.Error()))
-		}
-		if len(data) > MaxInputSize {
-			return r.respond(ErrorResponse(ErrInputTooLarge, "input exceeds 10MB limit"))
-		}
-		if len(data) > 0 {
-			trimmed := bytes.TrimSpace(data)
-			if len(trimmed) > 0 {
-				if !json.Valid(trimmed) {
-					return r.respond(ErrorResponse(ErrInvalidInput, "malformed JSON on stdin"))
-				}
-				params = json.RawMessage(trimmed)
-			}
-		}
+	case stdin != nil:
+		// Fail loud, never run with silently-empty params: a legacy piper
+		// gets the migration hint here instead of a hang or a wrong scope.
+		return r.respond(ErrorResponse(ErrInvalidInput, `params must be passed as an argument, or use "-" to read stdin (md <verb> - < params.json)`))
 	}
 
 	// Determine per-request format (default from router, override from params)

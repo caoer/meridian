@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // helper: create a router with JSON output for tests.
@@ -133,7 +135,7 @@ func TestRouter_JSONFromStdin(t *testing.T) {
 		return &Response{Version: ResponseVersion}
 	})
 
-	code := r.Run([]string{"test"}, strings.NewReader(input))
+	code := r.Run([]string{"test", "-"}, strings.NewReader(input))
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
@@ -149,7 +151,7 @@ func TestRouter_InputTooLarge(t *testing.T) {
 
 	// Create data that exceeds MaxInputSize.
 	oversized := strings.NewReader(strings.Repeat("x", MaxInputSize+1))
-	code := r.Run([]string{"test"}, oversized)
+	code := r.Run([]string{"test", "-"}, oversized)
 
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
@@ -173,7 +175,7 @@ func TestRouter_EmptyStdin(t *testing.T) {
 		return &Response{Version: ResponseVersion}
 	})
 
-	code := r.Run([]string{"test"}, strings.NewReader(""))
+	code := r.Run([]string{"test", "-"}, strings.NewReader(""))
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
@@ -187,7 +189,7 @@ func TestRouter_MalformedJSONStdin(t *testing.T) {
 		return nil
 	})
 
-	code := r.Run([]string{"test"}, strings.NewReader("{bad json"))
+	code := r.Run([]string{"test", "-"}, strings.NewReader("{bad json"))
 
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
@@ -294,7 +296,7 @@ func TestRouter_WhitespaceOnlyStdin(t *testing.T) {
 		return &Response{Version: ResponseVersion}
 	})
 
-	code := r.Run([]string{"test"}, strings.NewReader("   \n\t  "))
+	code := r.Run([]string{"test", "-"}, strings.NewReader("   \n\t  "))
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
@@ -424,4 +426,77 @@ func TestRouter_PositionalAdapter(t *testing.T) {
 	if code := r2.Run([]string{"fix", "some/path.md"}, nil); code != 2 {
 		t.Errorf("no adapter: exit %d, want 2", code)
 	}
+}
+
+func TestRouter_PipedStdinWithoutDashFailsLoud(t *testing.T) {
+	r, buf := newTestRouter()
+	r.Handle("test", func(req *Request) *Response {
+		t.Fatal("handler must not run with silently-empty params when stdin is piped without \"-\"")
+		return nil
+	})
+
+	code := r.Run([]string{"test"}, strings.NewReader(`{"scope":"wiki/"}`))
+
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	resp := decodeResponse(t, buf)
+	if resp.Error == nil || resp.Error.Code != ErrInvalidInput {
+		t.Fatalf("want %s error, got %+v", ErrInvalidInput, resp.Error)
+	}
+	if !strings.Contains(resp.Error.Message, `"-"`) {
+		t.Fatalf("error must carry the migration hint, got %q", resp.Error.Message)
+	}
+}
+
+func TestRouter_DashWithoutStdinFails(t *testing.T) {
+	r, buf := newTestRouter()
+	r.Handle("test", func(req *Request) *Response {
+		t.Fatal("handler must not run when \"-\" is given without piped stdin")
+		return nil
+	})
+
+	if code := r.Run([]string{"test", "-"}, nil); code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	resp := decodeResponse(t, buf)
+	if resp.Error == nil || resp.Error.Code != ErrInvalidInput {
+		t.Fatalf("want %s error, got %+v", ErrInvalidInput, resp.Error)
+	}
+}
+
+// TestRouter_OpenPipeNeverBlocks encodes the hang class itself: an inherited
+// open pipe whose write end never closes (hooks, daemons, tmux spawns) must
+// not block dispatch — no-arg commands fail loud immediately, arg commands
+// run normally; neither ever reads the pipe.
+func TestRouter_OpenPipeNeverBlocks(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer pr.Close()
+	defer pw.Close() // write end stays open for the test's duration
+
+	run := func(name string, args []string, wantCode int) {
+		t.Helper()
+		done := make(chan int, 1)
+		go func() {
+			r, _ := newTestRouter()
+			r.Handle("test", func(req *Request) *Response {
+				return &Response{Version: ResponseVersion}
+			})
+			done <- r.Run(args, pr)
+		}()
+		select {
+		case code := <-done:
+			if code != wantCode {
+				t.Errorf("%s: exit code = %d, want %d", name, code, wantCode)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: blocked on open pipe — the hang class is back", name)
+		}
+	}
+
+	run("no-arg command", []string{"test"}, 2)                   // fails loud, promptly
+	run("arg command", []string{"test", `{"scope":"wiki/"}`}, 0) // stdin never touched
 }
