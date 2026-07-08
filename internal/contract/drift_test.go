@@ -13,7 +13,7 @@ import (
 
 // TestEmbeddedPackLoads verifies the embedded YAML rules parse without error.
 func TestEmbeddedPackLoads(t *testing.T) {
-	loaded, _, err := rules.LoadFS(FS())
+	loaded, _, err := rules.LoadFS(FS(), ".")
 	if err != nil {
 		t.Fatalf("LoadFS(embedded): %v", err)
 	}
@@ -165,7 +165,7 @@ func TestDriftGuard_LayoutDirs(t *testing.T) {
 
 func findEmbeddedRule(t *testing.T, id string) rules.Rule {
 	t.Helper()
-	loaded, _, err := rules.LoadFS(FS())
+	loaded, _, err := rules.LoadFS(FS(), ".")
 	if err != nil {
 		t.Fatalf("LoadFS: %v", err)
 	}

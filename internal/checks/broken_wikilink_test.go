@@ -571,6 +571,8 @@ func TestBrokenWikilink_BaseTarget_ResolvesNoHijack(t *testing.T) {
 	// No hijack: bare basename must NOT bind to the .base file.
 	if n := resolves("bare [[SOURCES]] here"); n != 1 {
 		t.Errorf("[[SOURCES]] must NOT hijack onto SOURCES.base, want 1 broken finding, got %d", n)
+	}
+}
 
 // --- Foreign roots resolution ---
 

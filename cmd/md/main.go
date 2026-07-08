@@ -97,7 +97,7 @@ func main() {
 			}
 		} else {
 			// No rule_packs in config → fall back to embedded contract pack.
-			rs, _, err := rules.LoadFS(contract.FS())
+			rs, _, err := rules.LoadFS(contract.FS(), ".")
 			if err != nil {
 				cfgErr = fmt.Errorf("embedded contract pack: %w", err)
 			} else {
