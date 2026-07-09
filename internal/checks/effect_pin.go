@@ -10,7 +10,10 @@
 // Four checks share the pin parser and a per-process git memo:
 //
 //	effect-pin-resolves      commit exists in the repo (cat-file -t == commit)
-//	effect-pin-on-origin     commit is on origin/<branch> (branch -r --contains)
+//	effect-pin-on-origin     commit is on origin/<branch> (branch -r --contains);
+//	                         self-pins (pinned repo == scanned repo) also pass
+//	                         when the commit is an ancestor of HEAD — the pin
+//	                         and its content travel in the same push
 //	effect-checksum-reproduces  rev-parse <commit>:<location> == checksum —
 //	                         the ONLY sanctioned method (git-archive|shasum is
 //	                         git-version-dependent; working-tree find|shasum is
@@ -162,6 +165,29 @@ type gitResult struct {
 	err error
 }
 
+// selfPin reports whether the pinned repo IS the repo being scanned — an
+// effect page pinning colocated content in its own repo. For self-pins git's
+// ancestor closure substitutes for origin-containment: any push that carries
+// the pin page necessarily carries every ancestor commit, so a pinned commit
+// reachable from HEAD can never be the pilot-defect class (a pin other clones
+// cannot resolve). Requires __scan_root (absent on pure-VFS runs → treated as
+// not-self, keeping the strict origin predicate).
+func selfPin(repoDir string, params map[string]any) bool {
+	scanRoot, _ := params["__scan_root"].(string)
+	if scanRoot == "" {
+		return false
+	}
+	a, errA := gitOut(repoDir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	b, errB := gitOut(scanRoot, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if errA != nil || errB != nil || a == "" {
+		return false
+	}
+	// Repos-root slugs are often symlinks to the working checkout.
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
+}
+
 // pinFinding builds a whole-file finding with the shared template data.
 func pinFinding(pin effectPin, reason string) engine.RawFinding {
 	return engine.RawFinding{
@@ -240,6 +266,18 @@ func effectPinOnOriginCheck(doc *engine.Document, params map[string]any) []engin
 		if name == want {
 			return nil
 		}
+	}
+	// Self-pin carve-out (amended 2026-07-09): ancestor-of-HEAD satisfies the
+	// contract — the pin and its content travel in the same push, so the
+	// two-phase push the strict predicate forced was ritual, not safety. A
+	// non-ancestor self-pin (side-branch / dangling / rebased-away commit)
+	// still errors.
+	if selfPin(repoDir, params) {
+		if _, err := gitOut(repoDir, "merge-base", "--is-ancestor", pin.Commit, "HEAD"); err == nil {
+			return nil
+		}
+		return []engine.RawFinding{pinFinding(pin,
+			fmt.Sprintf("self-pin commit %s is neither on %s nor an ancestor of HEAD — side-branch or dangling commit", pin.Commit, want))}
 	}
 	return []engine.RawFinding{pinFinding(pin,
 		fmt.Sprintf("commit %s is not on %s — pin exists only in a local/stale checkout", pin.Commit, want))}

@@ -197,6 +197,48 @@ func TestEffectPinOnOrigin_PushedPasses_LocalOnlyFails(t *testing.T) {
 	}
 }
 
+func TestEffectPinOnOrigin_SelfPin_AncestorOfHEADPasses_SideBranchFails(t *testing.T) {
+	fx := newPinFixture(t)
+	t.Setenv(envReposRoot, fx.reposRoot)
+	repo := filepath.Join(fx.reposRoot, "pinned")
+	params := map[string]any{"__scan_root": repo}
+
+	// localOnly is HEAD (unpushed): fails as a pointed pin, passes as a self-pin
+	fm := fullPin(fx, fx.treeSha1)
+	fm["commit"] = fx.localOnly
+	if got := effectPinOnOriginCheck(pinDoc(fm), nil); len(got) != 1 {
+		t.Fatalf("local-only commit without scan root should fail, got %v", got)
+	}
+	if got := effectPinOnOriginCheck(pinDoc(fm), params); len(got) != 0 {
+		t.Fatalf("self-pin ancestor-of-HEAD should pass, got %v", got)
+	}
+
+	// a scan root in a different repo is not a self-pin — strict predicate holds
+	other := filepath.Join(t.TempDir(), "other")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, other, "init", "-b", "main")
+	if got := effectPinOnOriginCheck(pinDoc(fm), map[string]any{"__scan_root": other}); len(got) != 1 {
+		t.Fatalf("foreign scan root must keep strict on-origin, got %v", got)
+	}
+
+	// side-branch commit: resolves locally, not on origin, not an ancestor of HEAD
+	gitT(t, repo, "checkout", "-b", "side", fx.commit1)
+	if err := os.WriteFile(filepath.Join(repo, "pack", "side.md"), []byte("s\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, repo, "add", ".")
+	gitT(t, repo, "commit", "-m", "side")
+	sideSha := gitT(t, repo, "rev-parse", "HEAD")
+	gitT(t, repo, "checkout", "main")
+	fm["commit"] = sideSha
+	got := effectPinOnOriginCheck(pinDoc(fm), params)
+	if len(got) != 1 || !strings.Contains(got[0].TemplateData["Reason"], "side-branch or dangling") {
+		t.Fatalf("self-pin side-branch commit should fail, got %v", got)
+	}
+}
+
 func TestEffectChecksumReproduces_TreeBlobAndMismatch(t *testing.T) {
 	fx := newPinFixture(t)
 	t.Setenv(envReposRoot, fx.reposRoot)
