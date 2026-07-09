@@ -88,12 +88,31 @@ func wikilinkCanonicalizeCheck(doc *engine.Document, params map[string]any) []en
 
 // buildCanonIndex constructs a canon.Index from check params, filtering
 // paths by the roots globs. Uses canon.FilterPathsByRoots (P3-1: deduped).
+//
+// Memoized in the run-scoped __index_cache scratchpad (see cachedGlobIndex):
+// the index is a pure function of (roots, paths), and paths is constant for a
+// run, so every doc shares one built index instead of rebuilding it per doc
+// (O(docs*paths) -> O(paths) glob matching). A nil result (nothing matched
+// the roots) is cached too — the filter pass is the expensive part.
 func buildCanonIndex(params map[string]any) *canon.Index {
 	rootsRaw := toStringSlice(params["roots"])
 	paths, _ := params["__scanned_paths"].([]string)
-	filtered := canon.FilterPathsByRoots(paths, rootsRaw)
-	if len(filtered) == 0 {
-		return nil
+
+	cache, cacheOK := params["__index_cache"].(map[string]any)
+	cacheKey := "canon\x00" + strings.Join(rootsRaw, "\x00")
+	if cacheOK {
+		if cached, ok := cache[cacheKey]; ok {
+			idx, _ := cached.(*canon.Index)
+			return idx
+		}
 	}
-	return canon.BuildIndex(filtered)
+
+	var idx *canon.Index
+	if filtered := canon.FilterPathsByRoots(paths, rootsRaw); len(filtered) > 0 {
+		idx = canon.BuildIndex(filtered)
+	}
+	if cacheOK {
+		cache[cacheKey] = idx
+	}
+	return idx
 }
