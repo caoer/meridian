@@ -109,21 +109,14 @@ func buildCanonIndex(params map[string]any) *canon.Index {
 	rootsRaw := toStringSlice(params["roots"])
 	paths, _ := params["__scanned_paths"].([]string)
 
-	cache, cacheOK := params["__index_cache"].(map[string]any)
 	cacheKey := "canon\x00" + strings.Join(rootsRaw, "\x00")
-	if cacheOK {
-		if cached, ok := cache[cacheKey]; ok {
-			idx, _ := cached.(*canon.Index)
-			return idx
+	v := indexCacheGetOrBuild(params, cacheKey, func() any {
+		var idx *canon.Index
+		if filtered := canon.FilterPathsByRoots(paths, rootsRaw); len(filtered) > 0 {
+			idx = canon.BuildIndex(filtered)
 		}
-	}
-
-	var idx *canon.Index
-	if filtered := canon.FilterPathsByRoots(paths, rootsRaw); len(filtered) > 0 {
-		idx = canon.BuildIndex(filtered)
-	}
-	if cacheOK {
-		cache[cacheKey] = idx
-	}
+		return idx
+	})
+	idx, _ := v.(*canon.Index)
 	return idx
 }

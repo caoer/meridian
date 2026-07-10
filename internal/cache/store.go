@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"sync"
 
 	"github.com/caoer/meridian/internal/types"
 )
@@ -23,7 +24,13 @@ type entry struct {
 }
 
 // Store is an in-memory cache with optional JSON persistence.
+//
+// Safe for concurrent Get/Put: the parallel phase-1 engine (U2) evaluates docs
+// across a worker pool, and every worker computes its doc's key then hits the
+// store. One mutex guards both the entries map and the stat counters — the
+// per-doc work dwarfs the guarded map op, so a single lock is not a bottleneck.
 type Store struct {
+	mu      sync.Mutex
 	path    string
 	entries map[string]entry // keyed by file path
 	stats   CacheStats
@@ -39,6 +46,8 @@ func NewStore(path string) *Store {
 
 // Get looks up cached findings for a file+hash. Returns findings and hit bool.
 func (s *Store) Get(filePath, hash string) ([]types.Finding, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.stats.Total++
 	e, ok := s.entries[filePath]
 	if ok && e.Hash == hash {
@@ -51,16 +60,22 @@ func (s *Store) Get(filePath, hash string) ([]types.Finding, bool) {
 
 // Put stores findings for a file+hash, replacing any previous entry for that path.
 func (s *Store) Put(filePath, hash string, findings []types.Finding) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.entries[filePath] = entry{Hash: hash, Findings: findings}
 }
 
 // Stats returns current hit/miss counts.
 func (s *Store) Stats() CacheStats {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.stats
 }
 
 // ResetStats zeroes hit/miss counters without clearing cached entries.
 func (s *Store) ResetStats() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.stats = CacheStats{}
 }
 
@@ -69,7 +84,9 @@ func (s *Store) Save() error {
 	if s.path == "" {
 		return nil
 	}
+	s.mu.Lock()
 	data, err := json.Marshal(s.entries)
+	s.mu.Unlock()
 	if err != nil {
 		return err
 	}
@@ -88,5 +105,7 @@ func (s *Store) Load() error {
 		}
 		return err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return json.Unmarshal(data, &s.entries)
 }

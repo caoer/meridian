@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"text/template"
 
 	"github.com/caoer/meridian/internal/cache"
@@ -27,9 +29,30 @@ type evalResult struct {
 	panicMsg string
 }
 
+// docResult holds one document's contribution to the run: its (line-suppressed)
+// findings and any CHECK_PANIC messages its rules produced. Collected per doc
+// index so the parallel merge is in scan order — identical to the sequential
+// engine before sortFindings.
+type docResult struct {
+	findings  []types.Finding
+	panicMsgs []string
+}
+
 // RunCached scans the filesystem, matches rules, evaluates checks with optional
-// caching. If store is nil, evaluation proceeds without caching.
+// caching. If store is nil, evaluation proceeds without caching. Phase-1
+// evaluation runs across a worker pool sized to GOMAXPROCS; output is
+// byte-identical to a sequential run (see runCached).
 func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store) []types.Finding {
+	return e.runCached(fsys, ruleList, store, runtime.GOMAXPROCS(0))
+}
+
+// runCached is RunCached with an explicit worker count. workers == 1 processes
+// docs strictly in scan order (the sequential reference); workers > 1 fans the
+// per-doc read/hash/eval across a bounded pool. Both produce identical findings
+// and identical warnings: doc results are merged by scan-order index and
+// CHECK_PANIC warnings are sorted before being appended, so scheduling order
+// never leaks into output.
+func (e *Engine) runCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store, workers int) []types.Finding {
 	e.warnings = nil
 
 	docs, err := ScanWithOpts(fsys, ScanOptions{Skip: e.skip, MaxFileSize: e.maxFileSize})
@@ -76,75 +99,130 @@ func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 	// Run-scoped scratchpad for checks to memoize per-run derived data
 	// (e.g. glob-filtered path indexes) that is identical across all docs.
 	// Fresh map per run so a reused Engine (md watch) never serves stale data.
+	// indexMu guards it across the worker pool (plan §7 U2: one mutex suffices —
+	// stored index values are immutable after publish).
 	indexCache := make(map[string]any)
+	var indexMu sync.Mutex
 
+	// Evaluate each doc independently, collecting results by scan-order index so
+	// the merge below is deterministic regardless of which worker finished when.
+	results := make([]docResult, len(docs))
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > len(docs) {
+		workers = len(docs)
+	}
+
+	idxCh := make(chan int)
+	go func() {
+		for i := range docs {
+			idxCh <- i
+		}
+		close(idxCh)
+	}()
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range idxCh {
+				results[i] = e.evalOneDoc(docs[i], active, fsys, scannedPaths, indexCache, &indexMu, store, ruleHashes)
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Merge in scan order: identical input to sortFindings as the sequential
+	// engine, so findings are byte-identical.
 	var findings []types.Finding
+	var panicMsgs []string
+	for i := range docs {
+		findings = append(findings, results[i].findings...)
+		panicMsgs = append(panicMsgs, results[i].panicMsgs...)
+	}
 
-	for _, doc := range docs {
-		// Foreign-root docs contribute to scannedPaths for link
-		// resolution but are never evaluated as lint subjects.
-		if e.isForeignDoc(doc.Path) {
-			continue
-		}
-
-		// Cache check (if store present).
-		var combined string
-		if store != nil {
-			contentHash := cache.FileHash(doc.RawContent)
-			// A doc's findings can depend on its sidecar run record
-			// (stale-run-record compares recorded block hashes) — fold the
-			// sidecar bytes into the key so a re-record invalidates a
-			// long-lived store (md watch) even when the doc itself is
-			// untouched.
-			if recData, err := fs.ReadFile(fsys, runRecordSidecar(doc.Path)); err == nil {
-				contentHash = cache.CombinedHash(contentHash, []string{cache.FileHash(recData)})
-			}
-			combined = cache.CombinedHash(contentHash, ruleHashes)
-			if cached, ok := store.Get(doc.Path, combined); ok {
-				findings = append(findings, cached...)
-				continue
-			}
-		}
-
-		// Cache miss or no store — evaluate all active rules against this doc.
-		var docFindings []types.Finding
-		hadPanic := false
-		for _, ar := range active {
-			if !Match(ar.rule.On, doc.Path, doc.Tags) {
-				continue
-			}
-			if doc.IsIgnored(ar.rule.ID) {
-				continue
-			}
-			result := e.evalDoc(doc, ar, fsys, scannedPaths, indexCache)
-			if result.panicMsg != "" {
-				e.warnings = append(e.warnings, types.Warning{
-					Code:    "CHECK_PANIC",
-					Message: result.panicMsg,
-				})
-				hadPanic = true
-				continue
-			}
-			for _, f := range result.findings {
-				if doc.IsLineSuppressed(f.Line, ar.rule.ID) {
-					continue
-				}
-				docFindings = append(docFindings, f)
-			}
-		}
-
-		// Cache put (if store present). Skip if any rule panicked —
-		// partial results must not be cached as they'd suppress
-		// the panicked rule's findings on subsequent runs.
-		if store != nil && !hadPanic {
-			store.Put(doc.Path, combined, docFindings)
-		}
-
-		findings = append(findings, docFindings...)
+	// CHECK_PANIC warnings are net-new ordered work under parallelism: sort them
+	// by (Code, Message) and append AFTER the fixed pre-loop warnings, never
+	// sorting the whole warnings slice (plan §7 U2). Code is always CHECK_PANIC
+	// here, so message order is what stabilizes.
+	sort.Strings(panicMsgs)
+	for _, msg := range panicMsgs {
+		e.warnings = append(e.warnings, types.Warning{
+			Code:    "CHECK_PANIC",
+			Message: msg,
+		})
 	}
 
 	sortFindings(findings)
 	return findings
+}
+
+// evalOneDoc evaluates every active rule against a single document, applying the
+// cache (if present) and per-line suppression. It returns the doc's findings and
+// any CHECK_PANIC messages; it appends to no shared engine state, so it is safe
+// to call from many goroutines concurrently (the store and index cache it
+// touches are each independently synchronized).
+func (e *Engine) evalOneDoc(doc *Document, active []activeRule, fsys fs.FS, scannedPaths []string, indexCache map[string]any, indexMu *sync.Mutex, store *cache.Store, ruleHashes []string) docResult {
+	// Foreign-root docs contribute to scannedPaths for link resolution but are
+	// never evaluated as lint subjects.
+	if e.isForeignDoc(doc.Path) {
+		return docResult{}
+	}
+
+	// Cache check (if store present).
+	var combined string
+	if store != nil {
+		contentHash := cache.FileHash(doc.RawContent)
+		// A doc's findings can depend on its sidecar run record
+		// (stale-run-record compares recorded block hashes) — fold the
+		// sidecar bytes into the key so a re-record invalidates a
+		// long-lived store (md watch) even when the doc itself is
+		// untouched.
+		if recData, err := fs.ReadFile(fsys, runRecordSidecar(doc.Path)); err == nil {
+			contentHash = cache.CombinedHash(contentHash, []string{cache.FileHash(recData)})
+		}
+		combined = cache.CombinedHash(contentHash, ruleHashes)
+		if cached, ok := store.Get(doc.Path, combined); ok {
+			return docResult{findings: cached}
+		}
+	}
+
+	// Cache miss or no store — evaluate all active rules against this doc.
+	var res docResult
+	var docFindings []types.Finding
+	hadPanic := false
+	for _, ar := range active {
+		if !Match(ar.rule.On, doc.Path, doc.Tags) {
+			continue
+		}
+		if doc.IsIgnored(ar.rule.ID) {
+			continue
+		}
+		result := e.evalDoc(doc, ar, fsys, scannedPaths, indexCache, indexMu)
+		if result.panicMsg != "" {
+			res.panicMsgs = append(res.panicMsgs, result.panicMsg)
+			hadPanic = true
+			continue
+		}
+		for _, f := range result.findings {
+			if doc.IsLineSuppressed(f.Line, ar.rule.ID) {
+				continue
+			}
+			docFindings = append(docFindings, f)
+		}
+	}
+
+	// Cache put (if store present). Skip if any rule panicked —
+	// partial results must not be cached as they'd suppress
+	// the panicked rule's findings on subsequent runs.
+	if store != nil && !hadPanic {
+		store.Put(doc.Path, combined, docFindings)
+	}
+
+	res.findings = docFindings
+	return res
 }
 
 // prepareActiveRules filters rules by severity, validates check registration,
@@ -187,13 +265,19 @@ func runRecordSidecar(docPath string) string {
 // evalDoc evaluates a single rule against a single doc. Recovers panics.
 // indexCache is a run-scoped scratchpad shared across all docs so checks can
 // memoize expensive per-run derived data (see engine-injected __index_cache).
-func (e *Engine) evalDoc(doc *Document, ar activeRule, fsys fs.FS, scannedPaths []string, indexCache map[string]any) evalResult {
-	effectiveParams := make(map[string]any, len(ar.rule.Params)+2)
+// indexMu guards that scratchpad under the parallel engine; it is nil for
+// sequential callers (RunForPaths), in which case checks access the map without
+// locking — safe because there is a single goroutine.
+func (e *Engine) evalDoc(doc *Document, ar activeRule, fsys fs.FS, scannedPaths []string, indexCache map[string]any, indexMu *sync.Mutex) evalResult {
+	effectiveParams := make(map[string]any, len(ar.rule.Params)+4)
 	for k, v := range ar.rule.Params {
 		effectiveParams[k] = v
 	}
 	effectiveParams["__scanned_paths"] = scannedPaths
 	effectiveParams["__index_cache"] = indexCache
+	if indexMu != nil {
+		effectiveParams["__index_cache_mu"] = indexMu
+	}
 	// The FS the engine scanned — cross-file checks (e.g. stale-run-record
 	// reading a sidecar) read through it so VFS tests exercise the real path.
 	effectiveParams["__fs"] = fsys

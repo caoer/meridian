@@ -113,49 +113,42 @@ func buildBasenameIndex(params map[string]any) map[string][]string {
 
 	// Memoize in the run-scoped scratchpad: identical for every doc under a
 	// rule (see cachedGlobIndex). Falls back to rebuilding without a cache.
-	cache, cacheOK := params["__index_cache"].(map[string]any)
 	cacheKey := "basename\x00" + strings.Join(rootsRaw, "\x00")
-	if cacheOK {
-		if idx, ok := cache[cacheKey].(map[string][]string); ok {
-			return idx
+	v := indexCacheGetOrBuild(params, cacheKey, func() any {
+		var includes, excludes []string
+		for _, g := range rootsRaw {
+			if strings.HasPrefix(g, "!") {
+				excludes = append(excludes, g[1:])
+			} else {
+				includes = append(includes, g)
+			}
 		}
-	}
-
-	var includes, excludes []string
-	for _, g := range rootsRaw {
-		if strings.HasPrefix(g, "!") {
-			excludes = append(excludes, g[1:])
-		} else {
-			includes = append(includes, g)
+		if len(includes) == 0 {
+			return map[string][]string(nil)
 		}
-	}
-	if len(includes) == 0 {
-		return nil
-	}
 
-	foreignRoots := toStringSlice(params["__foreign_roots"])
+		foreignRoots := toStringSlice(params["__foreign_roots"])
 
-	idx := make(map[string][]string)
-	for _, p := range paths {
-		// Foreign-root files never enter the uniqueness universe (D6).
-		if isForeignPath(p, foreignRoots) {
-			continue
+		idx := make(map[string][]string)
+		for _, p := range paths {
+			// Foreign-root files never enter the uniqueness universe (D6).
+			if isForeignPath(p, foreignRoots) {
+				continue
+			}
+			if !matchAnyGlob(includes, p) || matchAnyGlob(excludes, p) {
+				continue
+			}
+			stem := strings.ToLower(strings.TrimSuffix(filepath.Base(p), ".md"))
+			idx[stem] = append(idx[stem], p)
 		}
-		if !matchAnyGlob(includes, p) || matchAnyGlob(excludes, p) {
-			continue
+
+		for k, v := range idx {
+			sort.Strings(v)
+			idx[k] = dedupSortedStrings(v)
 		}
-		stem := strings.ToLower(strings.TrimSuffix(filepath.Base(p), ".md"))
-		idx[stem] = append(idx[stem], p)
-	}
-
-	for k, v := range idx {
-		sort.Strings(v)
-		idx[k] = dedupSortedStrings(v)
-	}
-
-	if cacheOK {
-		cache[cacheKey] = idx
-	}
+		return idx
+	})
+	idx, _ := v.(map[string][]string)
 	return idx
 }
 
