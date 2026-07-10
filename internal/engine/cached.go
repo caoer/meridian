@@ -191,23 +191,28 @@ func (e *Engine) runCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 
 	// Phase 2: ALL external-state rules — the link family + probe (U5/U7) and U6's
 	// effect-pin family — over per-run snapshots (the path universe and the batched
-	// git snapshot). Serial so the git snapshot is built ONCE and never becomes a
-	// thundering herd (U7 evidence: concurrent gitMemo misses fork redundantly at
-	// GOMAXPROCS=16). Findings are appended but NEVER cached; a warm phase-1 hit
-	// still restored doc.Facts, so phase 2 sees the same input hit or miss.
-	findings = append(findings, e.runPhase2(fsys, docs, phase2, scannedPaths, indexCache)...)
+	// git snapshot). Parallelized across docs (U10) on the same bounded pool; the
+	// git snapshot is built exactly once behind a sync.Once (single-flight, across
+	// repos) so it never becomes a thundering herd (U6/U7 lesson). Findings are
+	// appended but NEVER cached; a warm phase-1 hit still restored doc.Facts, so
+	// phase 2 sees the same input hit or miss.
+	findings = append(findings, e.runPhase2(fsys, docs, phase2, scannedPaths, indexCache, &indexMu, workers)...)
 
 	sortFindings(findings)
 	return findings
 }
 
-// runPhase2 evaluates external-state rules (link family + probe + effect-pin) after the
-// parallel phase-1 loop. It runs serially so the per-run git snapshot is built
-// exactly once (no GOMAXPROCS-wide populate race). Pins from every checked doc
-// are gathered into __all_pins so the first check builds one batched snapshot
-// per repo; findings honor per-line/frontmatter suppression but are NEVER cached
-// (external state → recomputed every run, plan §2 classification rule).
-func (e *Engine) runPhase2(fsys fs.FS, docs []*Document, phase2Active []activeRule, scannedPaths []string, indexCache map[string]any) []types.Finding {
+// runPhase2 evaluates external-state rules (link family + probe + effect-pin)
+// after the parallel phase-1 loop, itself across a bounded worker pool (U10).
+// The per-run git snapshot is built exactly once behind a sync.Once inside the
+// checks layer (single-flight, across repos), so no GOMAXPROCS-wide populate
+// race is reintroduced. Pins from every checked doc are gathered into __all_pins
+// so that one build batches one cat-file per repo. Doc results are collected by
+// scan-order index and merged in order, so findings and CHECK_PANIC warnings are
+// byte-identical to a single-worker run. Findings honor per-line/frontmatter
+// suppression but are NEVER cached (external state → recomputed every run, plan
+// §2 classification rule). workers == 1 is the serial reference.
+func (e *Engine) runPhase2(fsys fs.FS, docs []*Document, phase2Active []activeRule, scannedPaths []string, indexCache map[string]any, indexMu *sync.Mutex, workers int) []types.Finding {
 	if len(phase2Active) == 0 {
 		return nil
 	}
@@ -234,39 +239,57 @@ func (e *Engine) runPhase2(fsys fs.FS, docs []*Document, phase2Active []activeRu
 		}
 	}
 
+	// Batch-infra warning sink (Decision 8). The single-flight snapshot build and
+	// the parallel consumer pool can both surface a failure from different
+	// goroutines — guard the slice.
+	var warnMu sync.Mutex
 	var phase2Warnings []string
 	extra := map[string]any{
 		"__all_pins": allPins,
-		"__warn":     func(msg string) { phase2Warnings = append(phase2Warnings, msg) },
+		"__warn": func(msg string) {
+			warnMu.Lock()
+			phase2Warnings = append(phase2Warnings, msg)
+			warnMu.Unlock()
+		},
 	}
 
-	var findings []types.Finding
-	for _, doc := range docs {
-		if e.isForeignDoc(doc.Path) {
-			continue
+	// Evaluate each doc's phase-2 rules independently, collecting results by
+	// scan-order index (the deterministic merge, identical to the serial pass).
+	results := make([]docResult, len(docs))
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > len(docs) {
+		workers = len(docs)
+	}
+
+	idxCh := make(chan int)
+	go func() {
+		for i := range docs {
+			idxCh <- i
 		}
-		for _, ar := range phase2Active {
-			if !Match(ar.rule.On, doc.Path, doc.Tags) {
-				continue
+		close(idxCh)
+	}()
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range idxCh {
+				results[i] = e.evalOnePhase2Doc(docs[i], phase2Active, fsys, scannedPaths, indexCache, indexMu, extra)
 			}
-			if doc.IsIgnored(ar.rule.ID) {
-				continue
-			}
-			// Serial pass: no index mutex needed (nil), matching RunForPaths.
-			result := e.evalDoc(doc, ar, fsys, scannedPaths, indexCache, nil, extra)
-			if result.panicMsg != "" {
-				e.warnings = append(e.warnings, types.Warning{
-					Code:    "CHECK_PANIC",
-					Message: result.panicMsg,
-				})
-				continue
-			}
-			for _, f := range result.findings {
-				if doc.IsLineSuppressed(f.Line, ar.rule.ID) {
-					continue
-				}
-				findings = append(findings, f)
-			}
+		}()
+	}
+	wg.Wait()
+
+	// Merge in scan order: identical (doc, rule) sequence as a serial pass, so
+	// findings and CHECK_PANIC warnings are byte-identical after sortFindings.
+	var findings []types.Finding
+	for i := range docs {
+		findings = append(findings, results[i].findings...)
+		for _, msg := range results[i].panicMsgs {
+			e.warnings = append(e.warnings, types.Warning{Code: "CHECK_PANIC", Message: msg})
 		}
 	}
 
@@ -282,6 +305,41 @@ func (e *Engine) runPhase2(fsys fs.FS, docs []*Document, phase2Active []activeRu
 	}
 
 	return findings
+}
+
+// evalOnePhase2Doc evaluates the phase-2 rules against a single document over the
+// per-run snapshots (path universe, git snapshot), returning its findings and any
+// CHECK_PANIC messages. It appends to no shared engine state, so it is safe to
+// call from many goroutines: the __index_cache it touches is guarded by indexMu
+// (link-family memoization) and the effect-pin resolver is internally
+// synchronized (single-flight build + per-key ancestry). Foreign-root docs are
+// skipped as subjects, matching the phase-1 loop. Phase-2 findings are NEVER
+// cached.
+func (e *Engine) evalOnePhase2Doc(doc *Document, phase2Active []activeRule, fsys fs.FS, scannedPaths []string, indexCache map[string]any, indexMu *sync.Mutex, extra map[string]any) docResult {
+	if e.isForeignDoc(doc.Path) {
+		return docResult{}
+	}
+	var res docResult
+	for _, ar := range phase2Active {
+		if !Match(ar.rule.On, doc.Path, doc.Tags) {
+			continue
+		}
+		if doc.IsIgnored(ar.rule.ID) {
+			continue
+		}
+		result := e.evalDoc(doc, ar, fsys, scannedPaths, indexCache, indexMu, extra)
+		if result.panicMsg != "" {
+			res.panicMsgs = append(res.panicMsgs, result.panicMsg)
+			continue
+		}
+		for _, f := range result.findings {
+			if doc.IsLineSuppressed(f.Line, ar.rule.ID) {
+				continue
+			}
+			res.findings = append(res.findings, f)
+		}
+	}
+	return res
 }
 
 // evalOneDoc evaluates the phase-1 rules against a single document, applying the

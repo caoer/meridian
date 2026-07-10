@@ -64,6 +64,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -324,20 +325,44 @@ type repoData struct {
 	objs    map[string]objInfo
 }
 
+// ancestorEntry / selfEntry are per-key single-flight cells: the sync.Once runs
+// the (un-batchable) git query exactly once even when many phase-2 workers race
+// for the same key, while distinct keys spawn concurrently. This keeps the spawn
+// count identical to the serial memo — O(repos + distinct commits) — at any
+// GOMAXPROCS (the U10 herd-proof invariant).
+type ancestorEntry struct {
+	once sync.Once
+	val  bool
+}
+type selfEntry struct {
+	once sync.Once
+	val  bool
+}
+
 // pinResolver is the per-run external-state snapshot. It batches every
 // object-existence/checksum/ref query into one cat-file per repo and memoizes
-// the un-batchable ancestry queries per (commit, ref). Built ONCE per run
-// (serially, in the phase-2 pass) so it is never a concurrent populate race.
-// Correctness never rests on the memo: it only dedups identical git queries
+// the un-batchable ancestry queries per (commit, ref). Built ONCE per run behind
+// a sync.Once (see resolverFor) so it is never a concurrent populate race — the
+// U6 thundering-herd lesson carried into the U10 parallel phase-2 pass. The
+// cat-file snapshot is built ACROSS repos; the containment/self-pin queries run
+// lazily but per-key single-flight, so parallel consumers never fork a redundant
+// git. Correctness never rests on the memo: it only dedups identical git queries
 // within a single run's fixed snapshot.
+//
+// Concurrency: mu guards the map get-or-create of repos/ancestor/self (fast, no
+// git under the lock); every git spawn runs OUTSIDE mu inside a per-key Once, so
+// distinct repos/commits resolve in parallel. repoData.objs is written only by
+// the single-flight cat-file build (one goroutine per repo, before consumers
+// read it), then read lock-free.
 type pinResolver struct {
 	runner   gitRunner
-	repos    map[string]*repoData // slug → resolved data
-	ancestor map[string]bool      // "slug\x00commit\x00ref" → is-ancestor(commit, ref)
-	self     map[string]bool      // slug → pinned repo IS the scanned repo
+	mu       sync.Mutex                // guards repos, ancestor, self map get-or-create
+	repos    map[string]*repoData      // slug → resolved data
+	ancestor map[string]*ancestorEntry // "slug\x00commit\x00ref" → single-flight is-ancestor
+	self     map[string]*selfEntry     // slug → single-flight self-pin detection
 	// scanRoot git-common-dir, resolved once for self-pin detection.
+	scanCommonOnce sync.Once
 	scanCommon     string
-	scanCommonDone bool
 	warn           func(msg string) // batch-infra failure → engine warning (Decision 8)
 }
 
@@ -345,8 +370,8 @@ func newPinResolver(params map[string]any) *pinResolver {
 	r := &pinResolver{
 		runner:   runnerFrom(params),
 		repos:    map[string]*repoData{},
-		ancestor: map[string]bool{},
-		self:     map[string]bool{},
+		ancestor: map[string]*ancestorEntry{},
+		self:     map[string]*selfEntry{},
 	}
 	if w, ok := params["__warn"].(func(string)); ok {
 		r.warn = w
@@ -354,30 +379,54 @@ func newPinResolver(params map[string]any) *pinResolver {
 	return r
 }
 
+// resolverHolder carries the run's single pinResolver behind a sync.Once so the
+// parallel phase-2 pool (U10) builds the per-run snapshot EXACTLY ONCE — across
+// repos — without holding the index-cache mutex during git. The first phase-2
+// worker to need the resolver triggers the build; the rest block on the Once
+// until it completes, then read a fully-built, read-only snapshot. Single-flight
+// build, never a GOMAXPROCS-wide populate race (the U6 herd lesson), and the
+// git build never stalls the link-family workers that share __index_cache_mu.
+type resolverHolder struct {
+	once sync.Once
+	r    *pinResolver
+}
+
 // resolverFor returns the run-scoped resolver, building it once from __all_pins
 // (the corpus snapshot: one cat-file batch per repo, all pins at once) and
 // stashing it in the run's __index_cache so every check and every doc share it.
 // Absent an index cache (direct-call tests), an ephemeral resolver is returned
-// and populated on demand. The engine runs the phase-2 pass serially, so no
-// mutex is needed here; __index_cache_mu is honored defensively if present.
+// and populated on demand. Under the parallel phase-2 engine the holder+Once
+// serializes only the fast map get-or-create under __index_cache_mu; the build
+// (parallel cat-file across repos) runs outside the lock.
 func resolverFor(params map[string]any) *pinResolver {
 	ic, _ := params["__index_cache"].(map[string]any)
 	if ic == nil {
+		// Direct-call / scoped path: no shared scratchpad, single goroutine.
 		r := newPinResolver(params)
 		r.buildFromParams(params)
 		return r
 	}
-	if mu, ok := params["__index_cache_mu"].(*sync.Mutex); ok && mu != nil {
+	// Get-or-create the holder under a SHORT index-cache lock; the expensive
+	// build runs afterward outside the lock so concurrent link-family workers
+	// (which take the same mutex for their own indexes) are not blocked on git.
+	mu, _ := params["__index_cache_mu"].(*sync.Mutex)
+	if mu != nil {
 		mu.Lock()
-		defer mu.Unlock()
 	}
-	if r, ok := ic["__pin_resolver"].(*pinResolver); ok {
-		return r
+	h, ok := ic["__pin_resolver"].(*resolverHolder)
+	if !ok {
+		h = &resolverHolder{}
+		ic["__pin_resolver"] = h
 	}
-	r := newPinResolver(params)
-	r.buildFromParams(params)
-	ic["__pin_resolver"] = r
-	return r
+	if mu != nil {
+		mu.Unlock()
+	}
+	h.once.Do(func() {
+		r := newPinResolver(params)
+		r.buildFromParams(params)
+		h.r = r
+	})
+	return h.r
 }
 
 // buildFromParams batches every well-formed, safe pin in __all_pins, grouped so
@@ -409,14 +458,57 @@ func (r *pinResolver) buildFromParams(params map[string]any) {
 			}
 		}
 	}
-	for slug, qs := range byRepo {
-		r.batch(slug, qs)
+	r.batchAllParallel(byRepo)
+}
+
+// batchAllParallel runs each repo's cat-file batch concurrently — the snapshot is
+// built ACROSS repos (U10), bounded to GOMAXPROCS so git is never oversubscribed.
+// Each repo writes only its own repoData.objs (grouped above with every entry
+// pre-created), so the batches share no mutable state and need no per-write lock.
+// Exactly one cat-file per repo regardless of the pool size (herd-proof).
+func (r *pinResolver) batchAllParallel(byRepo map[string][]string) {
+	slugs := make([]string, 0, len(byRepo))
+	for slug := range byRepo {
+		slugs = append(slugs, slug)
 	}
+	workers := runtime.GOMAXPROCS(0)
+	if workers > len(slugs) {
+		workers = len(slugs)
+	}
+	if workers <= 1 {
+		for _, slug := range slugs {
+			r.batch(slug, byRepo[slug])
+		}
+		return
+	}
+	slugCh := make(chan string)
+	go func() {
+		for _, slug := range slugs {
+			slugCh <- slug
+		}
+		close(slugCh)
+	}()
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for slug := range slugCh {
+				r.batch(slug, byRepo[slug])
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 // repo resolves (once) and returns the repo's data. present=false for an absent
-// checkout (the absent-repo ladder handles the finding).
+// checkout (the absent-repo ladder handles the finding). mu guards the map
+// get-or-create so parallel phase-2 workers share one repoData per slug; the
+// returned repoData.objs is written only by the single-flight cat-file build
+// (before consumers read it), so callers read it lock-free.
 func (r *pinResolver) repo(slug string) *repoData {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if rd, ok := r.repos[slug]; ok {
 		return rd
 	}
@@ -507,22 +599,29 @@ func (r *pinResolver) objID(slug, name string) (string, bool) {
 }
 
 // isAncestor reports whether commit is an ancestor of (or equal to) ref, via one
-// memoized `git merge-base --is-ancestor` per distinct (slug, commit, ref).
+// `git merge-base --is-ancestor` per distinct (slug, commit, ref), single-flight:
+// concurrent phase-2 workers requesting the same key share ONE spawn (the Once),
+// distinct keys spawn concurrently. The spawn runs outside r.mu so ancestry
+// resolves in parallel across distinct commits while staying herd-proof.
 // commit is validated (no leading dash) before it reaches argv; ref is either
 // "origin/<validated-branch>" or the literal "HEAD" — neither is attacker-dashed.
 func (r *pinResolver) isAncestor(slug, commit, ref string) bool {
 	key := slug + "\x00" + commit + "\x00" + ref
-	if v, ok := r.ancestor[key]; ok {
-		return v
+	r.mu.Lock()
+	e, ok := r.ancestor[key]
+	if !ok {
+		e = &ancestorEntry{}
+		r.ancestor[key] = e
 	}
-	rd := r.repo(slug)
-	res := false
-	if rd.present {
-		_, err := r.runner.run(rd.dir, nil, "merge-base", "--is-ancestor", commit, ref)
-		res = err == nil
-	}
-	r.ancestor[key] = res
-	return res
+	r.mu.Unlock()
+	e.once.Do(func() {
+		rd := r.repo(slug)
+		if rd.present {
+			_, err := r.runner.run(rd.dir, nil, "merge-base", "--is-ancestor", commit, ref)
+			e.val = err == nil
+		}
+	})
+	return e.val
 }
 
 // isSelfPin reports whether the pinned repo IS the repo being scanned — an
@@ -532,12 +631,17 @@ func (r *pinResolver) isAncestor(slug, commit, ref string) bool {
 // on pure-VFS runs → not-self, keeping the strict origin predicate). One
 // git-common-dir spawn per repo (+ one for the scan root, memoized).
 func (r *pinResolver) isSelfPin(slug string, params map[string]any) bool {
-	if v, ok := r.self[slug]; ok {
-		return v
+	r.mu.Lock()
+	e, ok := r.self[slug]
+	if !ok {
+		e = &selfEntry{}
+		r.self[slug] = e
 	}
-	res := r.computeSelfPin(slug, params)
-	r.self[slug] = res
-	return res
+	r.mu.Unlock()
+	e.once.Do(func() {
+		e.val = r.computeSelfPin(slug, params)
+	})
+	return e.val
 }
 
 func (r *pinResolver) computeSelfPin(slug string, params map[string]any) bool {
@@ -549,10 +653,11 @@ func (r *pinResolver) computeSelfPin(slug string, params map[string]any) bool {
 	if !rd.present {
 		return false
 	}
-	if !r.scanCommonDone {
+	// The scan root's git-common-dir is resolved once per run (shared across all
+	// self-pin checks); the Once makes that safe under the parallel pool.
+	r.scanCommonOnce.Do(func() {
 		r.scanCommon = r.commonDir(scanRoot)
-		r.scanCommonDone = true
-	}
+	})
 	if r.scanCommon == "" {
 		return false
 	}
