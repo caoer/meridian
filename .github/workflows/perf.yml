@@ -1,0 +1,155 @@
+name: perf
+
+# Performance regression gate for `md check`.
+#
+# Strategy (shared runners are 2-3x noisy, so absolute time budgets are
+# useless — both signals below are runner-speed-invariant):
+#
+#   1. Ratio vs merge-base: build md from the PR head AND from the merge-base,
+#      run both against the SAME generated corpus on the SAME runner, fail on
+#      >1.3x slowdown. Noise cancels in the ratio.
+#   2. Scaling slope: time must grow ~linearly with doc count. small (1k) vs
+#      medium (10k) is a 10x size step; a slope beyond 25x means superlinear
+#      (O(n^2)) work crept in — caught with no baseline at all.
+#
+# The corpus is generated, not stored: test/perf/gen is seeded and
+# deterministic, so "the golden dataset" is (generator code, seed, size) —
+# reviewable in diffs, no artifact hosting. Sizes are parameters; the nightly
+# large tier runs 100k docs.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * *" # nightly large tier
+  workflow_dispatch:
+    inputs:
+      docs:
+        description: "corpus size (docs) for the large run"
+        default: "100000"
+
+env:
+  SEED: 1
+  RATIO_MAX_PCT: 130 # fail PR if head > 1.3x merge-base
+  SLOPE_MAX: 25      # fail if time(10x docs) > 25x time(1x docs)
+
+jobs:
+  regression:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build head binary
+        run: go build -o /tmp/md-head ./cmd/md
+
+      - name: Build baseline binary (merge-base with main)
+        id: base
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE=$(git merge-base origin/${{ github.base_ref }} HEAD)
+          else
+            BASE=$(git rev-parse HEAD~1)
+          fi
+          echo "sha=$BASE" >> "$GITHUB_OUTPUT"
+          git worktree add /tmp/base "$BASE"
+          cd /tmp/base && go build -o /tmp/md-base ./cmd/md
+
+      - name: Generate corpora (head generator, both binaries share them)
+        run: |
+          go run ./test/perf/gen -out /tmp/corpus-small  -docs 1000  -seed "$SEED" -rules ./rules
+          go run ./test/perf/gen -out /tmp/corpus-medium -docs 10000 -seed "$SEED" -rules ./rules
+
+      - name: Bench
+        id: bench
+        run: |
+          small_head=$(./test/perf/bench.sh /tmp/md-head /tmp/corpus-small)
+          med_head=$(./test/perf/bench.sh /tmp/md-head /tmp/corpus-medium)
+          med_base=$(./test/perf/bench.sh /tmp/md-base /tmp/corpus-medium)
+          echo "small_head=$small_head" >> "$GITHUB_OUTPUT"
+          echo "med_head=$med_head"     >> "$GITHUB_OUTPUT"
+          echo "med_base=$med_base"     >> "$GITHUB_OUTPUT"
+          {
+            echo "### md check perf (min of 3 runs)"
+            echo ""
+            echo "| corpus | head | baseline (${{ steps.base.outputs.sha }}) |"
+            echo "|---|---|---|"
+            echo "| small (1k docs) | ${small_head}ms | — |"
+            echo "| medium (10k docs) | ${med_head}ms | ${med_base}ms |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: "Gate: ratio vs baseline (medium corpus)"
+        run: |
+          head=${{ steps.bench.outputs.med_head }}
+          base=${{ steps.bench.outputs.med_base }}
+          # Sub-100ms baselines are dominated by fixed overhead; skip ratio.
+          if [ "$base" -lt 100 ]; then
+            echo "baseline ${base}ms too small for a stable ratio — skipping"
+            exit 0
+          fi
+          if [ $((head * 100)) -gt $((base * RATIO_MAX_PCT)) ]; then
+            echo "::error::md check regressed: ${head}ms vs baseline ${base}ms (> ${RATIO_MAX_PCT}% allowed)"
+            exit 1
+          fi
+          echo "ratio OK: ${head}ms vs ${base}ms"
+
+      - name: "Gate: scaling slope (1k -> 10k docs)"
+        run: |
+          small=${{ steps.bench.outputs.small_head }}
+          med=${{ steps.bench.outputs.med_head }}
+          [ "$small" -lt 1 ] && small=1
+          slope=$((med / small))
+          if [ "$slope" -gt "$SLOPE_MAX" ]; then
+            echo "::error::superlinear scaling: 10x docs took ${slope}x time (${small}ms -> ${med}ms, max ${SLOPE_MAX}x)"
+            exit 1
+          fi
+          echo "slope OK: 10x docs -> ${slope}x time (${small}ms -> ${med}ms)"
+
+  large:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build -o /tmp/md-head ./cmd/md
+
+      - name: Generate corpora
+        run: |
+          DOCS="${{ github.event.inputs.docs || '100000' }}"
+          go run ./test/perf/gen -out /tmp/corpus-medium -docs 10000 -seed "$SEED" -rules ./rules
+          go run ./test/perf/gen -out /tmp/corpus-large -docs "$DOCS" -seed "$SEED" -rules ./rules
+
+      - name: Bench + slope gate (10k -> large)
+        run: |
+          DOCS="${{ github.event.inputs.docs || '100000' }}"
+          med=$(./test/perf/bench.sh /tmp/md-head /tmp/corpus-medium)
+          large=$(./test/perf/bench.sh /tmp/md-head /tmp/corpus-large)
+          {
+            echo "### md check perf — large tier"
+            echo ""
+            echo "| corpus | time |"
+            echo "|---|---|"
+            echo "| medium (10k docs) | ${med}ms |"
+            echo "| large ($DOCS docs) | ${large}ms |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$med" -lt 1 ] && med=1
+          slope=$((large / med))
+          size_ratio=$((DOCS / 10000))
+          max=$((size_ratio * 5 / 2)) # allow 2.5x superlinearity slack
+          if [ "$slope" -gt "$max" ]; then
+            echo "::error::superlinear scaling at large tier: ${size_ratio}x docs took ${slope}x time (${med}ms -> ${large}ms, max ${max}x)"
+            exit 1
+          fi
+          echo "slope OK: ${size_ratio}x docs -> ${slope}x time"

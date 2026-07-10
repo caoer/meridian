@@ -22,3 +22,11 @@ test:
 # Clean build artifacts
 clean:
     rm -f md
+
+# Generate a benchmark corpus: just perf-gen /tmp/corpus 10000
+perf-gen out docs="10000" seed="1":
+    go run ./test/perf/gen -out {{out}} -docs {{docs}} -seed {{seed}} -rules ./rules
+
+# Time md check over a corpus (min of 3 runs, prints ms)
+perf corpus: build
+    ./test/perf/bench.sh ./md {{corpus}}
