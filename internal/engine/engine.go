@@ -103,10 +103,10 @@ func (e *Engine) MarkPhase2(names ...string) {
 	}
 }
 
-// isPhase2 reports whether a rule's check is a phase-2 member. An engine with
-// no phase-2 checks marked treats every rule as phase-1 — identical to the
+// IsPhase2 reports whether a check name is a phase-2 member. An engine with no
+// phase-2 checks marked treats every rule as phase-1 — identical to the
 // pre-split single-pass behavior, which keeps direct-engine tests unchanged.
-func (e *Engine) isPhase2(check string) bool {
+func (e *Engine) IsPhase2(check string) bool {
 	return e.phase2[check]
 }
 

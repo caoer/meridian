@@ -37,15 +37,23 @@ var All = map[string]engine.CheckFunc{
 
 // Phase2 lists the checks whose verdict depends on state outside a single
 // document's own bytes — the corpus path universe (link resolution against
-// __scanned_paths) or, once U6 lands, external git state. The engine runs these
-// in a separate pass over per-run snapshots and NEVER persists their findings to
-// the per-doc cache: a cached verdict would go stale when an unrelated file is
-// added or removed (the Ruff INP001 bug class). Register via engine.MarkPhase2.
+// __scanned_paths), external program output (probe), or, once U6 lands, external
+// git state. The engine runs these in a separate pass over per-run snapshots and
+// NEVER persists their findings to the per-doc cache: a cached verdict would go
+// stale when the external state changes with the doc unchanged (the Ruff INP001
+// bug class). Register via engine.MarkPhase2.
 //
-// The link family here consumes engine facts (__facts) + __scanned_paths.
-// Doc-local link checks are deliberately absent: table-wikilink-pipe (detects
-// unescaped pipes in a row — no cross-file input) and wiki-navlink / backticked-
-// wikilink (pure body grammar) stay phase-1 and remain cacheable. U6 appends the
+// Membership is the governing invariant applied per check — phase-2 iff the
+// verdict depends on anything outside the doc+sidecar bytes:
+//   - broken/ambiguous/canonicalize/link-resolve: resolve against __scanned_paths.
+//   - property: resolves wikilinks against __scanned_paths + reads the git root.
+//   - probe: executes md-run tasks; the finding IS the external exit code/timeout,
+//     so a content-addressed cache would serve a stale verdict the moment the
+//     probed system changes (opt-in, severity-off by default — recompute-every-run
+//     is its current cost, no regression).
+// Doc-local link checks are deliberately absent: table-wikilink-pipe (unescaped
+// pipes in a row — no cross-file input) and wiki-navlink / backticked-wikilink
+// (pure body grammar) stay phase-1 and remain cacheable. U6 appends the
 // effect-pin family (effect-pin-resolves, effect-pin-on-origin,
 // effect-checksum-reproduces, effect-pin-stale, effect-unpinned).
 var Phase2 = []string{
@@ -54,4 +62,5 @@ var Phase2 = []string{
 	"wikilink-canonicalize",
 	"link-resolve",
 	"property",
+	"probe",
 }

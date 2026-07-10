@@ -82,7 +82,7 @@ func (e *Engine) runCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 	// findings are never persisted (the structural INP001 fix).
 	var phase1, phase2 []activeRule
 	for _, ar := range active {
-		if e.isPhase2(ar.rule.Check) {
+		if e.IsPhase2(ar.rule.Check) {
 			phase2 = append(phase2, ar)
 		} else {
 			phase1 = append(phase1, ar)
