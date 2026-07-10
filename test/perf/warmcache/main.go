@@ -166,6 +166,10 @@ func newEngine(cfg *config.Config) *engine.Engine {
 	for name, fn := range checks.All {
 		eng.RegisterCheck(name, fn)
 	}
+	// Post-U5: mark the phase-2 checks so their findings are recomputed every run
+	// and NEVER cached (matches cmd/md/main.go). Without this every check would run
+	// as phase-1 and the store would wrongly persist link/probe findings.
+	eng.MarkPhase2(checks.Phase2...)
 	return eng
 }
 
