@@ -11,7 +11,7 @@ import (
 // documented in the architecture page (VFS-only tests never exercised rule
 // YAML, letting nil-params bugs ship).
 func TestYAMLPipeline_StaleRunRecord(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "stale-run-record")
 	if r.Check != "stale-run-record" {
 		t.Fatalf("Check = %q", r.Check)

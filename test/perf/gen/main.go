@@ -5,8 +5,8 @@
 // count alone: dense wikilinks (resolving, broken, ambiguous, non-canonical
 // long forms), duplicate basenames across directories, deep session trees,
 // frontmatter variety (valid and violating), headings, code fences, and
-// tables. Layout lives under wiki/ so the shipped locus rule pack's
-// `on: wiki/**` globs match.
+// tables. Layout lives under wiki/; the shipped contract pack's `**` globs
+// match everywhere.
 //
 // Same seed + same params → byte-identical corpus. Size is a parameter, not
 // an artifact: small/medium/large are -docs values.
@@ -234,9 +234,9 @@ func main() {
 	}
 
 	// Copy rule packs so the corpus is self-contained and checkable.
-	// Packs may ship overlapping rule files (contract + locus both define
-	// broken-wikilink); rule IDs must be unique across packs, so the first
-	// pack (alphabetical) wins and later duplicates are skipped.
+	// Packs may ship overlapping rule files; rule IDs must be unique across
+	// packs, so the first pack (alphabetical) wins and later duplicates are
+	// skipped.
 	var packLines []string
 	copied := make(map[string]bool)
 	if *rules != "" {
