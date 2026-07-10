@@ -29,6 +29,7 @@ type Engine struct {
 	maxFileSize  int64    // max file size in bytes; 0 = no limit
 	foreignRoots []string // root-relative path prefixes for foreign (resolution-only) content
 	scanRoot     string   // OS path of the scanned FS root; "" = pure-VFS run (no real paths)
+	scannedPaths []string // full path universe from the last full RunCached; nil after a scoped/early-returning run
 }
 
 // SetSkip configures directory names to skip during filesystem scan.
@@ -116,6 +117,16 @@ func (e *Engine) Warnings() []types.Warning {
 	return e.warnings
 }
 
+// ScannedPaths returns the full path universe (the CollectPaths link-target set)
+// collected during the last full RunCached. U8's cache wiring passes it to
+// store.Prune after a complete run to evict entries for vanished documents. It is
+// nil after a scoped run (RunForPaths) or a run that returned before scanning —
+// a nil universe must never be pruned against (Prune(nil) would evict every
+// entry), so the caller gates Prune on a non-empty result.
+func (e *Engine) ScannedPaths() []string {
+	return e.scannedPaths
+}
+
 // Run scans the filesystem, matches rules, evaluates checks, returns sorted findings.
 // Delegates to RunCached with no cache store.
 func (e *Engine) Run(fsys fs.FS, ruleList []rules.Rule) []types.Finding {
@@ -128,6 +139,10 @@ func (e *Engine) Run(fsys fs.FS, ruleList []rules.Rule) []types.Finding {
 // This is O(walk + len(targetPaths)) instead of O(N) full-file reads.
 func (e *Engine) RunForPaths(fsys fs.FS, ruleList []rules.Rule, targetPaths []string) []types.Finding {
 	e.warnings = nil
+	// A scoped run walks only part of the corpus, so it must never leave behind a
+	// path universe that a later Prune could treat as complete (and evict the
+	// unscanned majority). Clear it unconditionally.
+	e.scannedPaths = nil
 
 	if len(targetPaths) == 0 {
 		return nil

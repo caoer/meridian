@@ -54,6 +54,15 @@ func RenderText(w io.Writer, resp *Response) {
 			}
 			parts = append(parts, fmt.Sprintf("%d errors", errCount))
 			parts = append(parts, fmt.Sprintf("%d warnings", warnCount))
+			// Engine warnings (rendered as NOTE lines below) are a routine class —
+			// cache-unavailable, effect-pin batch-infra failures (U6) — distinct from
+			// warn-severity findings. Surface their count so a run that quietly
+			// degraded (e.g. pins unverified this run) is visible in the summary, not
+			// only buried in the trailing NOTE lines. Omitted when zero to keep the
+			// clean-run summary unchanged.
+			if n := len(resp.Warnings); n > 0 {
+				parts = append(parts, fmt.Sprintf("%d notes", n))
+			}
 			if resp.Stats.DurationMs > 0 {
 				parts = append(parts, fmt.Sprintf("%dms", resp.Stats.DurationMs))
 			}
@@ -322,6 +331,31 @@ func formatData(w io.Writer, data any) {
 			} else {
 				fmt.Fprintf(w, "%s: %v\n", k, v)
 			}
+		}
+
+	case CacheStatsData:
+		fmt.Fprintf(w, "path:         %s\n", d.Path)
+		fmt.Fprintf(w, "version dirs: %d\n", d.VersionDirs)
+		fmt.Fprintf(w, "shards:       %d\n", d.Shards)
+		fmt.Fprintf(w, "entries:      %d\n", d.Entries)
+		fmt.Fprintf(w, "bytes:        %d\n", d.Bytes)
+
+	case CacheCleanData:
+		fmt.Fprintf(w, "removed %d entries / %d bytes\n", d.Entries, d.Bytes)
+		fmt.Fprintf(w, "path: %s\n", d.Path)
+
+	case CacheVerifyData:
+		if d.Verified {
+			fmt.Fprintf(w, "cache verified: %d entries checked, no divergence\n", d.EntriesChecked)
+			return
+		}
+		fmt.Fprintf(w, "CACHE DIVERGENCE: %d entries checked, %d divergent findings\n", d.EntriesChecked, len(d.Divergences))
+		for _, dv := range d.Divergences {
+			loc := dv.FilePath
+			if dv.Line > 0 {
+				loc = fmt.Sprintf("%s:%d", dv.FilePath, dv.Line)
+			}
+			fmt.Fprintf(w, "  %-14s %s  [%s] %s\n", dv.Kind, loc, dv.RuleID, dv.Message)
 		}
 
 	case RunListData:
