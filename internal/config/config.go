@@ -21,12 +21,32 @@ type Config struct {
 	Watch          *WatchConfig              `yaml:"watch"`
 	ForeignRoots   []string                  `yaml:"foreign_roots"` // root-relative dirs whose files resolve for link-checking but are never linted
 	RuleParams     map[string]map[string]any `yaml:"rule_params"`
+	Cache          *CacheConfig              `yaml:"cache"`
 
 	// Strict promotes warn findings to failing (exit 1). Severity stays a
 	// property of the rule; strict is how much the run tolerates. Per-run
 	// override via the check command's strict param is the escape hatch —
 	// error findings fail in both modes.
 	Strict bool `yaml:"strict"`
+}
+
+// CacheConfig controls the persistent fact cache. It carries only `enabled`:
+// the store location is fixed under UserCacheDir (Decision 7) and a `dir`
+// override was cut as YAGNI (Decision 14). Enabled is a pointer so an absent
+// `cache:` section means the default (on) rather than Go's false zero value —
+// caching is on by default and opt-out, never opt-in.
+type CacheConfig struct {
+	Enabled *bool `yaml:"enabled"`
+}
+
+// CacheEnabled reports whether the persistent fact cache is on. Absent config,
+// or an absent `enabled:` key, defaults to on; only an explicit `enabled: false`
+// turns it off (the per-run `{"no_cache":true}` param is the other opt-out).
+func (c *Config) CacheEnabled() bool {
+	if c == nil || c.Cache == nil || c.Cache.Enabled == nil {
+		return true
+	}
+	return *c.Cache.Enabled
 }
 
 // WatchConfig controls the md watch daemon.

@@ -28,6 +28,14 @@ func (r *Response) ExitCode() int {
 	if r.Error != nil {
 		return 2
 	}
+	// A cache-verify divergence is a tool-integrity failure (the cache produced
+	// results a recompute does not) — exit 2 so CI's honesty gate fails hard,
+	// while the machine-readable Divergences payload still renders (unlike Error,
+	// which would suppress it). Verified true, or a cold cache (no divergences),
+	// exits 0.
+	if cv, ok := r.Data.(CacheVerifyData); ok && !cv.Verified {
+		return 2
+	}
 	for _, f := range r.Findings {
 		if f.Severity == "error" {
 			return 1

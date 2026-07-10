@@ -54,6 +54,10 @@ func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 // never leaks into output.
 func (e *Engine) runCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store, workers int) []types.Finding {
 	e.warnings = nil
+	// Cleared until a full CollectPaths succeeds below, so any early return
+	// (scan error, no active rules) leaves ScannedPaths nil and the cache-wiring
+	// caller skips Prune rather than evicting a still-valid cache.
+	e.scannedPaths = nil
 
 	docs, err := ScanWithOpts(fsys, ScanOptions{Skip: e.skip, MaxFileSize: e.maxFileSize})
 	if err != nil {
@@ -121,6 +125,10 @@ func (e *Engine) runCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 		})
 		return nil
 	}
+	// Publish the completed universe for the cache-wiring caller's post-run
+	// Prune (U8). Set only after a successful full walk — see the top-of-func
+	// reset — so a nil universe unambiguously means "no full scan this run".
+	e.scannedPaths = scannedPaths
 
 	// Run-scoped scratchpad for checks to memoize per-run derived data
 	// (e.g. glob-filtered path indexes) that is identical across all docs.

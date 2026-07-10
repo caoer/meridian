@@ -54,9 +54,10 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 				"scope":      {Type: "string", Required: false},
 				"skill_tree": {Type: "string", Required: false},
 				"strict":     {Type: "bool", Required: false},
+				"no_cache":   {Type: "bool", Required: false},
 				"format":     {Type: "string", Required: false},
 			},
-			ExitCodes: map[string]string{"0": "clean", "1": "error findings (warn too when strict)", "2": "error"},
+			ExitCodes: map[string]string{"0": "clean", "1": "error findings (warn too when strict)", "2": "error (or MD_CACHE_VERIFY=1 divergence)"},
 			Examples: []string{
 				`md check wiki/`,
 				`md check '{"scope":"wiki/","strict":true}'`,
@@ -108,6 +109,15 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 		"debt": {
 			Description: "List incorporation debt (wiki/sources flagged do/incorporate, not yet incorporated)",
 			Usage:       "md debt",
+		},
+		"cache stats": {
+			Description: "Inventory this scan root's persistent fact cache: resolved path, accumulated version dirs, shard-file count, cached-document count, and total bytes. Read-only",
+			Usage:       "md cache stats",
+		},
+		"cache clean": {
+			Description: "Remove this scan root's entire persistent fact cache — every accumulated version dir (Decision 10: clean removes all versions; there is no auto-prune). Reports entries and bytes removed. Refuses unless the resolved path is a single roothash segment under UserCacheDir/meridian",
+			Usage:       "md cache clean",
+			ExitCodes:   map[string]string{"0": "removed (or nothing to remove)", "2": "refused unsafe path or removal error"},
 		},
 		"llm-wiki check": {
 			Description: "Environment doctor for the llm-wiki system: verifies CCC_LLM_WIKI_PATH / CCC_LLM_WIKI_REPOS_ROOT and that every cataloged repo (sources/git/<slug>/) resolves at <root>/<slug> with the right git identity. Failures point at skill-shipped setup references; absent repos are a state, not a failure",

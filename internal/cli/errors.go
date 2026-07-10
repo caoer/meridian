@@ -21,6 +21,7 @@ const (
 	ErrStatusFailed      = "STATUS_FAILED"
 	ErrAmbiguousTarget   = "AMBIGUOUS_TARGET"
 	ErrWrongCwd          = "WRONG_CWD"
+	ErrCacheFailed       = "CACHE_FAILED"
 )
 
 // ErrorResponse creates an error response with exit code 2.
