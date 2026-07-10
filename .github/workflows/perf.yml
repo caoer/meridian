@@ -16,6 +16,25 @@ name: perf
 # deterministic, so "the golden dataset" is (generator code, seed, size) —
 # reviewable in diffs, no artifact hosting. Sizes are parameters; the nightly
 # large tier runs 100k docs.
+#
+# Two more tiers guard the persistent fact cache (the two-phase engine's warm
+# path). The cache serves phase-1 (pure-doc) facts+findings; phase-2 (the link
+# family and the whole effect-pin family) is recomputed every run and never
+# cached, so the honesty gate below verifies phase-1 integrity only.
+#
+#   3. PR-tier verify sample: every PR runs one MD_CACHE_VERIFY=1 pass on the
+#      head binary — serve from the warm cache, recompute the same corpus with no
+#      cache, and diff. A divergence means the cache served a result a cold run
+#      does not reproduce (exit 2 => PR fails). Cheap; runs on the medium corpus
+#      already benched, so the cache is warm. entries_checked>0 is asserted so a
+#      cold cache can't pass the gate vacuously.
+#   4. Nightly wiki-corpus tier: a home-wiki-SHAPED ×N corpus (fixture git repos
+#      + vendored 3-pack rules + effect pins + .runs.md sidecars — self-contained,
+#      built by test/perf/gen -profile wiki, no external state) exercised with
+#      MD_CACHE_VERIFY=1 as the cache honesty gate at wiki scale. Nightly + on
+#      demand (workflow_dispatch). Failure posture: a failed scheduled run
+#      surfaces via GitHub's standard workflow-failure notification, same as the
+#      `large` nightly tier — no bespoke alerting.
 
 on:
   pull_request:
@@ -28,6 +47,9 @@ on:
       docs:
         description: "corpus size (docs) for the large run"
         default: "100000"
+      wiki_mult:
+        description: "wiki-corpus multiplier (docs = mult*3827; 10 ~= 38k)"
+        default: "10"
 
 permissions:
   contents: read
@@ -137,6 +159,31 @@ jobs:
           fi
           echo "slope OK: 10x docs -> ${slope}x time (${small}ms -> ${med}ms)"
 
+      # Sampled cache-honesty check (plan §7 U9): one MD_CACHE_VERIFY=1 pass on the
+      # head binary. The Bench step above already ran md-head over the medium corpus,
+      # so its persistent cache is warm; verify recomputes on hit and diffs. Exit 2
+      # (=> non-empty step, set -e fails) means the warm cache is dishonest.
+      - name: "Gate: cache honesty (verify sample, head @ medium corpus)"
+        run: |
+          cd /tmp/corpus-medium
+          # ensure the cache is warm (findings are expected — corpus violates rules on purpose)
+          /tmp/md-head check >/dev/null 2>&1 || true
+          rc=0
+          out=$(MD_CACHE_VERIFY=1 /tmp/md-head check '{"format":"json"}') || rc=$?
+          echo "$out" | jq '.data | {verified, entries_checked, divergences: (.divergences | length)}'
+          verified=$(echo "$out" | jq -r '.data.verified')
+          checked=$(echo "$out" | jq -r '.data.entries_checked')
+          if [ "$rc" -ne 0 ] || [ "$verified" != "true" ]; then
+            echo "::error::cache verify divergence — warm cache served a result a cold recompute does not reproduce"
+            echo "$out" | jq '.data.divergences'
+            exit 1
+          fi
+          if [ "${checked:-0}" -lt 1 ]; then
+            echo "::error::verify sample vacuous — 0 cache entries checked (cache failed to warm)"
+            exit 1
+          fi
+          echo "verify sample OK: ${checked} entries checked, no divergence"
+
   large:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -178,3 +225,73 @@ jobs:
             exit 1
           fi
           echo "slope OK: ${size_ratio}x docs -> ${slope}x time"
+
+  # Nightly wiki-corpus tier: the persistent cache's honesty gate at wiki scale.
+  #
+  # Runtime budget (measured, results/u1-baseline.md on an M4 Max): corpus +
+  # fixture-repo generation ~11s locally; a cold `md check` over the ×10 corpus
+  # (~38k docs) ~15s. GitHub-hosted runners are ~2-3x slower, so budget ~30-60s
+  # for generation and a couple of minutes wall-clock for the whole job. The
+  # corpus is self-contained (fixture git repos + vendored 3-pack rules), so the
+  # runner needs no external state — only git, which ubuntu-latest ships.
+  #
+  # Failure posture: a failed scheduled run surfaces via GitHub's standard
+  # workflow-failure notification, identical to the `large` nightly tier.
+  wiki-corpus:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build -o /tmp/md-head ./cmd/md
+
+      - name: Generate ×N wiki-profile corpus (self-contained fixtures + vendored packs)
+        run: |
+          MULT="${{ github.event.inputs.wiki_mult || '10' }}"
+          # Generator writes progress to stderr and `export CCC_LLM_WIKI_REPOS_ROOT=…`
+          # as its final stdout line — effect-pin rules silently no-op without it.
+          go run ./test/perf/gen -profile wiki -out /tmp/wiki -mult "$MULT" -seed "$SEED" \
+            | tee /tmp/wikigen.out
+          root=$(grep '^export CCC_LLM_WIKI_REPOS_ROOT=' /tmp/wikigen.out | tail -1 | cut -d= -f2-)
+          if [ -z "$root" ]; then
+            echo "::error::generator did not print CCC_LLM_WIKI_REPOS_ROOT"
+            exit 1
+          fi
+          echo "CCC_LLM_WIKI_REPOS_ROOT=$root" >> "$GITHUB_ENV"
+
+      - name: Warm cache + timing summary
+        run: |
+          # Run 1 builds the persistent cache (cold); min-of-3 self-warms (min = warm).
+          warm=$(./test/perf/bench.sh /tmp/md-head /tmp/wiki 3)
+          {
+            echo "### md check — wiki-profile ×${{ github.event.inputs.wiki_mult || '10' }} corpus"
+            echo ""
+            echo "| corpus | warm (min of 3) |"
+            echo "|---|---|"
+            echo "| wiki-profile | ${warm}ms |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: "Gate: cache honesty (MD_CACHE_VERIFY on warm wiki corpus)"
+        run: |
+          cd /tmp/wiki
+          # Cache is warm from the timing step; recompute-on-hit and diff.
+          rc=0
+          out=$(MD_CACHE_VERIFY=1 /tmp/md-head check '{"format":"json"}') || rc=$?
+          echo "$out" | jq '.data | {verified, entries_checked, divergences: (.divergences | length)}'
+          verified=$(echo "$out" | jq -r '.data.verified')
+          checked=$(echo "$out" | jq -r '.data.entries_checked')
+          if [ "$rc" -ne 0 ] || [ "$verified" != "true" ]; then
+            echo "::error::cache divergence at wiki scale — warm cache is dishonest"
+            echo "$out" | jq '.data.divergences'
+            exit 1
+          fi
+          if [ "${checked:-0}" -lt 1 ]; then
+            echo "::error::verify vacuous — 0 cache entries checked (cache failed to warm)"
+            exit 1
+          fi
+          echo "cache honest at wiki scale: ${checked} entries checked, no divergence"
