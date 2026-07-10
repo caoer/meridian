@@ -74,19 +74,37 @@ func (e *Engine) runCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 		return nil
 	}
 
-	// Pre-compute rule hashes from active rules only (if caching).
+	// Split the rule set by phase. Phase-1 rules are a pure function of a doc's
+	// own bytes, so their findings are cacheable and their per-doc evaluation is
+	// parallelized below. Phase-2 rules (the link family here; U6 adds the
+	// effect-pin family) resolve against per-run snapshots of state outside the
+	// doc — the path universe, git refs — and run in a separate pass whose
+	// findings are never persisted (the structural INP001 fix).
+	var phase1, phase2 []activeRule
+	for _, ar := range active {
+		if e.isPhase2(ar.rule.Check) {
+			phase2 = append(phase2, ar)
+		} else {
+			phase1 = append(phase1, ar)
+		}
+	}
+
+	// Pre-compute rule hashes from the cached (phase-1) rules only — phase-2
+	// findings never enter the cache, so their rules must not perturb the key.
 	var ruleHashes []string
 	if store != nil {
-		ruleHashes = make([]string, len(active))
-		for i, ar := range active {
+		ruleHashes = make([]string, len(phase1))
+		for i, ar := range phase1 {
 			ruleHashes[i] = cache.RuleHash(ar.rule)
 		}
 	}
 
-	// Build scanned paths for checks that need cross-file context (the wikilink
-	// resolve index). Derive from CollectPaths — the canonical link-target set —
-	// rather than the checked-doc set, so first-class non-.md targets (.base
-	// files) resolve without ever being parsed or checked. Mirrors RunForPaths.
+	// The path-universe snapshot, owned by phase 2. Derive from CollectPaths —
+	// the canonical link-target set — rather than the checked-doc set, so
+	// first-class non-.md targets (.base files) resolve without ever being
+	// parsed or checked. Recomputed every run and fed to phase-2 checks; it is
+	// NEVER folded into a per-doc cache key (that is exactly the corpus-wide-key
+	// mistake the two-phase split exists to avoid). Mirrors RunForPaths.
 	scannedPaths, err := CollectPaths(fsys, ScanOptions{Skip: e.skip})
 	if err != nil {
 		e.warnings = append(e.warnings, types.Warning{
@@ -128,7 +146,7 @@ func (e *Engine) runCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 		go func() {
 			defer wg.Done()
 			for i := range idxCh {
-				results[i] = e.evalOneDoc(docs[i], active, fsys, scannedPaths, indexCache, &indexMu, store, ruleHashes)
+				results[i] = e.evalOneDoc(docs[i], phase1, fsys, scannedPaths, indexCache, &indexMu, store, ruleHashes)
 			}
 		}()
 	}
@@ -141,6 +159,41 @@ func (e *Engine) runCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 	for i := range docs {
 		findings = append(findings, results[i].findings...)
 		panicMsgs = append(panicMsgs, results[i].panicMsgs...)
+	}
+
+	// Phase 2: per-doc checks over the facts extracted in phase 1 plus the
+	// path-universe snapshot. Single-threaded (milliseconds — map lookups, no
+	// I/O) and never cached: these findings are recomputed every run so a
+	// warm cache can never serve a stale cross-file verdict. Reuses evalDoc
+	// (facts flow through doc.Facts → __facts); the shared index cache is
+	// written under phase 1's mutex and read here after wg.Wait, so a nil
+	// mutex is safe. U6 grows the phase-2 rule set; U7 adds the store to
+	// phase 1 only, leaving this pass untouched.
+	if len(phase2) > 0 {
+		for _, doc := range docs {
+			if e.isForeignDoc(doc.Path) {
+				continue
+			}
+			for _, ar := range phase2 {
+				if !Match(ar.rule.On, doc.Path, doc.Tags) {
+					continue
+				}
+				if doc.IsIgnored(ar.rule.ID) {
+					continue
+				}
+				result := e.evalDoc(doc, ar, fsys, scannedPaths, indexCache, nil)
+				if result.panicMsg != "" {
+					panicMsgs = append(panicMsgs, result.panicMsg)
+					continue
+				}
+				for _, f := range result.findings {
+					if doc.IsLineSuppressed(f.Line, ar.rule.ID) {
+						continue
+					}
+					findings = append(findings, f)
+				}
+			}
+		}
 	}
 
 	// CHECK_PANIC warnings are net-new ordered work under parallelism: sort them
@@ -159,17 +212,27 @@ func (e *Engine) runCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 	return findings
 }
 
-// evalOneDoc evaluates every active rule against a single document, applying the
+// evalOneDoc evaluates the phase-1 rules against a single document, applying the
 // cache (if present) and per-line suppression. It returns the doc's findings and
 // any CHECK_PANIC messages; it appends to no shared engine state, so it is safe
 // to call from many goroutines concurrently (the store and index cache it
-// touches are each independently synchronized).
-func (e *Engine) evalOneDoc(doc *Document, active []activeRule, fsys fs.FS, scannedPaths []string, indexCache map[string]any, indexMu *sync.Mutex, store *cache.Store, ruleHashes []string) docResult {
+// touches are each independently synchronized). It also extracts the doc's facts
+// (consumed later by the phase-2 pass), which is why it runs for every doc even
+// when this doc matches no phase-1 rule.
+func (e *Engine) evalOneDoc(doc *Document, phase1 []activeRule, fsys fs.FS, scannedPaths []string, indexCache map[string]any, indexMu *sync.Mutex, store *cache.Store, ruleHashes []string) docResult {
 	// Foreign-root docs contribute to scannedPaths for link resolution but are
 	// never evaluated as lint subjects.
 	if e.isForeignDoc(doc.Path) {
 		return docResult{}
 	}
+
+	// Extract this doc's facts once, before the cache check, so the phase-2 pass
+	// always sees them — even when phase-1 findings are served from a warm cache
+	// hit below. Extraction is parallelized here (one goroutine owns this doc, so
+	// writing doc.Facts needs no synchronization) and shares the content-hash
+	// point with U7's future factsHash. U7 persists facts and restores them from
+	// the entry on a hit, at which point this line becomes a hit-path skip.
+	doc.Facts = ExtractFacts(doc)
 
 	// Cache check (if store present).
 	var combined string
@@ -189,17 +252,11 @@ func (e *Engine) evalOneDoc(doc *Document, active []activeRule, fsys fs.FS, scan
 		}
 	}
 
-	// Cache miss or no store — extract this doc's facts once (phase 1) so every
-	// rule below sees the same links/tags/pin, then evaluate all active rules.
-	// Extraction runs here, in the worker, so it is parallelized and shares the
-	// content-hash point with U7's future factsHash. Each doc is owned by one
-	// goroutine, so writing doc.Facts needs no synchronization.
-	doc.Facts = ExtractFacts(doc)
-
+	// Cache miss or no store — evaluate the phase-1 rules against this doc.
 	var res docResult
 	var docFindings []types.Finding
 	hadPanic := false
-	for _, ar := range active {
+	for _, ar := range phase1 {
 		if !Match(ar.rule.On, doc.Path, doc.Tags) {
 			continue
 		}
@@ -339,9 +396,16 @@ func (e *Engine) evalDoc(doc *Document, ar activeRule, fsys fs.FS, scannedPaths 
 	return result
 }
 
-// sortFindings sorts by file_path → rule_id → line.
+// sortFindings sorts by file_path → rule_id → line. The sort is STABLE: several
+// findings can share all three keys (e.g. two non-canonical wikilinks on one
+// line — the link checks set no column), and each such tie group is a
+// contiguous, source-ordered block in the pre-sort slice (one rule evaluated
+// over one doc). A stable sort pins the tie order to that source order, so
+// output is deterministic no matter how phase 1 (parallel) and phase 2
+// (separate pass) arrange the blocks globally. An unstable sort broke these ties
+// differently once the two-phase split moved phase-2 findings after phase-1.
 func sortFindings(findings []types.Finding) {
-	sort.Slice(findings, func(i, j int) bool {
+	sort.SliceStable(findings, func(i, j int) bool {
 		if findings[i].FilePath != findings[j].FilePath {
 			return findings[i].FilePath < findings[j].FilePath
 		}

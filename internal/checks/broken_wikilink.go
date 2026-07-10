@@ -11,7 +11,14 @@ import (
 var inlineCodeRe = regexp.MustCompile("`[^`]+`")
 
 func brokenWikilinkCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
-	if doc.Body == "" {
+	// Phase-2 consumer: the body's links (fenced/inline-code excluded, target
+	// normalized) come from the shared phase-1 facts, so every link-family check
+	// agrees on which links exist. facts.Links is broken_wikilink's own exact
+	// link set (pinned byte-for-byte by checks/facts_parity_test), so iterating
+	// it — skip empty target, skip-prefixes, then classify — is identical to the
+	// former per-line scan, line for line.
+	facts := docFacts(doc, params)
+	if len(facts.Links) == 0 {
 		return nil
 	}
 
@@ -26,74 +33,23 @@ func brokenWikilinkCheck(doc *engine.Document, params map[string]any) []engine.R
 		scopeIndex = cachedGlobIndex(params, scope, paths)
 	}
 
-	lines := strings.Split(doc.Body, "\n")
 	var out []engine.RawFinding
-	inFence := false
-	var fenceMarker string
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		if m := fencedOpenRe.FindStringSubmatch(line); m != nil {
-			marker := string(m[1][0])
-			count := len(m[1])
-			if !inFence {
-				inFence = true
-				fenceMarker = strings.Repeat(marker, count)
-			} else if strings.HasPrefix(trimmed, fenceMarker) && marker == string(fenceMarker[0]) {
-				inFence = false
-				fenceMarker = ""
-			}
+	for _, lf := range facts.Links {
+		if lf.Target == "" {
 			continue
 		}
-
-		if inFence {
+		if shouldSkip(lf.Target, skipPrefixes) {
 			continue
 		}
-
-		// Byte prefilter (gate ⊆ regex prerequisite): wikilinkRe = `\[\[...\]\]`
-		// cannot match without a '['. It runs on `stripped` (inline code removed),
-		// but stripping only deletes bytes, so stripped-contains-'[' implies
-		// line-contains-'['; gating on the raw line is therefore a safe superset
-		// that never skips a line the regex would match. Placed AFTER fence-state
-		// handling so fence open/close lines (no '[') still toggle the state
-		// machine. SIMD IndexByte replaces the inline-code strip + wikilink scan.
-		if strings.IndexByte(line, '[') == -1 {
-			continue
-		}
-
-		stripped := inlineCodeRe.ReplaceAllString(line, "")
-		matches := wikilinkRe.FindAllStringSubmatch(stripped, -1)
-		for _, match := range matches {
-			target := strings.TrimSpace(match[1])
-			if target == "" {
-				continue
-			}
-
-			if idx := strings.IndexByte(target, '#'); idx != -1 {
-				target = target[:idx]
-				if target == "" {
-					continue
-				}
-			}
-
-			target = strings.TrimRight(target, "\\")
-			target = strings.TrimRight(target, "/")
-
-			if shouldSkip(target, skipPrefixes) {
-				continue
-			}
-
-			findingType := classifyWikilink(target, fullIndex, scopeIndex)
-			if findingType != "" {
-				out = append(out, engine.RawFinding{
-					Line: doc.BodyOffset + i + 1,
-					TemplateData: map[string]string{
-						"Target": target,
-						"Type":   findingType,
-					},
-				})
-			}
+		findingType := classifyWikilink(lf.Target, fullIndex, scopeIndex)
+		if findingType != "" {
+			out = append(out, engine.RawFinding{
+				Line: lf.Line,
+				TemplateData: map[string]string{
+					"Target": lf.Target,
+					"Type":   findingType,
+				},
+			})
 		}
 	}
 	return out

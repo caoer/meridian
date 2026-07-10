@@ -18,7 +18,12 @@ import (
 //
 // Report-only by design: enable at severity=warn. Mirrors brokenWikilinkCheck.
 func ambiguousWikilinkCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
-	if doc.Body == "" {
+	// Phase-2 consumer: same shared link set as broken_wikilink (facts.Links),
+	// with the same normalization already applied. Iterating it — skip empty
+	// target, skip-prefixes, then the path-qualified and basename-collision
+	// tests — is line-for-line identical to the former per-line scan.
+	facts := docFacts(doc, params)
+	if len(facts.Links) == 0 {
 		return nil
 	}
 
@@ -28,69 +33,28 @@ func ambiguousWikilinkCheck(doc *engine.Document, params map[string]any) []engin
 	}
 	skipPrefixes := toStringSlice(params["skip-prefixes"])
 
-	lines := strings.Split(doc.Body, "\n")
 	var out []engine.RawFinding
-	inFence := false
-	var fenceMarker string
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		if m := fencedOpenRe.FindStringSubmatch(line); m != nil {
-			marker := string(m[1][0])
-			count := len(m[1])
-			if !inFence {
-				inFence = true
-				fenceMarker = strings.Repeat(marker, count)
-			} else if strings.HasPrefix(trimmed, fenceMarker) && marker == string(fenceMarker[0]) {
-				inFence = false
-				fenceMarker = ""
-			}
+	for _, lf := range facts.Links {
+		if lf.Target == "" {
 			continue
 		}
-
-		if inFence {
+		if shouldSkip(lf.Target, skipPrefixes) {
 			continue
 		}
-
-		stripped := inlineCodeRe.ReplaceAllString(line, "")
-		matches := wikilinkRe.FindAllStringSubmatch(stripped, -1)
-		for _, match := range matches {
-			target := strings.TrimSpace(match[1])
-			if target == "" {
-				continue
-			}
-
-			if idx := strings.IndexByte(target, '#'); idx != -1 {
-				target = target[:idx]
-				if target == "" {
-					continue
-				}
-			}
-
-			target = strings.TrimRight(target, "\\")
-			target = strings.TrimRight(target, "/")
-
-			if shouldSkip(target, skipPrefixes) {
-				continue
-			}
-
-			// Path-qualified links resolve by full path, not basename — disambiguated.
-			if strings.Contains(target, "/") {
-				continue
-			}
-
-			paths := index[strings.ToLower(target)]
-			if len(paths) > 1 {
-				out = append(out, engine.RawFinding{
-					Line: doc.BodyOffset + i + 1,
-					TemplateData: map[string]string{
-						"Target": target,
-						"Count":  strconv.Itoa(len(paths)),
-						"Paths":  strings.Join(paths, ", "),
-					},
-				})
-			}
+		// Path-qualified links resolve by full path, not basename — disambiguated.
+		if strings.Contains(lf.Target, "/") {
+			continue
+		}
+		paths := index[strings.ToLower(lf.Target)]
+		if len(paths) > 1 {
+			out = append(out, engine.RawFinding{
+				Line: lf.Line,
+				TemplateData: map[string]string{
+					"Target": lf.Target,
+					"Count":  strconv.Itoa(len(paths)),
+					"Paths":  strings.Join(paths, ", "),
+				},
+			})
 		}
 	}
 	return out

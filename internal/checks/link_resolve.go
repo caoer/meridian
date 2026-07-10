@@ -161,6 +161,19 @@ func isForeignPath(path string, foreignRoots []string) bool {
 	return false
 }
 
+// docFacts returns the phase-1 facts for doc: the engine-injected __facts on a
+// full/scoped engine run, or a fresh extraction when a caller omits it (direct
+// check-call tests, and any path that did not pre-extract). Both branches yield
+// the identical set — the engine injects exactly engine.ExtractFacts(doc) — so a
+// fact-consuming check behaves the same whether or not __facts was primed. That
+// equivalence is what keeps the existing per-check test suites unchanged.
+func docFacts(doc *engine.Document, params map[string]any) engine.Facts {
+	if f, ok := params["__facts"].(engine.Facts); ok {
+		return f
+	}
+	return engine.ExtractFacts(doc)
+}
+
 // toStringSlice converts []any, []string, or a bare string (from YAML) to []string.
 // A scalar string (e.g. `foreign-touched: cos` without brackets) becomes a single-element slice.
 func toStringSlice(v any) []string {

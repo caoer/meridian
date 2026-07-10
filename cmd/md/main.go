@@ -167,6 +167,9 @@ func main() {
 		eng.RegisterCheck(name, fn)
 		registeredChecks[name] = true
 	}
+	// Phase-2 checks (link family; U6 adds effect-pin) run over per-run snapshots
+	// and are never cached — see checks.Phase2 / engine.MarkPhase2.
+	eng.MarkPhase2(checks.Phase2...)
 
 	// Build search function for help — calls search logic directly
 	searchFn := func(query string) cli.HelpSearchData {
@@ -603,6 +606,7 @@ func skillTreeCheck(dir string) *cli.Response {
 	for name, fn := range checks.All {
 		eng.RegisterCheck(name, fn)
 	}
+	eng.MarkPhase2(checks.Phase2...)
 
 	start := time.Now()
 	findings := eng.Run(os.DirFS(dir), packRules)
