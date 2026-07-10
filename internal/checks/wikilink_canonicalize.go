@@ -52,6 +52,17 @@ func wikilinkCanonicalizeCheck(doc *engine.Document, params map[string]any) []en
 			continue
 		}
 
+		// Byte prefilter (gate ⊆ regex prerequisite): re = WikilinkInnerRe =
+		// `\[\[([^\[\]]+)\]\]` cannot match without a '['. It runs on `stripped`
+		// (inline code removed), but stripping only deletes bytes, so
+		// stripped-contains-'[' implies line-contains-'['; gating on the raw line
+		// never skips a line the regex would match. Placed AFTER fence-state
+		// handling so fence open/close lines (no '[') still toggle the state
+		// machine. SIMD IndexByte replaces the inline-code strip + wikilink scan.
+		if strings.IndexByte(line, '[') == -1 {
+			continue
+		}
+
 		// Strip inline code before scanning for wikilinks.
 		stripped := inlineCodeRe.ReplaceAllString(line, "")
 		matches := re.FindAllStringSubmatch(stripped, -1)

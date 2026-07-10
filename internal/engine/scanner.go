@@ -45,6 +45,17 @@ func parseInlineSuppress(body string, bodyOffset int) (map[int]map[string]bool, 
 	var fileIgnores []string
 
 	for i, line := range strings.Split(body, "\n") {
+		// Byte prefilter (gate ⊆ regex prerequisite): all 6 directive regexes
+		// below anchor on either `<!--` (the three HTML forms) or `%%` (the three
+		// Obsidian forms). Every match therefore requires a '<' or a '%' in the
+		// line, so a line containing neither cannot match any of them — skipping
+		// it is exact, not a heuristic. SIMD strings.IndexByte replaces 6 regex
+		// scans on the overwhelming majority of prose lines. No state machine
+		// precedes this loop, so skipping a line never desyncs later lines.
+		if strings.IndexByte(line, '<') == -1 && strings.IndexByte(line, '%') == -1 {
+			continue
+		}
+
 		// Legacy md-disable-next-line — always next-line.
 		var legacyMatches [][]string
 		legacyMatches = append(legacyMatches, inlineSuppressHTMLRe.FindAllStringSubmatch(line, -1)...)

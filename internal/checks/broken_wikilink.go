@@ -51,6 +51,17 @@ func brokenWikilinkCheck(doc *engine.Document, params map[string]any) []engine.R
 			continue
 		}
 
+		// Byte prefilter (gate ⊆ regex prerequisite): wikilinkRe = `\[\[...\]\]`
+		// cannot match without a '['. It runs on `stripped` (inline code removed),
+		// but stripping only deletes bytes, so stripped-contains-'[' implies
+		// line-contains-'['; gating on the raw line is therefore a safe superset
+		// that never skips a line the regex would match. Placed AFTER fence-state
+		// handling so fence open/close lines (no '[') still toggle the state
+		// machine. SIMD IndexByte replaces the inline-code strip + wikilink scan.
+		if strings.IndexByte(line, '[') == -1 {
+			continue
+		}
+
 		stripped := inlineCodeRe.ReplaceAllString(line, "")
 		matches := wikilinkRe.FindAllStringSubmatch(stripped, -1)
 		for _, match := range matches {
