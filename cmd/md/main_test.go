@@ -319,6 +319,7 @@ func setupTempDir(t *testing.T, files map[string]string) string {
 }
 
 func TestCheckHandler_CacheStats_FirstRun(t *testing.T) {
+	hermeticCacheDir(t)
 	dir := setupTempDir(t, map[string]string{
 		"a.md": "---\ntitle: A\n---\nContent A",
 		"b.md": "---\ntitle: B\n---\nContent B",
@@ -388,6 +389,7 @@ func TestCheckHandler_CacheStats_ZeroFiles(t *testing.T) {
 }
 
 func TestCheckHandler_Strict(t *testing.T) {
+	hermeticCacheDir(t)
 	dir := setupTempDir(t, map[string]string{
 		"a.md": "---\ntitle: A\n---\nContent A",
 	})
