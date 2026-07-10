@@ -9,6 +9,7 @@ import (
 
 	"github.com/caoer/meridian/internal/cache"
 	"github.com/caoer/meridian/internal/rules"
+	"github.com/caoer/meridian/internal/types"
 )
 
 // writeCorpus writes n markdown docs (each with a bodyKB-sized body plus a couple
@@ -97,4 +98,58 @@ func TestRunCached_NoDocBytes_Ratio(t *testing.T) {
 			ratio, cacheBytes, corpusBytes)
 	}
 	t.Logf("no-doc-bytes: cache %d bytes vs corpus %d bytes = %.1f%%", cacheBytes, corpusBytes, ratio*100)
+}
+
+// TestRunCached_DeleteTarget_PersistentStoreReopen is U5's INP001 invalidation
+// test taken to its strongest form: the persistent store is SAVED after run 1 and
+// REOPENED for run 2 (a true separate-process boundary). A links to B; B is
+// deleted; A's own bytes never change, so A's phase-1 entry is a persisted cache
+// HIT on run 2 — yet the broken-link finding must still surface, because link
+// resolution is a phase-2 member whose findings are never cached. This is the
+// acceptance test the U7 card deferred to this rebase.
+func TestRunCached_DeleteTarget_PersistentStoreReopen(t *testing.T) {
+	withB := map[string]string{
+		"a.md": "---\n---\nsee [[b]] here",
+		"b.md": "---\n---\nB body",
+	}
+	withoutB := map[string]string{
+		"a.md": "---\n---\nsee [[b]] here", // byte-identical to run-1 a.md
+	}
+	brokenForA := func(findings []types.Finding) bool {
+		for _, f := range findings {
+			if f.FilePath == "a.md" && f.RuleID == "phase2-broken" {
+				return true
+			}
+		}
+		return false
+	}
+
+	dir := t.TempDir()
+	rl := []rules.Rule{phase2Rule()}
+
+	// Run 1 ("process 1"): B present → A resolves → no finding. Persist.
+	s1 := cache.NewStore(dir)
+	if brokenForA(newPhase2Engine().RunCached(makeFS(withB), rl, s1)) {
+		t.Fatal("run 1 (B present): unexpected broken finding for a.md")
+	}
+	if err := s1.Save(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Run 2 ("process 2"): reopen the store from disk, B deleted, A unchanged.
+	s2 := cache.NewStore(dir)
+	r2 := newPhase2Engine().RunCached(makeFS(withoutB), rl, s2)
+	if !brokenForA(r2) {
+		t.Fatal("run 2 (B deleted, store reopened): want a.md broken-link finding — persistent phase-2 verdict served stale")
+	}
+	// The finding recomputed DESPITE a warm phase-1 cache: A's entry must have hit.
+	if s2.Stats().Hits == 0 {
+		t.Fatal("run 2 should have hit A's persisted phase-1 entry (the whole point: phase-2 recomputes over a warm cache)")
+	}
+	// And the persisted entry for A must never hold the phase-2 finding.
+	if cached, ok := s2.CachedFindings("a.md"); ok {
+		if brokenForA(cached) {
+			t.Fatal("phase-2 broken-link finding leaked into A's persisted cache entry")
+		}
+	}
 }

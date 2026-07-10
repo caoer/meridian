@@ -181,6 +181,24 @@ func (s *Store) Put(k Key, contentHash string, facts any, findings []types.Findi
 	sh.dirty = true
 }
 
+// CachedFindings returns the phase-1 findings persisted for a path, ignoring the
+// validity (stat/hash) checks Lookup applies — a raw entry read for inspection
+// tooling (md cache stats / MD_CACHE_VERIFY in U8) and for tests that assert the
+// persistence boundary (no phase-2 check's findings may ever be stored). ok is
+// false when no entry exists for the path.
+func (s *Store) CachedFindings(path string) (findings []types.Finding, ok bool) {
+	i := shardIndex(path)
+	sh := &s.shards[i]
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	s.ensureLoaded(sh, i)
+	e, ok := sh.entries[path]
+	if !ok {
+		return nil, false
+	}
+	return e.Findings, true
+}
+
 // Prune drops every entry whose path is not in keep — the vanished documents. The
 // caller must pass the FULL scanned path universe (only valid after a complete
 // scan); a scoped run must not call Prune or it would evict live entries. Pruned
