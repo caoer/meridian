@@ -7,32 +7,63 @@
 //	location: [<path>, …]   repo-relative paths (dir → tree, file → blob)
 //	checksum: <sha> | […]   git object id per location, paired by index
 //
-// Four checks share the pin parser and a per-process git memo:
+// Five checks share the pin parser and a per-RUN git snapshot (U6):
 //
-//	effect-pin-resolves      commit exists in the repo (cat-file -t == commit)
-//	effect-pin-on-origin     commit is on origin/<branch> (branch -r --contains);
-//	                         self-pins (pinned repo == scanned repo) also pass
-//	                         when the commit is an ancestor of HEAD — the pin
-//	                         and its content travel in the same push
-//	effect-checksum-reproduces  rev-parse <commit>:<location> == checksum —
-//	                         the ONLY sanctioned method (git-archive|shasum is
+//	effect-pin-resolves      commit exists in the repo (cat-file type == commit)
+//	effect-pin-on-origin     commit is on origin/<branch> (ancestor of the origin
+//	                         tip); self-pins (pinned repo == scanned repo) also
+//	                         pass when the commit is an ancestor of HEAD — the
+//	                         pin and its content travel in the same push
+//	effect-checksum-reproduces  <commit>:<location> object id == checksum — the
+//	                         ONLY sanctioned method (git-archive|shasum is
 //	                         git-version-dependent; working-tree find|shasum is
 //	                         contaminated by .DS_Store/untracked/order)
 //	effect-pin-stale         origin/<branch> advanced past the pin AND the
 //	                         location content drifted → the pin is stale
+//	effect-unpinned          a type/effect page carries no commit pin (pure —
+//	                         phase-1, no git; not in registry.go Phase2)
 //
-// Pages without any pin fields are not pinned artifacts — no findings.
-// An absent repo checkout is a machine state, not pin rot ("absent repos are
-// a state, not a failure") — skipped by default; set absent-repo: report on
-// a rule to surface it.
+// PHASE-2 CLASSIFICATION (U6, plan §2/§4/§7). The verdict of the four git
+// checks depends on EXTERNAL STATE (git origin refs, $CCC_LLM_WIKI_REPOS_ROOT),
+// not on the document bytes — so they are phase-2: recomputed every run against
+// a per-run snapshot and NEVER written to the U7 persistent cache. Caching them
+// by document bytes would serve stale verdicts when origin moves under an
+// unchanged page (the Ruff INP001 class, reintroduced for git). effect-unpinned
+// is a pure function of the page's own frontmatter, so it stays phase-1.
+//
+// PER-RUN SNAPSHOT + BATCHING (U6). Every git query that can be batched is:
+// existence, checksum reproduction, origin-ref resolution, and stale-drift
+// object ids are all answered by ONE `git cat-file --batch-check` per repo,
+// fed distinct object names on stdin (request/response, no positional desync —
+// a single `git rev-parse origin/<b> HEAD` was rejected: it echoes
+// --end-of-options and desyncs its positional output on the first missing ref).
+// Only containment/ancestry has no batch form: `merge-base --is-ancestor` runs
+// once per DISTINCT (commit, ref) per repo, memoized. Spawn target is therefore
+// O(repos + distinct commits), asserted under the parallel engine so the
+// snapshot can never become a thundering herd (built ONCE, serially, in the
+// phase-2 pass — never populated by a race of GOMAXPROCS workers).
+//
+// SECURITY. Pin fields are attacker-influenced frontmatter. Before any field
+// reaches git argv or batch stdin it is validated: no control chars/newlines,
+// no leading '-' (option injection), branch restricted to [A-Za-z0-9._/-]+ with
+// no "..". A field that fails is reported as a malformed pin and NEVER written
+// to a git command. See (effectPin).safety.
+//
+// Pages without any pin fields are not pinned artifacts — no findings. An absent
+// repo checkout is a machine state, not pin rot ("absent repos are a state, not
+// a failure") — skipped by default; set absent-repo: report on a rule to surface
+// it. Batch-infra failure (git hang/missing) surfaces as an engine warning, not
+// a finding (plan Decision 8).
 package checks
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -53,10 +84,9 @@ type effectPin struct {
 }
 
 // parsePin extracts pin fields. The commit IS the pin: present=false when the
-// page carries no commit — deliberate tombstones (status: retired, source
-// lost, no commit fabricated) are not malformed pins, they are unpinned.
-// problem is non-empty when a pin is present but malformed (missing fields,
-// location/checksum count mismatch).
+// page carries no commit — deliberate tombstones (status: retired, source lost,
+// no commit fabricated) are not malformed pins, they are unpinned. problem is
+// non-empty when a pin is present but malformed (missing fields, count mismatch).
 func parsePin(doc *engine.Document) (pin effectPin, present bool, problem string) {
 	fm := doc.Frontmatter
 	str := func(key string) string {
@@ -92,30 +122,115 @@ func parsePin(doc *engine.Document) (pin effectPin, present bool, problem string
 	if pin.Commit == "" {
 		return pin, false, ""
 	}
-	present = true
+	return pin, true, pin.completeness()
+}
 
+// effectPinFromFields adapts an engine.PinFields fact (extracted once at scan,
+// injected as __all_pins) into the checks-side effectPin. Only present pins
+// (commit != "") ever become PinFields, so no present flag is needed.
+func effectPinFromFields(p engine.PinFields) effectPin {
+	return effectPin{
+		Repo:      p.Repo,
+		Branch:    p.Branch,
+		Commit:    p.Commit,
+		Locations: p.Locations,
+		Checksums: p.Checksums,
+	}
+}
+
+// completeness reports a malformed-pin problem for a present pin (missing
+// fields or a location/checksum count mismatch), or "" when well-formed.
+func (p effectPin) completeness() string {
 	var missing []string
 	for _, f := range []struct{ name, val string }{
-		{"repo", pin.Repo}, {"branch", pin.Branch},
+		{"repo", p.Repo}, {"branch", p.Branch},
 	} {
 		if f.val == "" {
 			missing = append(missing, f.name)
 		}
 	}
-	if len(pin.Locations) == 0 {
+	if len(p.Locations) == 0 {
 		missing = append(missing, "location")
 	}
-	if len(pin.Checksums) == 0 {
+	if len(p.Checksums) == 0 {
 		missing = append(missing, "checksum")
 	}
 	if len(missing) > 0 {
-		return pin, true, "incomplete pin: missing " + strings.Join(missing, ", ")
+		return "incomplete pin: missing " + strings.Join(missing, ", ")
 	}
-	if len(pin.Locations) != len(pin.Checksums) {
-		return pin, true, fmt.Sprintf("pin has %d location(s) but %d checksum(s) — must pair by index",
-			len(pin.Locations), len(pin.Checksums))
+	if len(p.Locations) != len(p.Checksums) {
+		return fmt.Sprintf("pin has %d location(s) but %d checksum(s) — must pair by index",
+			len(p.Locations), len(p.Checksums))
 	}
-	return pin, true, ""
+	return ""
+}
+
+// branchRe is the allowed charset for a branch ref (before the "origin/" prefix).
+var branchRe = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+
+// hasControl reports whether s contains any ASCII control char or DEL (includes
+// newline/CR — the batch-stdin injection vector).
+func hasControl(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// safety validates that every pin field is safe to place on a git argv or batch
+// stdin line. Returns a non-empty problem string for the first unsafe field, ""
+// when all fields are safe. This runs BEFORE any field reaches git (plan §7
+// security amendment): control chars/newlines and leading '-' are rejected on
+// argv/stdin-bearing fields; branch additionally must be a plain ref name.
+func (p effectPin) safety() string {
+	for _, f := range []struct{ name, val string }{
+		{"repo", p.Repo}, {"branch", p.Branch}, {"commit", p.Commit},
+	} {
+		if s := checkSafeField(f.name, f.val); s != "" {
+			return s
+		}
+	}
+	for _, loc := range p.Locations {
+		if s := checkSafeField("location", loc); s != "" {
+			return s
+		}
+	}
+	for _, sum := range p.Checksums {
+		if hasControl(sum) {
+			return "checksum contains control characters"
+		}
+	}
+	if !branchRe.MatchString(p.Branch) || strings.Contains(p.Branch, "..") {
+		return fmt.Sprintf("branch %q is not a valid ref name (allowed: letters, digits, . _ / -; no \"..\")", p.Branch)
+	}
+	return ""
+}
+
+// checkSafeField rejects control chars/newlines and a leading '-' (option
+// injection) on a field bound for git argv or batch stdin.
+func checkSafeField(name, val string) string {
+	if hasControl(val) {
+		return name + " contains control characters or newlines"
+	}
+	if strings.HasPrefix(val, "-") {
+		return name + " has a leading '-' (git option-injection risk)"
+	}
+	return ""
+}
+
+// queries returns the batch-check stdin object names a well-formed pin needs:
+// commit existence, origin ref resolution, and per-location checksum + stale
+// drift object ids. Callers MUST have validated the pin (safety) first.
+func (p effectPin) queries() []string {
+	ob := "origin/" + p.Branch
+	qs := []string{p.Commit, ob}
+	for _, loc := range p.Locations {
+		tl := strings.TrimSuffix(loc, "/")
+		qs = append(qs, p.Commit+":"+tl, ob+":"+tl)
+	}
+	return qs
 }
 
 // resolveRepoDir resolves a repo slug at $CCC_LLM_WIKI_REPOS_ROOT/<slug>.
@@ -139,55 +254,6 @@ func reportAbsentRepo(params map[string]any) bool {
 	return v == "report"
 }
 
-// gitMemo caches git outputs for the life of one md process. Every cached
-// query is content-addressed (repo dir + full argv), so staleness within a
-// single check run is impossible.
-var gitMemo sync.Map
-
-// gitOut runs git -C <dir> <args…> with a 5s timeout, memoized.
-func gitOut(dir string, args ...string) (string, error) {
-	key := dir + "\x00" + strings.Join(args, "\x00")
-	if v, ok := gitMemo.Load(key); ok {
-		c := v.(gitResult)
-		return c.out, c.err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	full := append([]string{"-C", dir}, args...)
-	out, err := exec.CommandContext(ctx, "git", full...).Output()
-	res := gitResult{out: strings.TrimSpace(string(out)), err: err}
-	gitMemo.Store(key, res)
-	return res.out, res.err
-}
-
-type gitResult struct {
-	out string
-	err error
-}
-
-// selfPin reports whether the pinned repo IS the repo being scanned — an
-// effect page pinning colocated content in its own repo. For self-pins git's
-// ancestor closure substitutes for origin-containment: any push that carries
-// the pin page necessarily carries every ancestor commit, so a pinned commit
-// reachable from HEAD can never be the pilot-defect class (a pin other clones
-// cannot resolve). Requires __scan_root (absent on pure-VFS runs → treated as
-// not-self, keeping the strict origin predicate).
-func selfPin(repoDir string, params map[string]any) bool {
-	scanRoot, _ := params["__scan_root"].(string)
-	if scanRoot == "" {
-		return false
-	}
-	a, errA := gitOut(repoDir, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	b, errB := gitOut(scanRoot, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if errA != nil || errB != nil || a == "" {
-		return false
-	}
-	// Repos-root slugs are often symlinks to the working checkout.
-	ra, errA := filepath.EvalSymlinks(a)
-	rb, errB := filepath.EvalSymlinks(b)
-	return errA == nil && errB == nil && ra == rb
-}
-
 // pinFinding builds a whole-file finding with the shared template data.
 func pinFinding(pin effectPin, reason string) engine.RawFinding {
 	return engine.RawFinding{
@@ -201,109 +267,421 @@ func pinFinding(pin effectPin, reason string) engine.RawFinding {
 	}
 }
 
-// pinPreamble handles the shared skip/malformed/absent-repo ladder.
-// ok=true → repoDir is usable and the pin is well-formed. Malformed pins are
-// reported only when reportProblems is set (effect-pin-resolves) so the four
-// rules never quadruple-report one bad pin.
-func pinPreamble(doc *engine.Document, params map[string]any, reportProblems bool) (pin effectPin, repoDir string, findings []engine.RawFinding, ok bool) {
+// ---------------------------------------------------------------------------
+// git execution seam (injectable for spawn-count assertions)
+// ---------------------------------------------------------------------------
+
+// gitRunner runs a single git command in dir with optional stdin, returning
+// stdout. Injectable so tests can count subprocess spawns (the O(repos +
+// distinct commits) assertion) under the parallel engine.
+type gitRunner interface {
+	run(dir string, stdin []byte, args ...string) ([]byte, error)
+}
+
+// execGitRunner is the production runner: git -C <dir> <args…> with a 5s
+// CommandContext timeout (unchanged from the pre-U6 per-query path).
+type execGitRunner struct{}
+
+func (execGitRunner) run(dir string, stdin []byte, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	full := append([]string{"-C", dir}, args...)
+	cmd := exec.CommandContext(ctx, "git", full...)
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
+	return cmd.Output()
+}
+
+// defaultGitRunner is the process-wide runner; tests swap it to count spawns.
+var defaultGitRunner gitRunner = execGitRunner{}
+
+// runnerFrom picks the injected runner (focused tests) or the process default.
+func runnerFrom(params map[string]any) gitRunner {
+	if gr, ok := params["__git_runner"].(gitRunner); ok && gr != nil {
+		return gr
+	}
+	return defaultGitRunner
+}
+
+// ---------------------------------------------------------------------------
+// per-run pin resolver (the snapshot + batch + memo)
+// ---------------------------------------------------------------------------
+
+// objInfo is one line of `git cat-file --batch-check` output: the resolved
+// object id + type, or exists=false for a "missing" line.
+type objInfo struct {
+	sha    string
+	typ    string
+	exists bool
+}
+
+// repoData holds one repo's resolved batch results, accumulated across ensure
+// calls. objs is keyed by the exact object name fed on stdin.
+type repoData struct {
+	dir     string
+	present bool
+	objs    map[string]objInfo
+}
+
+// pinResolver is the per-run external-state snapshot. It batches every
+// object-existence/checksum/ref query into one cat-file per repo and memoizes
+// the un-batchable ancestry queries per (commit, ref). Built ONCE per run
+// (serially, in the phase-2 pass) so it is never a concurrent populate race.
+// Correctness never rests on the memo: it only dedups identical git queries
+// within a single run's fixed snapshot.
+type pinResolver struct {
+	runner   gitRunner
+	repos    map[string]*repoData // slug → resolved data
+	ancestor map[string]bool      // "slug\x00commit\x00ref" → is-ancestor(commit, ref)
+	self     map[string]bool      // slug → pinned repo IS the scanned repo
+	// scanRoot git-common-dir, resolved once for self-pin detection.
+	scanCommon     string
+	scanCommonDone bool
+	warn           func(msg string) // batch-infra failure → engine warning (Decision 8)
+}
+
+func newPinResolver(params map[string]any) *pinResolver {
+	r := &pinResolver{
+		runner:   runnerFrom(params),
+		repos:    map[string]*repoData{},
+		ancestor: map[string]bool{},
+		self:     map[string]bool{},
+	}
+	if w, ok := params["__warn"].(func(string)); ok {
+		r.warn = w
+	}
+	return r
+}
+
+// resolverFor returns the run-scoped resolver, building it once from __all_pins
+// (the corpus snapshot: one cat-file batch per repo, all pins at once) and
+// stashing it in the run's __index_cache so every check and every doc share it.
+// Absent an index cache (direct-call tests), an ephemeral resolver is returned
+// and populated on demand. The engine runs the phase-2 pass serially, so no
+// mutex is needed here; __index_cache_mu is honored defensively if present.
+func resolverFor(params map[string]any) *pinResolver {
+	ic, _ := params["__index_cache"].(map[string]any)
+	if ic == nil {
+		r := newPinResolver(params)
+		r.buildFromParams(params)
+		return r
+	}
+	if mu, ok := params["__index_cache_mu"].(*sync.Mutex); ok && mu != nil {
+		mu.Lock()
+		defer mu.Unlock()
+	}
+	if r, ok := ic["__pin_resolver"].(*pinResolver); ok {
+		return r
+	}
+	r := newPinResolver(params)
+	r.buildFromParams(params)
+	ic["__pin_resolver"] = r
+	return r
+}
+
+// buildFromParams batches every well-formed, safe pin in __all_pins, grouped so
+// exactly one cat-file runs per repo. Malformed/unsafe pins are skipped here
+// (each is reported by its own check's preamble) and never reach git.
+func (r *pinResolver) buildFromParams(params map[string]any) {
+	pins, _ := params["__all_pins"].([]engine.PinFields)
+	if len(pins) == 0 {
+		return
+	}
+	byRepo := map[string][]string{}
+	seen := map[string]map[string]bool{}
+	for _, pf := range pins {
+		p := effectPinFromFields(pf)
+		if p.completeness() != "" || p.safety() != "" {
+			continue
+		}
+		rd := r.repo(p.Repo)
+		if !rd.present {
+			continue
+		}
+		if seen[p.Repo] == nil {
+			seen[p.Repo] = map[string]bool{}
+		}
+		for _, q := range p.queries() {
+			if !seen[p.Repo][q] {
+				seen[p.Repo][q] = true
+				byRepo[p.Repo] = append(byRepo[p.Repo], q)
+			}
+		}
+	}
+	for slug, qs := range byRepo {
+		r.batch(slug, qs)
+	}
+}
+
+// repo resolves (once) and returns the repo's data. present=false for an absent
+// checkout (the absent-repo ladder handles the finding).
+func (r *pinResolver) repo(slug string) *repoData {
+	if rd, ok := r.repos[slug]; ok {
+		return rd
+	}
+	dir, present := resolveRepoDir(slug)
+	rd := &repoData{dir: dir, present: present, objs: map[string]objInfo{}}
+	r.repos[slug] = rd
+	return rd
+}
+
+// ensure guarantees a single pin's batch queries are resolved, running at most
+// one cat-file for any not-yet-batched object names (a no-op once buildFromParams
+// has covered the corpus). Used by the direct-call / scoped-run path.
+func (r *pinResolver) ensure(p effectPin) {
+	rd := r.repo(p.Repo)
+	if !rd.present {
+		return
+	}
+	var missing []string
+	for _, q := range p.queries() {
+		if _, ok := rd.objs[q]; !ok {
+			missing = append(missing, q)
+		}
+	}
+	if len(missing) > 0 {
+		r.batch(p.Repo, missing)
+	}
+}
+
+// isObjectName reports whether tok is a bare git object id (sha1/sha256 hex) —
+// the shape of a resolved cat-file line's first field, distinguishing it from a
+// "<input> missing" line whose input may itself contain spaces.
+func isObjectName(tok string) bool {
+	if len(tok) != 40 && len(tok) != 64 {
+		return false
+	}
+	for i := 0; i < len(tok); i++ {
+		c := tok[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// batch runs one `git cat-file --batch-check` for the given object names and
+// records each result positionally (output is 1:1 with input order). On infra
+// failure the queries are left unresolved (treated as missing) and an engine
+// warning is emitted — absent/broken batch state is a state, not a finding.
+func (r *pinResolver) batch(slug string, queries []string) {
+	rd := r.repo(slug)
+	if !rd.present || len(queries) == 0 {
+		return
+	}
+	stdin := []byte(strings.Join(queries, "\n") + "\n")
+	out, err := r.runner.run(rd.dir, stdin, "cat-file", "--batch-check")
+	if err != nil {
+		if r.warn != nil {
+			r.warn(fmt.Sprintf("effect-pin: cat-file --batch-check failed in %s: %v — pins unverified this run", slug, err))
+		}
+		// Leave queries unresolved (objInfo zero value = missing); the checks
+		// degrade to silence, never to a false finding.
+		return
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	for i, q := range queries {
+		if i >= len(lines) {
+			break
+		}
+		fields := strings.Fields(lines[i])
+		if len(fields) == 3 && isObjectName(fields[0]) {
+			rd.objs[q] = objInfo{sha: fields[0], typ: fields[1], exists: true}
+		} else {
+			rd.objs[q] = objInfo{}
+		}
+	}
+}
+
+// commitExists reports whether the pinned commit resolves to a commit object.
+func (r *pinResolver) commitExists(p effectPin) bool {
+	info := r.repo(p.Repo).objs[p.Commit]
+	return info.exists && info.typ == "commit"
+}
+
+// objID returns the object id an object name resolved to, and whether it exists.
+func (r *pinResolver) objID(slug, name string) (string, bool) {
+	info := r.repo(slug).objs[name]
+	return info.sha, info.exists
+}
+
+// isAncestor reports whether commit is an ancestor of (or equal to) ref, via one
+// memoized `git merge-base --is-ancestor` per distinct (slug, commit, ref).
+// commit is validated (no leading dash) before it reaches argv; ref is either
+// "origin/<validated-branch>" or the literal "HEAD" — neither is attacker-dashed.
+func (r *pinResolver) isAncestor(slug, commit, ref string) bool {
+	key := slug + "\x00" + commit + "\x00" + ref
+	if v, ok := r.ancestor[key]; ok {
+		return v
+	}
+	rd := r.repo(slug)
+	res := false
+	if rd.present {
+		_, err := r.runner.run(rd.dir, nil, "merge-base", "--is-ancestor", commit, ref)
+		res = err == nil
+	}
+	r.ancestor[key] = res
+	return res
+}
+
+// isSelfPin reports whether the pinned repo IS the repo being scanned — an
+// effect page pinning colocated content in its own repo. For self-pins git's
+// ancestor closure substitutes for origin-containment: any push carrying the pin
+// page necessarily carries every ancestor commit. Requires __scan_root (absent
+// on pure-VFS runs → not-self, keeping the strict origin predicate). One
+// git-common-dir spawn per repo (+ one for the scan root, memoized).
+func (r *pinResolver) isSelfPin(slug string, params map[string]any) bool {
+	if v, ok := r.self[slug]; ok {
+		return v
+	}
+	res := r.computeSelfPin(slug, params)
+	r.self[slug] = res
+	return res
+}
+
+func (r *pinResolver) computeSelfPin(slug string, params map[string]any) bool {
+	scanRoot, _ := params["__scan_root"].(string)
+	if scanRoot == "" {
+		return false
+	}
+	rd := r.repo(slug)
+	if !rd.present {
+		return false
+	}
+	if !r.scanCommonDone {
+		r.scanCommon = r.commonDir(scanRoot)
+		r.scanCommonDone = true
+	}
+	if r.scanCommon == "" {
+		return false
+	}
+	repoCommon := r.commonDir(rd.dir)
+	if repoCommon == "" {
+		return false
+	}
+	// Repos-root slugs are often symlinks to the working checkout.
+	ra, errA := filepath.EvalSymlinks(repoCommon)
+	rb, errB := filepath.EvalSymlinks(r.scanCommon)
+	return errA == nil && errB == nil && ra == rb
+}
+
+// commonDir resolves a directory's absolute git common dir; "" on error.
+func (r *pinResolver) commonDir(dir string) string {
+	out, err := r.runner.run(dir, nil, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// ---------------------------------------------------------------------------
+// preamble + the five checks (thin consumers of the resolver)
+// ---------------------------------------------------------------------------
+
+// pinPreamble handles the shared skip/malformed/unsafe/absent-repo ladder and
+// returns the run-scoped resolver with this pin's queries ensured. ok=true → the
+// pin is well-formed, safe, its repo is present, and the resolver is ready.
+// Malformed/unsafe pins are reported only when reportProblems is set
+// (effect-pin-resolves) so the four rules never quadruple-report one bad pin.
+func pinPreamble(doc *engine.Document, params map[string]any, reportProblems bool) (pin effectPin, r *pinResolver, findings []engine.RawFinding, ok bool) {
 	pin, present, problem := parsePin(doc)
 	if !present {
-		return pin, "", nil, false
+		return pin, nil, nil, false
+	}
+	if problem == "" {
+		problem = pin.safety()
 	}
 	if problem != "" {
 		if reportProblems {
-			return pin, "", []engine.RawFinding{pinFinding(pin, problem)}, false
+			return pin, nil, []engine.RawFinding{pinFinding(pin, problem)}, false
 		}
-		return pin, "", nil, false
+		return pin, nil, nil, false
 	}
-	repoDir, found := resolveRepoDir(pin.Repo)
-	if !found {
+	if _, found := resolveRepoDir(pin.Repo); !found {
 		if reportAbsentRepo(params) {
-			return pin, "", []engine.RawFinding{pinFinding(pin,
+			return pin, nil, []engine.RawFinding{pinFinding(pin,
 				fmt.Sprintf("repo %q not present at $%s/%s — pin unverifiable on this machine", pin.Repo, envReposRoot, pin.Repo))}, false
 		}
-		return pin, "", nil, false
+		return pin, nil, nil, false
 	}
-	return pin, repoDir, nil, true
+	r = resolverFor(params)
+	r.ensure(pin)
+	return pin, r, nil, true
 }
 
 // effectPinResolvesCheck: the pinned commit exists in the repo.
 func effectPinResolvesCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
-	pin, repoDir, findings, ok := pinPreamble(doc, params, true)
+	pin, r, findings, ok := pinPreamble(doc, params, true)
 	if !ok {
 		return findings
 	}
-	typ, err := gitOut(repoDir, "cat-file", "-t", pin.Commit)
-	if err != nil || typ != "commit" {
+	if !r.commitExists(pin) {
+		info := r.repo(pin.Repo).objs[pin.Commit]
+		detail := "missing"
+		if info.exists {
+			detail = "object type " + info.typ
+		}
 		return []engine.RawFinding{pinFinding(pin,
-			fmt.Sprintf("commit %s does not resolve in %s (cat-file: %q)", pin.Commit, pin.Repo, typ))}
+			fmt.Sprintf("commit %s does not resolve in %s (%s)", pin.Commit, pin.Repo, detail))}
 	}
 	return nil
 }
 
-// effectPinOnOriginCheck: the pinned commit is on origin/<branch> — a pin
-// that only exists in a local or stale checkout is the pilot-defect class.
+// effectPinOnOriginCheck: the pinned commit is on origin/<branch> — a pin that
+// only exists in a local or stale checkout is the pilot-defect class.
 func effectPinOnOriginCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
-	pin, repoDir, findings, ok := pinPreamble(doc, params, false)
+	pin, r, findings, ok := pinPreamble(doc, params, false)
 	if !ok {
 		return findings
 	}
-	// A commit that doesn't resolve is effect-pin-resolves territory; don't double-report.
-	if typ, err := gitOut(repoDir, "cat-file", "-t", pin.Commit); err != nil || typ != "commit" {
+	// A commit that doesn't resolve is effect-pin-resolves territory.
+	if !r.commitExists(pin) {
 		return nil
 	}
-	out, err := gitOut(repoDir, "branch", "-r", "--contains", pin.Commit)
-	if err != nil {
-		return []engine.RawFinding{pinFinding(pin, "branch -r --contains failed: "+err.Error())}
-	}
-	want := "origin/" + pin.Branch
-	for _, line := range strings.Split(out, "\n") {
-		name := strings.TrimSpace(line)
-		// "origin/HEAD -> origin/main" lines alias the default branch.
-		if arrow := strings.Split(name, "->"); len(arrow) == 2 {
-			name = strings.TrimSpace(arrow[1])
-		}
-		if name == want {
+	originRef := "origin/" + pin.Branch
+	if osha, resolves := r.objID(pin.Repo, originRef); resolves {
+		// The pin IS the origin tip, or an ancestor of it — either way, on origin.
+		// The tip short-circuit spares the merge-base spawn for tip pins.
+		if osha == pin.Commit || r.isAncestor(pin.Repo, pin.Commit, originRef) {
 			return nil
 		}
 	}
 	// Self-pin carve-out (amended 2026-07-09): ancestor-of-HEAD satisfies the
-	// contract — the pin and its content travel in the same push, so the
-	// two-phase push the strict predicate forced was ritual, not safety. A
-	// non-ancestor self-pin (side-branch / dangling / rebased-away commit)
-	// still errors.
-	if selfPin(repoDir, params) {
-		if _, err := gitOut(repoDir, "merge-base", "--is-ancestor", pin.Commit, "HEAD"); err == nil {
+	// contract — the pin and its content travel in the same push. A non-ancestor
+	// self-pin (side-branch / dangling / rebased-away) still errors.
+	if r.isSelfPin(pin.Repo, params) {
+		if r.isAncestor(pin.Repo, pin.Commit, "HEAD") {
 			return nil
 		}
 		return []engine.RawFinding{pinFinding(pin,
-			fmt.Sprintf("self-pin commit %s is neither on %s nor an ancestor of HEAD — side-branch or dangling commit", pin.Commit, want))}
+			fmt.Sprintf("self-pin commit %s is neither on %s nor an ancestor of HEAD — side-branch or dangling commit", pin.Commit, originRef))}
 	}
 	return []engine.RawFinding{pinFinding(pin,
-		fmt.Sprintf("commit %s is not on %s — pin exists only in a local/stale checkout", pin.Commit, want))}
+		fmt.Sprintf("commit %s is not on %s — pin exists only in a local/stale checkout", pin.Commit, originRef))}
 }
 
 // effectChecksumReproducesCheck: per location, the pinned checksum reproduces
-// from the pin alone via git rev-parse <commit>:<location>.
+// from the pin alone via <commit>:<location>'s object id.
 func effectChecksumReproducesCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
-	pin, repoDir, findings, ok := pinPreamble(doc, params, false)
+	pin, r, findings, ok := pinPreamble(doc, params, false)
 	if !ok {
 		return findings
 	}
-	if typ, err := gitOut(repoDir, "cat-file", "-t", pin.Commit); err != nil || typ != "commit" {
+	if !r.commitExists(pin) {
 		return nil // effect-pin-resolves reports this
 	}
 	var out []engine.RawFinding
 	for i, loc := range pin.Locations {
 		want := pin.Checksums[i]
-		got, err := gitOut(repoDir, "rev-parse", pin.Commit+":"+strings.TrimSuffix(loc, "/"))
+		got, exists := r.objID(pin.Repo, pin.Commit+":"+strings.TrimSuffix(loc, "/"))
 		switch {
-		case err != nil:
+		case !exists:
 			out = append(out, pinFinding(pin,
 				fmt.Sprintf("location %q does not exist at %s", loc, pin.Commit)))
 		case got != want:
 			out = append(out, pinFinding(pin,
-				fmt.Sprintf("checksum mismatch at %q: pin %s, rev-parse %s", loc, want, got)))
+				fmt.Sprintf("checksum mismatch at %q: pin %s, object %s", loc, want, got)))
 		}
 	}
 	return out
@@ -313,24 +691,28 @@ func effectChecksumReproducesCheck(doc *engine.Document, params map[string]any) 
 // location's content differs at origin — the pin is stale (content drifted).
 // Divergence (commit not an ancestor) is effect-pin-on-origin territory.
 func effectPinStaleCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
-	pin, repoDir, findings, ok := pinPreamble(doc, params, false)
+	pin, r, findings, ok := pinPreamble(doc, params, false)
 	if !ok {
 		return findings
 	}
-	originRef := "origin/" + pin.Branch
-	originSha, err := gitOut(repoDir, "rev-parse", originRef)
-	if err != nil || originSha == pin.Commit {
+	if !r.commitExists(pin) {
 		return nil
 	}
-	// advanced past = pin is an ancestor of origin/<branch>
-	if _, err := gitOut(repoDir, "merge-base", "--is-ancestor", pin.Commit, originRef); err != nil {
+	originRef := "origin/" + pin.Branch
+	originSha, resolves := r.objID(pin.Repo, originRef)
+	if !resolves || originSha == pin.Commit {
+		return nil
+	}
+	// advanced past = pin is an ancestor of origin/<branch> (same memoized query
+	// on-origin uses; divergence is on-origin's finding, not staleness).
+	if !r.isAncestor(pin.Repo, pin.Commit, originRef) {
 		return nil
 	}
 	var out []engine.RawFinding
 	for i, loc := range pin.Locations {
 		want := pin.Checksums[i]
-		got, err := gitOut(repoDir, "rev-parse", originRef+":"+strings.TrimSuffix(loc, "/"))
-		if err == nil && got != want {
+		got, exists := r.objID(pin.Repo, originRef+":"+strings.TrimSuffix(loc, "/"))
+		if exists && got != want {
 			out = append(out, pinFinding(pin,
 				fmt.Sprintf("%s advanced past pin %s and %q drifted (pin %s, origin %s)",
 					originRef, pin.Commit, loc, want, got)))
@@ -339,11 +721,10 @@ func effectPinStaleCheck(doc *engine.Document, params map[string]any) []engine.R
 	return out
 }
 
-// effectUnpinnedCheck: silence must be earned — a page tagged type/effect
-// with no commit pin is either a declared tombstone (status: retired or
-// pending) or an authoring accident worth surfacing. Tag-scoped on parsed
-// frontmatter tags, never on path or body text: index pages (type/index)
-// and colocated content under effects/ stay silent.
+// effectUnpinnedCheck: silence must be earned — a page tagged type/effect with
+// no commit pin is either a declared tombstone (status: retired or pending) or
+// an authoring accident worth surfacing. Tag-scoped on parsed frontmatter tags,
+// never on path or body text. PURE (no git) → phase-1, cacheable.
 func effectUnpinnedCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
 	isEffect := false
 	for _, tag := range doc.Tags {

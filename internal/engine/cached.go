@@ -169,42 +169,6 @@ func (e *Engine) runCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 		panicMsgs = append(panicMsgs, results[i].panicMsgs...)
 	}
 
-	// Phase 2: per-doc checks over the facts extracted (or restored from cache) in
-	// phase 1 plus the path-universe snapshot. Single-threaded (milliseconds — map
-	// lookups, no I/O) and never cached: these findings are recomputed every run so
-	// a warm cache can never serve a stale cross-file verdict. Reuses evalDoc
-	// (facts flow through doc.Facts → __facts); the shared index cache is written
-	// under phase 1's mutex and read here after wg.Wait, so a nil mutex is safe. U6
-	// grows the phase-2 rule set; U7 added the store to phase 1 only, leaving this
-	// pass untouched (a warm hit still restores doc.Facts, so phase 2 sees the same
-	// input hit or miss).
-	if len(phase2) > 0 {
-		for _, doc := range docs {
-			if e.isForeignDoc(doc.Path) {
-				continue
-			}
-			for _, ar := range phase2 {
-				if !Match(ar.rule.On, doc.Path, doc.Tags) {
-					continue
-				}
-				if doc.IsIgnored(ar.rule.ID) {
-					continue
-				}
-				result := e.evalDoc(doc, ar, fsys, scannedPaths, indexCache, nil)
-				if result.panicMsg != "" {
-					panicMsgs = append(panicMsgs, result.panicMsg)
-					continue
-				}
-				for _, f := range result.findings {
-					if doc.IsLineSuppressed(f.Line, ar.rule.ID) {
-						continue
-					}
-					findings = append(findings, f)
-				}
-			}
-		}
-	}
-
 	// CHECK_PANIC warnings are net-new ordered work under parallelism: sort them
 	// by (Code, Message) and append AFTER the fixed pre-loop warnings, never
 	// sorting the whole warnings slice (plan §7 U2). Code is always CHECK_PANIC
@@ -217,7 +181,98 @@ func (e *Engine) runCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 		})
 	}
 
+	// Phase 2: ALL external-state rules — the link family + probe (U5/U7) and U6's
+	// effect-pin family — over per-run snapshots (the path universe and the batched
+	// git snapshot). Serial so the git snapshot is built ONCE and never becomes a
+	// thundering herd (U7 evidence: concurrent gitMemo misses fork redundantly at
+	// GOMAXPROCS=16). Findings are appended but NEVER cached; a warm phase-1 hit
+	// still restored doc.Facts, so phase 2 sees the same input hit or miss.
+	findings = append(findings, e.runPhase2(fsys, docs, phase2, scannedPaths, indexCache)...)
+
 	sortFindings(findings)
+	return findings
+}
+
+// runPhase2 evaluates external-state rules (link family + probe + effect-pin) after the
+// parallel phase-1 loop. It runs serially so the per-run git snapshot is built
+// exactly once (no GOMAXPROCS-wide populate race). Pins from every checked doc
+// are gathered into __all_pins so the first check builds one batched snapshot
+// per repo; findings honor per-line/frontmatter suppression but are NEVER cached
+// (external state → recomputed every run, plan §2 classification rule).
+func (e *Engine) runPhase2(fsys fs.FS, docs []*Document, phase2Active []activeRule, scannedPaths []string, indexCache map[string]any) []types.Finding {
+	if len(phase2Active) == 0 {
+		return nil
+	}
+
+	// Gather the pin facts of every doc a phase-2 rule will evaluate, so the
+	// snapshot batches exactly the checked pins (O(repos + distinct commits)).
+	var allPins []PinFields
+	for _, doc := range docs {
+		if e.isForeignDoc(doc.Path) {
+			continue
+		}
+		matched := false
+		for _, ar := range phase2Active {
+			if Match(ar.rule.On, doc.Path, doc.Tags) && !doc.IsIgnored(ar.rule.ID) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		if pin := extractPin(doc.Frontmatter); pin != nil {
+			allPins = append(allPins, *pin)
+		}
+	}
+
+	var phase2Warnings []string
+	extra := map[string]any{
+		"__all_pins": allPins,
+		"__warn":     func(msg string) { phase2Warnings = append(phase2Warnings, msg) },
+	}
+
+	var findings []types.Finding
+	for _, doc := range docs {
+		if e.isForeignDoc(doc.Path) {
+			continue
+		}
+		for _, ar := range phase2Active {
+			if !Match(ar.rule.On, doc.Path, doc.Tags) {
+				continue
+			}
+			if doc.IsIgnored(ar.rule.ID) {
+				continue
+			}
+			// Serial pass: no index mutex needed (nil), matching RunForPaths.
+			result := e.evalDoc(doc, ar, fsys, scannedPaths, indexCache, nil, extra)
+			if result.panicMsg != "" {
+				e.warnings = append(e.warnings, types.Warning{
+					Code:    "CHECK_PANIC",
+					Message: result.panicMsg,
+				})
+				continue
+			}
+			for _, f := range result.findings {
+				if doc.IsLineSuppressed(f.Line, ar.rule.ID) {
+					continue
+				}
+				findings = append(findings, f)
+			}
+		}
+	}
+
+	// Batch-infra failure warnings (Decision 8): stable order, deduped.
+	sort.Strings(phase2Warnings)
+	var lastWarn string
+	for _, msg := range phase2Warnings {
+		if msg == lastWarn {
+			continue
+		}
+		lastWarn = msg
+		e.warnings = append(e.warnings, types.Warning{Code: "EFFECT_PIN_BATCH", Message: msg})
+	}
+
 	return findings
 }
 
@@ -291,7 +346,7 @@ func (e *Engine) evalOneDoc(doc *Document, phase1 []activeRule, fsys fs.FS, scan
 		if doc.IsIgnored(ar.rule.ID) {
 			continue
 		}
-		result := e.evalDoc(doc, ar, fsys, scannedPaths, indexCache, indexMu)
+		result := e.evalDoc(doc, ar, fsys, scannedPaths, indexCache, indexMu, nil)
 		if result.panicMsg != "" {
 			res.panicMsgs = append(res.panicMsgs, result.panicMsg)
 			hadPanic = true
@@ -361,9 +416,14 @@ func runRecordSidecar(docPath string) string {
 // indexMu guards that scratchpad under the parallel engine; it is nil for
 // sequential callers (RunForPaths, the phase-2 pass), in which case checks access
 // the map without locking — safe because there is a single goroutine.
-func (e *Engine) evalDoc(doc *Document, ar activeRule, fsys fs.FS, scannedPaths []string, indexCache map[string]any, indexMu *sync.Mutex) evalResult {
-	effectiveParams := make(map[string]any, len(ar.rule.Params)+4)
+func (e *Engine) evalDoc(doc *Document, ar activeRule, fsys fs.FS, scannedPaths []string, indexCache map[string]any, indexMu *sync.Mutex, extra map[string]any) evalResult {
+	effectiveParams := make(map[string]any, len(ar.rule.Params)+len(extra)+4)
 	for k, v := range ar.rule.Params {
+		effectiveParams[k] = v
+	}
+	// Phase-2 run-scoped inputs (e.g. __all_pins for the effect-pin snapshot,
+	// __warn for batch-infra failures). nil for phase-1/scoped callers.
+	for k, v := range extra {
 		effectiveParams[k] = v
 	}
 	effectiveParams["__scanned_paths"] = scannedPaths
