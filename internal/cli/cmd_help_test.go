@@ -96,6 +96,81 @@ func TestHelp_CommandInfo(t *testing.T) {
 	}
 }
 
+func TestHelp_DashDashHelpRoutesToCommandHelp(t *testing.T) {
+	for _, flag := range []string{"--help", "-h"} {
+		r, buf := newTestRouter()
+		r.Handle("help", NewHelpHandler(r.Commands, nil))
+		r.Handle("debug", func(req *Request) *Response {
+			t.Fatal("debug handler should not run on " + flag)
+			return nil
+		})
+
+		exit := r.Run([]string{"debug", flag}, nil)
+		if exit != 0 {
+			t.Fatalf("%s: exit = %d, want 0", flag, exit)
+		}
+
+		resp := decodeResponse(t, buf)
+		data, ok := resp.Data.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: Data type = %T, want map[string]any", flag, resp.Data)
+		}
+		if data["command"] != "debug" {
+			t.Errorf("%s: command = %v, want %q", flag, data["command"], "debug")
+		}
+		if data["usage"] == nil || data["usage"] == "" {
+			t.Errorf("%s: usage should not be empty", flag)
+		}
+	}
+}
+
+func TestHelp_DashDashHelpTwoWordCommand(t *testing.T) {
+	r, buf := newTestRouter()
+	r.Handle("help", NewHelpHandler(r.Commands, nil))
+	r.Handle("rules ls", func(req *Request) *Response {
+		t.Fatal("rules ls handler should not run on --help")
+		return nil
+	})
+
+	exit := r.Run([]string{"rules", "ls", "--help"}, nil)
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0", exit)
+	}
+
+	resp := decodeResponse(t, buf)
+	data, ok := resp.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("Data type = %T, want map[string]any", resp.Data)
+	}
+	if data["command"] != "rules ls" {
+		t.Errorf("command = %v, want %q", data["command"], "rules ls")
+	}
+}
+
+func TestHelp_DashDashHelpBypassesPositionalAdapter(t *testing.T) {
+	r, buf := newTestRouter()
+	r.Handle("help", NewHelpHandler(r.Commands, nil))
+	r.Handle("check", func(req *Request) *Response { return &Response{Version: ResponseVersion} })
+	r.HandlePositional("check", func(arg string) (json.RawMessage, error) {
+		t.Fatal("positional adapter should not run on --help")
+		return nil, nil
+	})
+
+	exit := r.Run([]string{"check", "--help"}, nil)
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0", exit)
+	}
+
+	resp := decodeResponse(t, buf)
+	data, ok := resp.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("Data type = %T, want map[string]any", resp.Data)
+	}
+	if data["command"] != "check" {
+		t.Errorf("command = %v, want %q", data["command"], "check")
+	}
+}
+
 func TestHelp_UnknownCommand(t *testing.T) {
 	r, buf := newTestRouter()
 	r.Handle("help", NewHelpHandler(r.Commands, nil))

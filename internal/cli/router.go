@@ -88,6 +88,20 @@ func (r *Router) Run(args []string, stdin io.Reader) int {
 		return r.respond(ErrorResponse(ErrUnknownCommand, "unknown command: "+command))
 	}
 
+	// `md <cmd> --help` routes to the help registry before param parsing —
+	// otherwise the flag hits the JSON parser (malformed JSON) or a
+	// positional adapter (path must exist) instead of answering.
+	if command != "help" && len(args) > paramIdx && (args[paramIdx] == "--help" || args[paramIdx] == "-h") {
+		if h, found := r.handlers["help"]; found {
+			params, _ := json.Marshal(map[string]string{"command": command})
+			resp := h(&Request{Command: "help", Params: params})
+			if resp.Version == "" {
+				resp.Version = ResponseVersion
+			}
+			return r.respondWith(resp, r.format)
+		}
+	}
+
 	// Parse JSON params. Stdin is explicit opt-in via "-": auto-reading a
 	// piped stdin blocks to EOF, and an inherited open pipe (hooks, daemons,
 	// tmux spawns) never EOFs — even `md version` would hang before dispatch.

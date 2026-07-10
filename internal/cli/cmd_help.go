@@ -10,8 +10,10 @@ type helpParams struct {
 // commandHelp stores help text for a command.
 type commandHelp struct {
 	Description string               `json:"description"`
+	Usage       string               `json:"usage,omitempty"`
 	Params      map[string]paramHelp `json:"params,omitempty"`
 	ExitCodes   map[string]string    `json:"exit_codes,omitempty"`
+	Examples    []string             `json:"examples,omitempty"`
 }
 
 type paramHelp struct {
@@ -34,8 +36,10 @@ type HelpListEntry struct {
 type HelpCommandData struct {
 	Command     string               `json:"command"`
 	Description string               `json:"description"`
+	Usage       string               `json:"usage,omitempty"`
 	Params      map[string]paramHelp `json:"params,omitempty"`
 	ExitCodes   map[string]string    `json:"exit_codes,omitempty"`
+	Examples    []string             `json:"examples,omitempty"`
 }
 
 // SearchFunc is a function that searches rules/checks by query string.
@@ -45,6 +49,7 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 	registry := map[string]commandHelp{
 		"check": {
 			Description: "Scan files, match rules, evaluate, return findings. Positional sugar: `md check <path>` = `md check '{\"scope\":\"<path>\"}'` (path must exist). skill_tree runs the embedded wikilink-integrity pack over a shipped skill directory — config-less, no meridian.yaml needed. strict promotes warn findings to exit 1 (default from meridian.yaml `strict:`; per-run override here is the escape hatch — error findings fail in both modes)",
+			Usage:       "md check <path>  |  md check '{\"scope\":\"<path>\", ...}'",
 			Params: map[string]paramHelp{
 				"scope":      {Type: "string", Required: false},
 				"skill_tree": {Type: "string", Required: false},
@@ -52,41 +57,61 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 				"format":     {Type: "string", Required: false},
 			},
 			ExitCodes: map[string]string{"0": "clean", "1": "error findings (warn too when strict)", "2": "error"},
+			Examples: []string{
+				`md check wiki/`,
+				`md check '{"scope":"wiki/","strict":true}'`,
+				`md check '{"skill_tree":"skills/my-skill"}'`,
+			},
 		},
 		"rules ls": {
 			Description: "List loaded rules",
+			Usage:       "md rules ls  |  md rules ls '{\"profile\":\"<name>\"}'",
 			Params: map[string]paramHelp{
 				"profile": {Type: "string", Required: false},
 			},
 		},
 		"rules check": {
 			Description: "Detect rule overlaps and conflicts",
+			Usage:       "md rules check  |  md rules check '{\"profile\":\"<name>\"}'",
 			Params: map[string]paramHelp{
 				"profile": {Type: "string", Required: false},
 			},
 		},
 		"debug": {
 			Description: "Deep inspection of one rule",
+			Usage:       "md debug '{\"rule\":\"<rule-id>\"}'",
 			Params: map[string]paramHelp{
 				"rule":  {Type: "string", Required: true},
 				"scope": {Type: "string", Required: false},
 			},
+			Examples: []string{
+				`md debug '{"rule":"broken-wikilink"}'`,
+				`md debug '{"rule":"broken-wikilink","scope":"wiki/"}'`,
+			},
 		},
 		"help": {
-			Description: "Queryable help",
+			Description: "Queryable help: list commands, detail one command, or search rules/checks",
+			Usage:       "md help  |  md help '{\"command\":\"<cmd>\"}'  |  md help '{\"search\":\"<query>\"}'",
 			Params: map[string]paramHelp{
 				"command": {Type: "string", Required: false},
 				"search":  {Type: "string", Required: false},
 			},
+			Examples: []string{
+				`md help '{"command":"check"}'`,
+				`md help '{"search":"wikilink"}'`,
+			},
 		},
 		"version": {
 			Description: "Show version information",
+			Usage:       "md version",
 		},
 		"debt": {
 			Description: "List incorporation debt (wiki/sources flagged do/incorporate, not yet incorporated)",
+			Usage:       "md debt",
 		},
 		"llm-wiki check": {
 			Description: "Environment doctor for the llm-wiki system: verifies CCC_LLM_WIKI_PATH / CCC_LLM_WIKI_REPOS_ROOT and that every cataloged repo (sources/git/<slug>/) resolves at <root>/<slug> with the right git identity. Failures point at skill-shipped setup references; absent repos are a state, not a failure",
+			Usage:       "md llm-wiki check  |  md llm-wiki check '{\"setup_dir\":\"<dir>\"}'",
 			Params: map[string]paramHelp{
 				"setup_dir": {Type: "string", Required: false},
 				"format":    {Type: "string", Required: false},
@@ -95,36 +120,51 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 		},
 		"domains tree": {
 			Description: "Show domain hierarchy from scanned wiki",
+			Usage:       "md domains tree  |  md domains tree '{\"scope\":\"<path>\"}'",
 			Params: map[string]paramHelp{
 				"scope": {Type: "string", Required: false},
 			},
 		},
 		"domains show": {
 			Description: "Detail for one domain prefix",
+			Usage:       "md domains show '{\"prefix\":\"<domain-prefix>\"}'",
 			Params: map[string]paramHelp{
 				"prefix": {Type: "string", Required: true},
 				"scope":  {Type: "string", Required: false},
 			},
+			Examples: []string{
+				`md domains show '{"prefix":"lang"}'`,
+			},
 		},
 		"fix": {
 			Description: "Auto-fix frontmatter violations",
+			Usage:       "md fix '{\"scope\":\"<path>\",\"rules\":[\"<rule-id>\"],\"dry-run\":true}' (all optional)",
 			Params: map[string]paramHelp{
 				"scope":   {Type: "string", Required: false},
 				"rules":   {Type: "array", Required: false},
 				"dry-run": {Type: "bool", Required: false},
 			},
 			ExitCodes: map[string]string{"0": "clean", "2": "error"},
+			Examples: []string{
+				`md fix '{"dry-run":true}'`,
+				`md fix '{"scope":"wiki/","rules":["created"]}'`,
+			},
 		},
 		"mv": {
 			Description: "Move/rename files, update frontmatter domains",
+			Usage:       "md mv '{\"source\":\"<from.md>\",\"dest\":\"<to.md>\"}'",
 			Params: map[string]paramHelp{
 				"source":  {Type: "string", Required: true},
 				"dest":    {Type: "string", Required: true},
 				"dry-run": {Type: "bool", Required: false},
 			},
+			Examples: []string{
+				`md mv '{"source":"wiki/old.md","dest":"wiki/new.md","dry-run":true}'`,
+			},
 		},
 		"run": {
 			Description: "Execute frontmatter-addressed task blocks (md-<name> keys → ^id fences); format json captures task stdout/stderr into the envelope, text streams it live. timeout bounds each task's wall clock (Go duration, e.g. \"30s\") — at the deadline the process group is killed and the task reports exit 124. record:true writes each task's outcome + output to a sidecar run record (<stem>.runs.md, block-addressable per task as ^<task>) without ever mutating the source doc; response carries record_path",
+			Usage:       "md run '{\"file\":\"<doc.md>\",\"name\":\"<task>\"}'  |  md run '{\"file\":\"<doc.md>\",\"list\":true}'",
 			Params: map[string]paramHelp{
 				"file":    {Type: "string", Required: true},
 				"name":    {Type: "string|array", Required: false},
@@ -135,9 +175,15 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 				"record":  {Type: "bool", Required: false},
 			},
 			ExitCodes: map[string]string{"0": "all tasks succeeded", "1": "a task exited non-zero (124 = timed out)", "2": "resolution or tool failure"},
+			Examples: []string{
+				`md run '{"file":"tasks.md","list":true}'`,
+				`md run '{"file":"tasks.md","name":"build","timeout":"30s"}'`,
+				`md run '{"file":"tasks.md","name":["lint","test"],"record":true}'`,
+			},
 		},
 		"encode": {
 			Description: "The ONE cross-wiki reference encoder (C24 canon): (slug, path[, fragment]) → canonical obsidian://open (no fragment) or advanced-uri (heading/^block) navigation URI; form nav = [display](uri) with caller display, form citation = [wiki://slug/path[@commit]](uri). parse extracts the triple from either grammar (strict decode: non-canonical encoding is flagged, never normalized). Config-less, pure grammar",
+			Usage:       "md encode '{\"slug\":\"<wiki-slug>\",\"path\":\"<note-path>\"}'  |  md encode '{\"parse\":\"<encoded-ref>\"}'",
 			Params: map[string]paramHelp{
 				"slug":     {Type: "string", Required: false},
 				"path":     {Type: "string", Required: false},
@@ -149,9 +195,14 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 				"format":   {Type: "string", Required: false},
 			},
 			ExitCodes: map[string]string{"0": "encoded/parsed", "2": "invalid params or unrecognized grammar"},
+			Examples: []string{
+				`md encode '{"slug":"locus","path":"wiki/meridian/development.md"}'`,
+				`md encode '{"slug":"locus","path":"wiki/meridian/development.md","fragment":"Testing","form":"citation"}'`,
+			},
 		},
 		"read": {
 			Description: "Read vault-addressed content: path, [[note]], [[note#Heading]], or [[note#^block]]; text mode prints verification metadata (base, matches, warnings) to stderr, stdout stays pure content. With embeds:true, ![[...]] embeds are recursively inlined (frontmatter stripped from whole-note embeds). With strip-frontmatter:true, the matched file's own frontmatter is dropped — returns the deployable body",
+			Usage:       "md read '{\"target\":\"<path | [[note]] | [[note#Heading]] | [[note#^block]]>\"}'",
 			Params: map[string]paramHelp{
 				"target":            {Type: "string", Required: true},
 				"expect-unique":     {Type: "bool", Required: false},
@@ -161,12 +212,25 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 				"format":            {Type: "string", Required: false},
 			},
 			ExitCodes: map[string]string{"0": "content resolved", "2": "not found, ambiguous (expect-unique/embed), or wrong cwd"},
+			Examples: []string{
+				`md read '{"target":"[[development#Testing]]"}'`,
+				`md read '{"target":"wiki/meridian/development.md","strip-frontmatter":true}'`,
+			},
 		},
 		"watch": {
 			Description: "Start filesystem watcher daemon",
+			Usage:       "md watch",
 		},
 		"status": {
 			Description: "Query running watch daemon status",
+			Usage:       "md status",
+		},
+		"schema": {
+			Description: "Print the effective frontmatter schema: contract defaults merged with the nearest SCHEMA.md overlay (searched from cwd up to git toplevel, or scan.root when config is loaded)",
+			Usage:       "md schema",
+			Params: map[string]paramHelp{
+				"format": {Type: "string", Required: false},
+			},
 		},
 	}
 
@@ -189,8 +253,10 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 				Data: HelpCommandData{
 					Command:     p.Command,
 					Description: info.Description,
+					Usage:       info.Usage,
 					Params:      info.Params,
 					ExitCodes:   info.ExitCodes,
+					Examples:    info.Examples,
 				},
 			}
 		}

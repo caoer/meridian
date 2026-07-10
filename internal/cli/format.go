@@ -150,12 +150,23 @@ func formatData(w io.Writer, data any) {
 		for _, c := range d.Commands {
 			fmt.Fprintf(w, "  %-15s %s\n", c.Command, c.Description)
 		}
+		fmt.Fprintln(w, "\nParams are JSON: md <command> '{\"key\":\"value\"}'  (or `md <command> - < params.json`)")
+		fmt.Fprintln(w, "Per-command help: md <command> --help")
 
 	case HelpCommandData:
 		fmt.Fprintf(w, "%s: %s\n", d.Command, d.Description)
+		if d.Usage != "" {
+			fmt.Fprintf(w, "\nUsage:\n  %s\n", d.Usage)
+		}
 		if len(d.Params) > 0 {
 			fmt.Fprintln(w, "\nParameters:")
-			for name, p := range d.Params {
+			names := make([]string, 0, len(d.Params))
+			for name := range d.Params {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				p := d.Params[name]
 				req := ""
 				if p.Required {
 					req = " (required)"
@@ -165,8 +176,19 @@ func formatData(w io.Writer, data any) {
 		}
 		if len(d.ExitCodes) > 0 {
 			fmt.Fprintln(w, "\nExit codes:")
-			for code, desc := range d.ExitCodes {
-				fmt.Fprintf(w, "  %s  %s\n", code, desc)
+			codes := make([]string, 0, len(d.ExitCodes))
+			for code := range d.ExitCodes {
+				codes = append(codes, code)
+			}
+			sort.Strings(codes)
+			for _, code := range codes {
+				fmt.Fprintf(w, "  %s  %s\n", code, d.ExitCodes[code])
+			}
+		}
+		if len(d.Examples) > 0 {
+			fmt.Fprintln(w, "\nExamples:")
+			for _, ex := range d.Examples {
+				fmt.Fprintf(w, "  %s\n", ex)
 			}
 		}
 
