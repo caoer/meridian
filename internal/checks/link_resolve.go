@@ -79,16 +79,11 @@ func linkResolveCheck(doc *engine.Document, params map[string]any) []engine.RawF
 // Without the scratchpad (e.g. direct check calls in tests) it falls back to
 // building each time.
 func cachedGlobIndex(params map[string]any, globs, paths []string) map[string]bool {
-	cache, ok := params["__index_cache"].(map[string]any)
-	if !ok {
-		return buildGlobIndex(globs, paths)
-	}
 	key := "glob\x00" + strings.Join(globs, "\x00")
-	if idx, ok := cache[key].(map[string]bool); ok {
-		return idx
-	}
-	idx := buildGlobIndex(globs, paths)
-	cache[key] = idx
+	v := indexCacheGetOrBuild(params, key, func() any {
+		return buildGlobIndex(globs, paths)
+	})
+	idx, _ := v.(map[string]bool)
 	return idx
 }
 
