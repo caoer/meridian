@@ -24,6 +24,7 @@ func RenderText(w io.Writer, resp *Response) {
 		errCount := 0
 		warnCount := 0
 		infoCount := 0
+		ruleCounts := map[string]int{}
 
 		for _, f := range resp.Findings {
 			level := strings.ToUpper(f.Severity)
@@ -32,6 +33,7 @@ func RenderText(w io.Writer, resp *Response) {
 				loc = fmt.Sprintf("%s:%d", f.FilePath, f.Line)
 			}
 			fmt.Fprintf(w, "%-5s %s  [%s] %s\n", level, loc, f.RuleID, f.Message)
+			ruleCounts[f.RuleID]++
 
 			switch f.Severity {
 			case "error":
@@ -58,6 +60,25 @@ func RenderText(w io.Writer, resp *Response) {
 			fmt.Fprintln(w, strings.Join(parts, ", "))
 		} else if len(resp.Findings) == 0 {
 			fmt.Fprintln(w, "clean")
+		}
+
+		// Per-rule breakdown: one line, descending count (ties by ID)
+		if len(ruleCounts) > 0 {
+			ids := make([]string, 0, len(ruleCounts))
+			for id := range ruleCounts {
+				ids = append(ids, id)
+			}
+			sort.Slice(ids, func(i, j int) bool {
+				if ruleCounts[ids[i]] != ruleCounts[ids[j]] {
+					return ruleCounts[ids[i]] > ruleCounts[ids[j]]
+				}
+				return ids[i] < ids[j]
+			})
+			perRule := make([]string, len(ids))
+			for i, id := range ids {
+				perRule[i] = fmt.Sprintf("%s=%d", id, ruleCounts[id])
+			}
+			fmt.Fprintf(w, "by rule: %s\n", strings.Join(perRule, " · "))
 		}
 
 		// Warnings (engine warnings, not findings)
