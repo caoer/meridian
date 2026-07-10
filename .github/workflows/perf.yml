@@ -29,6 +29,10 @@ on:
         description: "corpus size (docs) for the large run"
         default: "100000"
 
+permissions:
+  contents: read
+  actions: read # chart.sh downloads perf-metrics artifacts from previous runs
+
 env:
   SEED: 1
   RATIO_MAX_PCT: 130 # fail PR if head > 1.3x merge-base
@@ -39,11 +43,11 @@ jobs:
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
@@ -85,6 +89,27 @@ jobs:
             echo "| medium (10k docs) | ${med_head}ms | ${med_base}ms |"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Write metrics artifact (queryable history, one JSON per run)
+        run: |
+          jq -n --argjson run "$GITHUB_RUN_NUMBER" \
+                --arg sha "$GITHUB_SHA" \
+                --argjson small "${{ steps.bench.outputs.small_head }}" \
+                --argjson medium "${{ steps.bench.outputs.med_head }}" \
+                '{run: $run, sha: $sha, small_ms: $small, medium_ms: $medium}' \
+            > /tmp/perf.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: perf-metrics
+          path: /tmp/perf.json
+
+      - name: Trend chart (last 20 main runs)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./test/perf/chart.sh "$GITHUB_RUN_NUMBER" "${{ steps.bench.outputs.med_head }}" \
+            >> "$GITHUB_STEP_SUMMARY"
+
       - name: "Gate: ratio vs baseline (medium corpus)"
         run: |
           head=${{ steps.bench.outputs.med_head }}
@@ -116,9 +141,9 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
