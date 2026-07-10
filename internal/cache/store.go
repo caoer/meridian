@@ -2,9 +2,7 @@ package cache
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/gob"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"sync"
@@ -172,9 +170,13 @@ func (s *Store) Put(k Key, contentHash string, facts any, findings []types.Findi
 		Stat:        k.Stat,
 		ContentHash: contentHash,
 		AuxHash:     k.AuxHash,
-		FactsHash:   factsHash(facts),
-		Facts:       facts,
-		Findings:    findings,
+		// FactsHash is left empty: it feeds phase-2 early cutoff, which is deferred
+		// (Decision 6), so computing sha256(gob(facts)) on every Put would be pure
+		// speculative cost on the hot miss path for a feature with no U7 consumer.
+		// The field stays in the persisted shape so U8 can populate it — where the
+		// cutoff actually consumes it — without a cache-format change.
+		Facts:    facts,
+		Findings: findings,
 	}
 	sh.dirty = true
 }
@@ -275,21 +277,4 @@ func (s *Store) Stats() CacheStats {
 func (s *Store) ResetStats() {
 	s.hits.Store(0)
 	s.misses.Store(0)
-}
-
-// factsHash is sha256 of the gob encoding of facts — a stable fingerprint of the
-// derived fact set. Reserved for the phase-2 early-cutoff optimization (deferred,
-// Decision 6); stored now so U8 can adopt it without a cache-format change.
-// Encoding the value at top level (not through an interface field) needs no
-// gob.Register.
-func factsHash(facts any) string {
-	if facts == nil {
-		return ""
-	}
-	var buf bytes.Buffer
-	if err := gob.NewEncoder(&buf).Encode(facts); err != nil {
-		return ""
-	}
-	sum := sha256.Sum256(buf.Bytes())
-	return hex.EncodeToString(sum[:])
 }
