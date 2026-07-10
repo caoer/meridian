@@ -11,9 +11,21 @@
 // Same seed + same params → byte-identical corpus. Size is a parameter, not
 // an artifact: small/medium/large are -docs values.
 //
+// Two profiles (-profile):
+//
+//   - corpus (default): a flat, wikilink-dense tree under wiki/. Size is -docs.
+//   - wiki: a home-wiki-shaped tree at -mult scale (docs = mult*3827, the
+//     measured real-wiki size). Vendors its own three rule packs (contract /
+//     home-wiki / effects), builds ~17 deterministic fixture git repos under
+//     <out>/.repos-fixtures, and emits effect pages whose pins exercise every
+//     effect-pin rule (valid/stale/dangling/not-on-origin/checksum/unpinned).
+//     Prints the CCC_LLM_WIKI_REPOS_ROOT export as the final stdout line;
+//     progress goes to stderr.
+//
 // Usage:
 //
 //	go run ./test/perf/gen -out /tmp/corpus -docs 10000 -seed 1 -rules ./rules
+//	go run ./test/perf/gen -profile wiki -out /tmp/wiki10x -mult 10 -seed 1
 package main
 
 import (
@@ -26,10 +38,12 @@ import (
 )
 
 var (
-	out   = flag.String("out", "", "output directory (required, must not exist or be empty)")
-	docs  = flag.Int("docs", 1000, "number of markdown documents to generate")
-	seed  = flag.Int64("seed", 1, "PRNG seed")
-	rules = flag.String("rules", "", "rule-pack root to copy into the corpus (e.g. ./rules); packs land at <out>/rules/<pack>")
+	out     = flag.String("out", "", "output directory (required, must not exist or be empty)")
+	docs    = flag.Int("docs", 1000, "number of markdown documents to generate (corpus profile)")
+	seed    = flag.Int64("seed", 1, "PRNG seed")
+	rules   = flag.String("rules", "", "rule-pack root to copy into the corpus (e.g. ./rules); packs land at <out>/rules/<pack> (corpus profile)")
+	profile = flag.String("profile", "corpus", "generation profile: \"corpus\" (flat wikilink-dense tree) or \"wiki\" (home-wiki-shaped: 3-pack rules, effect pins, fixture git repos, sidecars)")
+	mult    = flag.Int("mult", 10, "wiki profile: doc-count multiplier over the real home-wiki (~3827 docs); docs = mult*3827")
 )
 
 // Weighted directory classes, mirroring a real home-wiki's shape: sessions
@@ -207,6 +221,17 @@ func main() {
 	flag.Parse()
 	if *out == "" {
 		fmt.Fprintln(os.Stderr, "gen: -out is required")
+		os.Exit(2)
+	}
+
+	if *profile == "wiki" {
+		if err := genWiki(*out, *mult, *seed); err != nil {
+			fatal(err)
+		}
+		return
+	}
+	if *profile != "corpus" {
+		fmt.Fprintf(os.Stderr, "gen: unknown -profile %q (want \"corpus\" or \"wiki\")\n", *profile)
 		os.Exit(2)
 	}
 
