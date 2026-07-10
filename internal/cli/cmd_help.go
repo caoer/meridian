@@ -44,13 +44,14 @@ type SearchFunc func(query string) HelpSearchData
 func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 	registry := map[string]commandHelp{
 		"check": {
-			Description: "Scan files, match rules, evaluate, return findings. Positional sugar: `md check <path>` = `md check '{\"scope\":\"<path>\"}'` (path must exist). skill_tree runs the embedded wikilink-integrity pack over a shipped skill directory — config-less, no meridian.yaml needed",
+			Description: "Scan files, match rules, evaluate, return findings. Positional sugar: `md check <path>` = `md check '{\"scope\":\"<path>\"}'` (path must exist). skill_tree runs the embedded wikilink-integrity pack over a shipped skill directory — config-less, no meridian.yaml needed. strict promotes warn findings to exit 1 (default from meridian.yaml `strict:`; per-run override here is the escape hatch — error findings fail in both modes)",
 			Params: map[string]paramHelp{
 				"scope":      {Type: "string", Required: false},
 				"skill_tree": {Type: "string", Required: false},
+				"strict":     {Type: "bool", Required: false},
 				"format":     {Type: "string", Required: false},
 			},
-			ExitCodes: map[string]string{"0": "clean", "1": "findings", "2": "error"},
+			ExitCodes: map[string]string{"0": "clean", "1": "error findings (warn too when strict)", "2": "error"},
 		},
 		"rules ls": {
 			Description: "List loaded rules",

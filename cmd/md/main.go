@@ -634,6 +634,7 @@ func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Conf
 		var params struct {
 			Scope     string `json:"scope"`
 			SkillTree string `json:"skill_tree"`
+			Strict    *bool  `json:"strict"` // per-run override of config strict; nil = config default
 			Format    string `json:"format"` // router-consumed (output rendering); listed so strict parse admits it
 		}
 		if req.Params != nil {
@@ -641,7 +642,7 @@ func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Conf
 			dec.DisallowUnknownFields()
 			if err := dec.Decode(&params); err != nil {
 				return cli.ErrorResponse(cli.ErrInvalidParams,
-					fmt.Sprintf("invalid params: %v — md check accepts: scope, skill_tree, format (assert the binary with `md version`)", err))
+					fmt.Sprintf("invalid params: %v — md check accepts: scope, skill_tree, strict, format (assert the binary with `md version`)", err))
 			}
 		}
 
@@ -653,7 +654,12 @@ func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Conf
 			if params.Scope != "" {
 				return cli.ErrorResponse(cli.ErrInvalidParams, "skill_tree and scope are mutually exclusive — skill_tree already scopes the run")
 			}
-			return skillTreeCheck(params.SkillTree)
+			resp := skillTreeCheck(params.SkillTree)
+			// Config-less path: strict comes only from the param.
+			if params.Strict != nil {
+				resp.Strict = *params.Strict
+			}
+			return resp
 		}
 
 		if cfgErr != nil {
@@ -712,8 +718,14 @@ func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Conf
 			hitRate = float64(cs.Hits) / float64(cs.Total)
 		}
 
+		strict := cfg.Strict
+		if params.Strict != nil {
+			strict = *params.Strict
+		}
+
 		return &cli.Response{
 			Version:  cli.ResponseVersion,
+			Strict:   strict,
 			Findings: findings,
 			Stats: &cli.Stats{
 				FilesScanned:  cs.Total,

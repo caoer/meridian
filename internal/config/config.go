@@ -21,6 +21,12 @@ type Config struct {
 	Watch          *WatchConfig              `yaml:"watch"`
 	ForeignRoots   []string                  `yaml:"foreign_roots"` // root-relative dirs whose files resolve for link-checking but are never linted
 	RuleParams     map[string]map[string]any `yaml:"rule_params"`
+
+	// Strict promotes warn findings to failing (exit 1). Severity stays a
+	// property of the rule; strict is how much the run tolerates. Per-run
+	// override via the check command's strict param is the escape hatch —
+	// error findings fail in both modes.
+	Strict bool `yaml:"strict"`
 }
 
 // WatchConfig controls the md watch daemon.

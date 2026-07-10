@@ -68,6 +68,24 @@ scan:
 	}
 }
 
+func TestConfig_Strict(t *testing.T) {
+	cfg, err := Parse([]byte("strict: true\n"), "/project")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if !cfg.Strict {
+		t.Error("Strict = false, want true")
+	}
+
+	cfg, err = Parse([]byte("version: \"0.1\"\n"), "/project")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if cfg.Strict {
+		t.Error("Strict = true, want false default")
+	}
+}
+
 func TestConfig_Defaults(t *testing.T) {
 	raw := `
 rule_packs:
