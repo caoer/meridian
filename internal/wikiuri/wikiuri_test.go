@@ -34,7 +34,8 @@ func TestEncode_Canon(t *testing.T) {
 	}{
 		{"a b.md", "a%20b.md"},                       // space → %20, never '+'
 		{"a+b.md", "a%2Bb.md"},                       // literal '+' → %2B (decoder unambiguity)
-		{"a=b.md", "a=b.md"},                         // '=' literal (minimum set)
+		{"a=b.md", "a%3Db.md"},                       // '=' encoded — Obsidian truncates query values at bare '='
+		{"year=2026/month=07/f.md", "year%3D2026/month%3D07/f.md"}, // hive-partitioned session paths
 		{"a&b#c.md", "a%26b%23c.md"},                 // & # encoded
 		{"100%.md", "100%25.md"},                     // % encoded
 		{"deep/nested/dir/f.md", "deep/nested/dir/f.md"}, // '/' literal
@@ -99,6 +100,7 @@ func TestParse_StrictDecodeFlags(t *testing.T) {
 		{"obsidian://open?vault=w&file=a+b.md", true},     // plus-for-space spelling
 		{"obsidian://open?vault=w&file=a%2Eb.md", true},   // over-encoded ('.' not in set)
 		{"obsidian://open?vault=w&file=a b.md", true},     // under-encoded bare space
+		{"obsidian://open?vault=w&file=year=2026/f.md", true}, // legacy literal '=' (pre-2026-07-10 emissions)
 	}
 	for _, tc := range cases {
 		_, flags, err := Parse(tc.uri)

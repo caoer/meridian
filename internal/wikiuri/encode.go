@@ -8,15 +8,18 @@ package wikiuri
 
 import "strings"
 
-// encodeSet is the R7-locked minimum set: space # ? & % + — plus non-ASCII
-// and control bytes, encoded bytewise (UTF-8) with uppercase hex. '/' and
-// '=' stay literal; there is no plus-for-space. '+' is in the set for
+// encodeSet is the R7 minimum set: space # ? & % + = — plus non-ASCII
+// and control bytes, encoded bytewise (UTF-8) with uppercase hex. '/'
+// stays literal; there is no plus-for-space. '+' is in the set for
 // DECODER unambiguity (82ecf30a correction 2): with literal '+' banned
 // from canonical output, any bare '+' in input is definitively the
-// non-canonical plus-for-space spelling.
+// non-canonical plus-for-space spelling. '=' joined the set 2026-07-10:
+// Obsidian's URI parser truncates a query value at an unencoded '=', so
+// hive-partitioned paths (year=2026/month=07/...) produced dead links —
+// verified by click test; %3D opens correctly.
 func inEncodeSet(c byte) bool {
 	switch c {
-	case ' ', '#', '?', '&', '%', '+':
+	case ' ', '#', '?', '&', '%', '+', '=':
 		return true
 	}
 	return c < 0x20 || c >= 0x7F
