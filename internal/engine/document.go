@@ -16,6 +16,12 @@ type Document struct {
 	// suppressed on that line by an `md-disable-next-line` directive on the
 	// previous line. Populated by Scan.
 	InlineSuppress map[int]map[string]bool
+
+	// Facts is the phase-1 fact set (links, embeds, tags, title, headings, pin),
+	// a pure function of this document's bytes. Populated once per eval by the
+	// engine (evalOneDoc) and injected to checks as "__facts". Zero-valued until
+	// then; carries no raw document bytes by type design.
+	Facts Facts
 }
 
 // IsIgnored returns true if the given rule ID is in LintIgnore.
