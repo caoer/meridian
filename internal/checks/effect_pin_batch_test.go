@@ -11,6 +11,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/caoer/meridian/internal/cache"
 	"github.com/caoer/meridian/internal/engine"
 	"github.com/caoer/meridian/internal/rules"
 	"github.com/caoer/meridian/internal/types"
@@ -421,4 +422,49 @@ func containsReason(findings []types.Finding, sub string) bool {
 		}
 	}
 	return false
+}
+
+// TestEffectPin_CrossRunFreshness_StoreActive is the with-cache-active variant
+// (plan §4 U6 acceptance): with U7's PERSISTENT store saved after run 1 and
+// REOPENED for run 2 (a genuinely warm on-disk cache serving the phase-1 layer,
+// Hits > 0), an effect-pin verdict STILL refreshes when origin moves under a
+// byte-identical page — because phase-2 findings are never written to the store.
+// This is the store-active proof the storeless engine flip cannot give; it mirrors
+// TestRunCached_DeleteTarget_PersistentStoreReopen (the link-family analog) for the
+// effect-pin family, now that U7's store has landed.
+func TestEffectPin_CrossRunFreshness_StoreActive(t *testing.T) {
+	root, fx := newReposFixture(t, "pinned")
+	t.Setenv(envReposRoot, root)
+	repo := filepath.Join(root, "pinned")
+	pages := fstest.MapFS{
+		"effects/x.md": file(effectPage("pinned", "main", fx["pinned"].local, "pack/", fx["pinned"].tree1)),
+	}
+	dir := t.TempDir()
+
+	// Run 1: c3 unpushed → not on origin. Persist the phase-1 layer to disk so
+	// run 2 reopens a genuinely warm on-disk cache (U7's persistent store).
+	s1 := cache.NewStore(dir)
+	if f1 := effectEngine().RunCached(pages, effectRules(), s1); !containsReason(f1, "not on origin/main") {
+		t.Fatalf("run 1 (persistent store): expected not-on-origin finding, got %v", reasons(f1))
+	}
+	if err := s1.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	// External state moves; the page is byte-identical (its phase-1 entry stays a
+	// cache hit next run).
+	gitT(t, repo, "push", "origin", "main")
+
+	// Run 2: REOPEN the persistent store (simulates a second process). The phase-1
+	// layer is served from the on-disk cache, but effect-pin is recomputed against
+	// the fresh snapshot → the stale finding disappears. A per-doc-bytes cache would
+	// serve run 1's stale verdict here; effect-pin is phase-2 / never persisted.
+	s2 := cache.NewStore(dir)
+	f2 := effectEngine().RunCached(pages, effectRules(), s2)
+	if containsReason(f2, "not on origin/main") {
+		t.Fatalf("run 2 (store reopened): store served a STALE phase-2 verdict — effect-pin must never be cached; got %v", reasons(f2))
+	}
+	if s2.Stats().Hits == 0 {
+		t.Fatalf("store was inactive (0 hits) — the freshness proof is vacuous without a warm on-disk cache serving the phase-1 layer")
+	}
 }
