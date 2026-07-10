@@ -6,6 +6,8 @@ import "strings"
 type Document struct {
 	Path        string         // relative to scan root
 	RawContent  []byte         // raw file content (retained for cache hashing)
+	Size        int64          // file size in bytes (stat), for the cache stat fast path
+	MtimeNs     int64          // file mtime in ns (stat), for the cache stat fast path
 	Frontmatter map[string]any // parsed YAML frontmatter
 	Tags        []string       // extracted from frontmatter tags field
 	Body        string         // content after frontmatter
