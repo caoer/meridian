@@ -290,11 +290,16 @@ func scanImpl(fsys fs.FS, skip []string, maxFileSize int64) ([]*Document, error)
 			return nil
 		}
 
-		// Skip files exceeding max size to avoid OOM on giant artifacts.
-		if maxFileSize > 0 {
-			if info, statErr := d.Info(); statErr == nil && info.Size() > maxFileSize {
-				return nil
+		// One stat serves both the oversized-file guard and the cache stat
+		// signature (size + mtime). On a stat error we neither skip nor record a
+		// signature — a zero StatSig simply never engages the fast path.
+		var sizeBytes, mtimeNs int64
+		if info, statErr := d.Info(); statErr == nil {
+			if maxFileSize > 0 && info.Size() > maxFileSize {
+				return nil // skip oversized artifacts to avoid OOM
 			}
+			sizeBytes = info.Size()
+			mtimeNs = info.ModTime().UnixNano()
 		}
 
 		data, err := fs.ReadFile(fsys, path)
@@ -305,6 +310,8 @@ func scanImpl(fsys fs.FS, skip []string, maxFileSize int64) ([]*Document, error)
 		doc := &Document{
 			Path:        path,
 			RawContent:  data,
+			Size:        sizeBytes,
+			MtimeNs:     mtimeNs,
 			Frontmatter: make(map[string]any),
 		}
 

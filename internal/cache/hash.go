@@ -64,6 +64,32 @@ func RuleHash(r rules.Rule) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// ScanIdentityHash captures the configuration inputs that change which findings a
+// document produces without changing the document's own bytes: the scan root, the
+// skip list, and the foreign roots. Folding it into the cache key closes the hole
+// (adversarial finding 3) where a config edit would otherwise serve findings
+// computed under the previous configuration. Lists are sorted for determinism.
+func ScanIdentityHash(scanRoot string, skip, foreignRoots []string) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "root:%s\n", scanRoot)
+
+	sk := make([]string, len(skip))
+	copy(sk, skip)
+	sort.Strings(sk)
+	for _, s := range sk {
+		fmt.Fprintf(h, "skip:%s\n", s)
+	}
+
+	fr := make([]string, len(foreignRoots))
+	copy(fr, foreignRoots)
+	sort.Strings(fr)
+	for _, f := range fr {
+		fmt.Fprintf(h, "foreign:%s\n", f)
+	}
+
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // CombinedHash merges a file content hash with applicable rule hashes
 // into a single deterministic hash. Rule hashes are sorted before combining.
 func CombinedHash(fileHash string, ruleHashes []string) string {

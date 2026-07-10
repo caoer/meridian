@@ -1,9 +1,18 @@
 package engine
 
 import (
+	"encoding/gob"
 	"regexp"
 	"strings"
 )
+
+func init() {
+	// The persistent cache (internal/cache) stores Facts through an interface
+	// field, so gob needs the concrete type registered to round-trip a shard. The
+	// cache never imports the engine (engine → cache already), so registration
+	// lives here — any build that uses the engine can decode a cache shard.
+	gob.Register(Facts{})
+}
 
 // Facts is the per-document fact set: a pure function of the document's own
 // bytes (frontmatter + body), extracted ONCE per scan and injected to checks
