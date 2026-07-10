@@ -37,11 +37,11 @@ var All = map[string]engine.CheckFunc{
 
 // Phase2 lists the checks whose verdict depends on state outside a single
 // document's own bytes — the corpus path universe (link resolution against
-// __scanned_paths), external program output (probe), or, once U6 lands, external
-// git state. The engine runs these in a separate pass over per-run snapshots and
-// NEVER persists their findings to the per-doc cache: a cached verdict would go
-// stale when the external state changes with the doc unchanged (the Ruff INP001
-// bug class). Register via engine.MarkPhase2.
+// __scanned_paths), external program output (probe), or external git state
+// (the effect-pin family, added by U6). The engine runs these in a separate
+// pass over per-run snapshots and NEVER persists their findings to the per-doc
+// cache: a cached verdict would go stale when the external state changes with
+// the doc unchanged (the Ruff INP001 bug class). Register via engine.MarkPhase2.
 //
 // Membership is the governing invariant applied per check — phase-2 iff the
 // verdict depends on anything outside the doc+sidecar bytes:
@@ -51,11 +51,15 @@ var All = map[string]engine.CheckFunc{
 //     so a content-addressed cache would serve a stale verdict the moment the
 //     probed system changes (opt-in, severity-off by default — recompute-every-run
 //     is its current cost, no regression).
-// Doc-local link checks are deliberately absent: table-wikilink-pipe (unescaped
+//   - effect-pin-resolves / effect-pin-on-origin / effect-checksum-reproduces /
+//     effect-pin-stale: resolve pins against external git refs under
+//     $CCC_LLM_WIKI_REPOS_ROOT (origin sha, ancestry, checksum), recomputed every
+//     run over a per-run snapshot (plan §2).
+// Doc-local checks are deliberately absent: table-wikilink-pipe (unescaped
 // pipes in a row — no cross-file input) and wiki-navlink / backticked-wikilink
-// (pure body grammar) stay phase-1 and remain cacheable. U6 appends the
-// effect-pin family (effect-pin-resolves, effect-pin-on-origin,
-// effect-checksum-reproduces, effect-pin-stale, effect-unpinned).
+// (pure body grammar) stay phase-1 and remain cacheable. effect-unpinned is also
+// phase-1: it is a pure function of the page's own frontmatter (is a pin present
+// at all?), so it is correctly cacheable and NOT listed here.
 var Phase2 = []string{
 	"broken-wikilink",
 	"ambiguous-wikilink",
@@ -63,4 +67,8 @@ var Phase2 = []string{
 	"link-resolve",
 	"property",
 	"probe",
+	"effect-pin-resolves",
+	"effect-pin-on-origin",
+	"effect-checksum-reproduces",
+	"effect-pin-stale",
 }

@@ -32,6 +32,10 @@ func TestPhase2_MembershipInvariant(t *testing.T) {
 		"probe",
 		"property",
 		"wikilink-canonicalize",
+		"effect-pin-resolves",
+		"effect-pin-on-origin",
+		"effect-checksum-reproduces",
+		"effect-pin-stale",
 	}
 
 	got := append([]string(nil), Phase2...)
