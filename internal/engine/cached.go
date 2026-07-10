@@ -189,7 +189,13 @@ func (e *Engine) evalOneDoc(doc *Document, active []activeRule, fsys fs.FS, scan
 		}
 	}
 
-	// Cache miss or no store — evaluate all active rules against this doc.
+	// Cache miss or no store — extract this doc's facts once (phase 1) so every
+	// rule below sees the same links/tags/pin, then evaluate all active rules.
+	// Extraction runs here, in the worker, so it is parallelized and shares the
+	// content-hash point with U7's future factsHash. Each doc is owned by one
+	// goroutine, so writing doc.Facts needs no synchronization.
+	doc.Facts = ExtractFacts(doc)
+
 	var res docResult
 	var docFindings []types.Finding
 	hadPanic := false
@@ -275,6 +281,10 @@ func (e *Engine) evalDoc(doc *Document, ar activeRule, fsys fs.FS, scannedPaths 
 	}
 	effectiveParams["__scanned_paths"] = scannedPaths
 	effectiveParams["__index_cache"] = indexCache
+	// Phase-1 facts for this doc (links/embeds/tags/title/headings/pin), extracted
+	// once in evalOneDoc. Link-family and pin checks consume these in U5/U6; today
+	// they still self-scan, so a zero-valued Facts (RunForPaths path) is harmless.
+	effectiveParams["__facts"] = doc.Facts
 	if indexMu != nil {
 		effectiveParams["__index_cache_mu"] = indexMu
 	}
