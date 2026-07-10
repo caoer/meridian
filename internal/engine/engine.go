@@ -23,6 +23,7 @@ type CheckFunc func(doc *Document, params map[string]any) []RawFinding
 // Engine runs rules against documents.
 type Engine struct {
 	checks       map[string]CheckFunc
+	phase2       map[string]bool // check names whose findings are recomputed every run, never cached
 	warnings     []types.Warning
 	skip         []string // directory names to skip during scan
 	maxFileSize  int64    // max file size in bytes; 0 = no limit
@@ -86,6 +87,29 @@ func (e *Engine) RegisterCheck(name string, fn CheckFunc) {
 	e.checks[name] = fn
 }
 
+// MarkPhase2 records check names as phase-2 members: their verdict depends on
+// state outside a single document's own bytes (the corpus path universe, git
+// refs), so the engine runs them in a separate pass over per-run snapshots and
+// NEVER writes their findings to the per-doc cache — a cached verdict would go
+// stale when an unrelated file is added or removed (the Ruff INP001 class of
+// bug). U6 adds the effect-pin family here; the caller (see checks.Phase2)
+// owns the authoritative list. Names not registered as checks are ignored.
+func (e *Engine) MarkPhase2(names ...string) {
+	if e.phase2 == nil {
+		e.phase2 = make(map[string]bool, len(names))
+	}
+	for _, n := range names {
+		e.phase2[n] = true
+	}
+}
+
+// isPhase2 reports whether a rule's check is a phase-2 member. An engine with
+// no phase-2 checks marked treats every rule as phase-1 — identical to the
+// pre-split single-pass behavior, which keeps direct-engine tests unchanged.
+func (e *Engine) isPhase2(check string) bool {
+	return e.phase2[check]
+}
+
 // Warnings returns accumulated warnings from the last Run.
 func (e *Engine) Warnings() []types.Warning {
 	return e.warnings
@@ -134,6 +158,12 @@ func (e *Engine) RunForPaths(fsys fs.FS, ruleList []rules.Rule, targetPaths []st
 
 	var findings []types.Finding
 	for _, doc := range docs {
+		// Extract this doc's facts once so link-family and pin checks consume
+		// __facts here exactly as they do on the full-scan path. Without this,
+		// a scoped run (md fix / md mv / watch incremental) would inject a
+		// zero-valued Facts and the fact-consuming checks would silently find
+		// nothing (plan §7: RunForPaths is in U5's scope).
+		doc.Facts = ExtractFacts(doc)
 		for _, ar := range active {
 			if !Match(ar.rule.On, doc.Path, doc.Tags) {
 				continue
