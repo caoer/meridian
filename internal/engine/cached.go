@@ -284,13 +284,19 @@ func (e *Engine) runPhase2(fsys fs.FS, docs []*Document, phase2Active []activeRu
 	wg.Wait()
 
 	// Merge in scan order: identical (doc, rule) sequence as a serial pass, so
-	// findings and CHECK_PANIC warnings are byte-identical after sortFindings.
+	// findings are byte-identical after sortFindings.
 	var findings []types.Finding
+	var panicMsgs []string
 	for i := range docs {
 		findings = append(findings, results[i].findings...)
-		for _, msg := range results[i].panicMsgs {
-			e.warnings = append(e.warnings, types.Warning{Code: "CHECK_PANIC", Message: msg})
-		}
+		panicMsgs = append(panicMsgs, results[i].panicMsgs...)
+	}
+	// CHECK_PANIC warnings sorted by message before appending — the same discipline
+	// as the phase-1 loop (plan §7 U2), so the two passes never use divergent
+	// ordering for the same warning code. Deterministic for serial and parallel.
+	sort.Strings(panicMsgs)
+	for _, msg := range panicMsgs {
+		e.warnings = append(e.warnings, types.Warning{Code: "CHECK_PANIC", Message: msg})
 	}
 
 	// Batch-infra failure warnings (Decision 8): stable order, deduped.
@@ -391,8 +397,13 @@ func (e *Engine) evalOneDoc(doc *Document, phase1 []activeRule, fsys fs.FS, scan
 		if hit, ok := store.Lookup(key); ok {
 			if f, ok := hit.Facts.(Facts); ok {
 				doc.Facts = f
+				return docResult{findings: hit.Findings}
 			}
-			return docResult{findings: hit.Findings}
+			// Facts failed to decode to the expected type (a stale-format shard or
+			// gob drift the version salt should prevent). Fall through and treat this
+			// as a MISS — re-extract and re-evaluate — rather than serving
+			// hit.Findings with empty facts, which would make the phase-2 pass
+			// silently under-report on this doc (loud-when-broken, not false-clean).
 		}
 	}
 

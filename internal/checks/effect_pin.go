@@ -206,6 +206,15 @@ func (p effectPin) safety() string {
 	if !branchRe.MatchString(p.Branch) || strings.Contains(p.Branch, "..") {
 		return fmt.Sprintf("branch %q is not a valid ref name (allowed: letters, digits, . _ / -; no \"..\")", p.Branch)
 	}
+	// repo becomes a filesystem path via filepath.Join($CCC_LLM_WIKI_REPOS_ROOT,
+	// repo) in resolveRepoDir. checkSafeField only blocks control chars + a leading
+	// '-', so without this an unchecked ".." would let attacker-authored frontmatter
+	// (repo: ../../x) escape the repos root and point every pin-verification git
+	// command at an arbitrary repo. Same charset guard as branch; resolveRepoDir
+	// adds a filepath.Rel containment belt.
+	if !branchRe.MatchString(p.Repo) || strings.Contains(p.Repo, "..") {
+		return fmt.Sprintf("repo %q is not a valid slug (allowed: letters, digits, . _ / -; no \"..\")", p.Repo)
+	}
 	return ""
 }
 
@@ -241,6 +250,12 @@ func resolveRepoDir(slug string) (string, bool) {
 		return "", false
 	}
 	dir := filepath.Join(root, slug)
+	// Containment belt (defense in depth beside safety()'s ".." guard): a slug that
+	// resolves outside the repos root is refused even if it somehow reached here
+	// unvalidated (e.g. a future caller that skips safety()).
+	if rel, err := filepath.Rel(root, dir); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
 	if st, err := os.Stat(dir); err == nil && st.IsDir() {
 		return dir, true
 	}
@@ -318,11 +333,15 @@ type objInfo struct {
 }
 
 // repoData holds one repo's resolved batch results, accumulated across ensure
-// calls. objs is keyed by the exact object name fed on stdin.
+// calls. objs is keyed by the exact object name fed on stdin. batchFailed records
+// that a cat-file batch for this repo errored (timeout/git hiccup): an empty objs
+// from a failed batch is "unverified this run" (Decision 8), never proof a commit
+// is missing — the checks must not turn infra failure into a false finding.
 type repoData struct {
-	dir     string
-	present bool
-	objs    map[string]objInfo
+	dir         string
+	present     bool
+	batchFailed bool
+	objs        map[string]objInfo
 }
 
 // ancestorEntry / selfEntry are per-key single-flight cells: the sync.Once runs
@@ -565,6 +584,10 @@ func (r *pinResolver) batch(slug string, queries []string) {
 	stdin := []byte(strings.Join(queries, "\n") + "\n")
 	out, err := r.runner.run(rd.dir, stdin, "cat-file", "--batch-check")
 	if err != nil {
+		// Mark the repo unverified so a downstream check reads the empty objs map
+		// as "infra failed" rather than "commit missing" — the effect-pin-resolves
+		// check would otherwise emit a false "does not resolve" finding.
+		rd.batchFailed = true
 		if r.warn != nil {
 			r.warn(fmt.Sprintf("effect-pin: cat-file --batch-check failed in %s: %v — pins unverified this run", slug, err))
 		}
@@ -720,6 +743,13 @@ func effectPinResolvesCheck(doc *engine.Document, params map[string]any) []engin
 	pin, r, findings, ok := pinPreamble(doc, params, true)
 	if !ok {
 		return findings
+	}
+	// A failed cat-file batch leaves objs empty for this repo; that is "unverified
+	// this run" (already surfaced as a warning, Decision 8), not proof the commit is
+	// missing. Without this guard a transient git timeout would emit a false
+	// "commit does not resolve" finding and fail the run.
+	if r.repo(pin.Repo).batchFailed {
+		return nil
 	}
 	if !r.commitExists(pin) {
 		info := r.repo(pin.Repo).objs[pin.Commit]
