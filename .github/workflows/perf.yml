@@ -14,8 +14,8 @@ name: perf
 #
 # The corpus is generated, not stored: test/perf/gen is seeded and
 # deterministic, so "the golden dataset" is (generator code, seed, size) —
-# reviewable in diffs, no artifact hosting. Sizes are parameters; the nightly
-# large tier runs 100k docs.
+# reviewable in diffs, no artifact hosting. Sizes are parameters; the large
+# tier runs 100k docs.
 #
 # Two more tiers guard the persistent fact cache (the two-phase engine's warm
 # path). The cache serves phase-1 (pure-doc) facts+findings; phase-2 (the link
@@ -28,13 +28,16 @@ name: perf
 #      does not reproduce (exit 2 => PR fails). Cheap; runs on the medium corpus
 #      already benched, so the cache is warm. entries_checked>0 is asserted so a
 #      cold cache can't pass the gate vacuously.
-#   4. Nightly wiki-corpus tier: a home-wiki-SHAPED ×N corpus (fixture git repos
+#   4. Large (100k) post-merge canary: slope gate 10k→100k on every push to
+#      main, plus nightly schedule + workflow_dispatch. NOT on every PR — PR
+#      already has the runner-invariant 1k/10k ratio+slope gates; 100k is
+#      minutes of wall clock and would mostly re-prove the same shape.
+#   5. Nightly wiki-corpus tier: a home-wiki-SHAPED ×N corpus (fixture git repos
 #      + vendored 3-pack rules + effect pins + .runs.md sidecars — self-contained,
 #      built by test/perf/gen -profile wiki, no external state) exercised with
 #      MD_CACHE_VERIFY=1 as the cache honesty gate at wiki scale. Nightly + on
-#      demand (workflow_dispatch). Failure posture: a failed scheduled run
-#      surfaces via GitHub's standard workflow-failure notification, same as the
-#      `large` nightly tier — no bespoke alerting.
+#      demand (workflow_dispatch) only — shape (links/effects) ≠ flat 100k gen
+#      docs; different bug class, still too heavy for every PR.
 
 on:
   pull_request:
@@ -185,7 +188,11 @@ jobs:
           echo "verify sample OK: ${checked} entries checked, no divergence"
 
   large:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Post-merge canary on main + nightly + manual. Skip PRs (see header §4).
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
