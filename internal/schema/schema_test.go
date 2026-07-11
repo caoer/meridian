@@ -198,6 +198,87 @@ contract-version: 999
 	}
 }
 
+func TestEffective_ContractVersion2(t *testing.T) {
+	// A wiki pinning contract-version: 2 resolves (no unknown-version error)
+	// and shows the v2 deltas: cluster layout note + UPPERCASE INDEX.md entry.
+	dir := t.TempDir()
+	schema := "---\ncontract-version: 2\n---\n"
+	if err := os.WriteFile(filepath.Join(dir, "SCHEMA.md"), []byte(schema), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := Effective(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v, ok := m["contract-version"]; !ok || v != 2 {
+		t.Errorf("contract-version = %v, want 2", v)
+	}
+	// v2 still carries the outbox tier (effects arrives in v3).
+	if _, ok := m["outbox"]; !ok {
+		t.Error("v2: expected outbox clause still present")
+	}
+	// Layout carries the UPPERCASE INDEX.md entry, not lowercase index.md.
+	dirs := layoutDirs(t, m)
+	if !dirs["INDEX.md"] {
+		t.Error("v2: layout missing INDEX.md entry")
+	}
+	if dirs["index.md"] {
+		t.Error("v2: layout still carries lowercase index.md")
+	}
+}
+
+func TestEffective_ContractVersion3(t *testing.T) {
+	// A wiki pinning contract-version: 3 resolves and shows the effects tier:
+	// outbox clause retired, effects clause + effects/ layout dir present.
+	dir := t.TempDir()
+	schema := "---\ncontract-version: 3\n---\n"
+	if err := os.WriteFile(filepath.Join(dir, "SCHEMA.md"), []byte(schema), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := Effective(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v, ok := m["contract-version"]; !ok || v != 3 {
+		t.Errorf("contract-version = %v, want 3", v)
+	}
+	if _, ok := m["outbox"]; ok {
+		t.Error("v3: outbox clause must be retired")
+	}
+	if _, ok := m["effects"]; !ok {
+		t.Error("v3: missing effects clause")
+	}
+	dirs := layoutDirs(t, m)
+	if !dirs["effects"] {
+		t.Error("v3: layout missing effects/ dir")
+	}
+	if dirs["outbox"] {
+		t.Error("v3: layout still carries outbox/")
+	}
+	// Shared minima survive the merge unchanged.
+	if _, ok := m["frontmatter_minima"]; !ok {
+		t.Error("v3: frontmatter_minima missing")
+	}
+}
+
+// layoutDirs indexes an effective schema's layout by dir name.
+func layoutDirs(t *testing.T, m map[string]any) map[string]bool {
+	t.Helper()
+	layout, ok := m["layout"].([]map[string]any)
+	if !ok {
+		t.Fatalf("layout type: %T", m["layout"])
+	}
+	dirs := make(map[string]bool, len(layout))
+	for _, e := range layout {
+		if d, ok := e["dir"].(string); ok {
+			dirs[d] = true
+		}
+	}
+	return dirs
+}
+
 func TestEffective_NoFrontmatter(t *testing.T) {
 	dir := t.TempDir()
 	// SCHEMA.md exists but has no frontmatter.
