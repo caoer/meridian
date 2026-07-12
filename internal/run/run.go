@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,6 +41,7 @@ type RunOpt func(*runConfig)
 
 type runConfig struct {
 	record bool
+	params map[string]string
 }
 
 // Record enables per-task output capture for a sidecar run record: each task's
@@ -48,6 +50,16 @@ type runConfig struct {
 // Pair with WriteRecord to persist. The source document is never mutated.
 func Record() RunOpt {
 	return func(c *runConfig) { c.record = true }
+}
+
+// Params supplies named task parameters (md run's non-reserved top-level JSON
+// keys, already string-converted). Every key must be declared by a requested
+// leaf's md-<name>-params contract — an undeclared key fails loud before
+// anything executes, so a typo can never silently run the default behavior.
+// Each leaf receives only the params IT declares, projected as MD_PARAM_*
+// env vars.
+func Params(p map[string]string) RunOpt {
+	return func(c *runConfig) { c.params = p }
 }
 
 // stderrTailMax bounds how much of a failing task's stderr is retained — enough
@@ -89,6 +101,7 @@ type TaskInfo struct {
 	Composition []string
 	Args        []string // required positional arg names (md-<name>-args contract)
 	Env         []string // required env var names (md-<name>-env contract)
+	Params      []string // optional named param names (md-<name>-params contract)
 	Language    string
 	Error       string
 }
@@ -214,6 +227,64 @@ func resolveTaskBlock(mdPath, content string, task Task, res *noteResolver) (Blo
 	return b, targetPath, nil
 }
 
+// checkParams gates named params at resolution time: every passed key must be
+// declared by at least one requested leaf's md-<name>-params contract. The
+// error lists what the requested tasks accept, so a blind JSON caller can
+// self-correct.
+func checkParams(tasks map[string]Task, leaves []string, params map[string]string) error {
+	if len(params) == 0 {
+		return nil
+	}
+	declared := make(map[string]bool)
+	var accepted []string
+	for _, name := range leaves {
+		for _, p := range tasks[name].Params {
+			if !declared[p] {
+				declared[p] = true
+				accepted = append(accepted, p)
+			}
+		}
+	}
+	var unknown []string
+	for k := range params {
+		if !declared[k] {
+			unknown = append(unknown, k)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	sort.Strings(accepted)
+	accepts := "none"
+	if len(accepted) > 0 {
+		accepts = strings.Join(accepted, ", ")
+	}
+	return fmt.Errorf("unknown param(s): %s — the requested task(s) accept: %s (declared via md-<task>-params)",
+		strings.Join(unknown, ", "), accepts)
+}
+
+// taskEnv builds a leaf's execution environment: the process environment with
+// every ambient MD_PARAM_* scrubbed, plus this run's projections of the params
+// the leaf DECLARES. Scrubbing keeps the parameter surface per-invocation —
+// a default-off guard must not flip on because a parent process (e.g. a task
+// that itself calls md run) had a param set.
+func taskEnv(task Task, params map[string]string) []string {
+	environ := os.Environ()
+	env := make([]string, 0, len(environ)+len(task.Params))
+	for _, kv := range environ {
+		if !strings.HasPrefix(kv, ParamEnvPrefix) {
+			env = append(env, kv)
+		}
+	}
+	for _, p := range task.Params {
+		if v, ok := params[p]; ok {
+			env = append(env, ParamEnvVar(p)+"="+v)
+		}
+	}
+	return env
+}
+
 // RunTasks executes the named tasks declared in mdPath's frontmatter.
 // All names are expanded, every distinct leaf's block is resolved once, and
 // every required interpreter is verified on PATH before anything executes —
@@ -238,6 +309,9 @@ func RunTasks(mdPath string, names, args []string, timeout time.Duration, stdout
 	}
 	leaves, err := ExpandNames(tasks, names)
 	if err != nil {
+		return nil, "", err
+	}
+	if err := checkParams(tasks, leaves, cfg.params); err != nil {
 		return nil, "", err
 	}
 
@@ -311,7 +385,7 @@ func RunTasks(mdPath string, names, args []string, timeout time.Duration, stdout
 			errW = io.MultiWriter(errW, capture)
 			startedAt = time.Now()
 		}
-		code, timedOut, err := ExecBlock(b, args, taskCwd, timeout, outW, errW)
+		code, timedOut, err := ExecBlock(b, args, taskEnv(tasks[name], cfg.params), taskCwd, timeout, outW, errW)
 		if err != nil {
 			return results, cwd, fmt.Errorf("task %s: %w", name, err)
 		}
@@ -345,7 +419,7 @@ func ListTasks(mdPath string) ([]TaskInfo, error) {
 	infos := make([]TaskInfo, 0, len(tasks))
 	for _, name := range TaskNames(tasks) {
 		task := tasks[name]
-		info := TaskInfo{Name: name, Ref: task.Ref, Composition: task.Composition, Args: task.Args, Env: task.Env}
+		info := TaskInfo{Name: name, Ref: task.Ref, Composition: task.Composition, Args: task.Args, Env: task.Env, Params: task.Params}
 		if task.Ref != "" {
 			if b, _, err := resolveTaskBlock(mdPath, content, task, res); err != nil {
 				info.Error = err.Error()

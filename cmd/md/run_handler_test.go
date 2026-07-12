@@ -319,3 +319,108 @@ func TestRunHandlerNoRecordByDefault(t *testing.T) {
 		t.Fatal("sidecar written without record param")
 	}
 }
+
+const runHandlerParamsDoc = `---
+md-sweep: "[[params-note#^sweep]]"
+md-sweep-params: "include_untracked, limit, label"
+---
+
+` + "```bash" + `
+echo "u=${MD_PARAM_INCLUDE_UNTRACKED:-unset} n=${MD_PARAM_LIMIT:-unset} l=${MD_PARAM_LABEL:-unset}"
+` + "```" + `
+
+^sweep
+`
+
+func writeParamsRepo(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	full := filepath.Join(root, "params-note.md")
+	if err := os.WriteFile(full, []byte(runHandlerParamsDoc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return full
+}
+
+func TestRunHandlerNamedParams(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"sweep","format":"json","include_untracked":true,"limit":3,"label":"x y"}`
+	if code := r.Run([]string{"run", params}, nil); code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	_, data := decodeRunData(t, out)
+	if !strings.Contains(data.Stdout, "u=1 n=3 l=x y") {
+		t.Errorf("param conversion/projection wrong: %q", data.Stdout)
+	}
+}
+
+func TestRunHandlerNamedParamFalseIsAbsent(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"sweep","format":"json","include_untracked":false}`
+	if code := r.Run([]string{"run", params}, nil); code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	_, data := decodeRunData(t, out)
+	if !strings.Contains(data.Stdout, "u=unset") {
+		t.Errorf("false must project as absent (opt-in semantics): %q", data.Stdout)
+	}
+}
+
+func TestRunHandlerUndeclaredParamExitsTwo(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"sweep","format":"json","include_untraked":true}`
+	if code := r.Run([]string{"run", params}, nil); code != 2 {
+		t.Fatalf("undeclared param must exit 2, got %d: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "include_untracked, label, limit") {
+		t.Errorf("error must list accepted params: %s", out.String())
+	}
+}
+
+func TestRunHandlerParamBadValueType(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"sweep","format":"json","label":["a"]}`
+	if code := r.Run([]string{"run", params}, nil); code != 2 {
+		t.Fatalf("array param value must exit 2, got %d: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "string, number, or bool") {
+		t.Errorf("error must name allowed value types: %s", out.String())
+	}
+}
+
+func TestRunHandlerParamsWithListRejected(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","list":true,"include_untracked":true}`
+	if code := r.Run([]string{"run", params}, nil); code != 2 {
+		t.Fatalf("params with list must exit 2, got %d: %s", code, out.String())
+	}
+}
+
+func TestRunHandlerListShowsParams(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","list":true,"format":"json"}`
+	if code := r.Run([]string{"run", params}, nil); code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	var resp cli.Response
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(resp.Data)
+	var data cli.RunListData
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Tasks) != 1 || len(data.Tasks[0].Params) != 3 {
+		t.Errorf("list must carry the params contract: %+v", data.Tasks)
+	}
+}

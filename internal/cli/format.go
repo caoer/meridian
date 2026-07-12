@@ -371,6 +371,9 @@ func formatData(w io.Writer, data any) {
 			if len(task.Env) > 0 {
 				fmt.Fprintf(w, "    requires env: %s\n", strings.Join(task.Env, ", "))
 			}
+			if len(task.Params) > 0 {
+				fmt.Fprintf(w, "    accepts params: %s\n", strings.Join(task.Params, ", "))
+			}
 			if task.Error != "" {
 				fmt.Fprintf(w, "    ERROR: %s\n", task.Error)
 			}

@@ -180,3 +180,110 @@ func TestListTasksIncludesContract(t *testing.T) {
 		t.Errorf("plain must carry no contract: %+v", byName["plain"])
 	}
 }
+
+const paramsDoc = `---
+md-sweep: "[[note#^sweep]]"
+md-sweep-params: "include_untracked, paths"
+md-other: "[[note#^other]]"
+md-both: "other,sweep"
+---
+
+` + "```bash" + `
+echo "untracked=${MD_PARAM_INCLUDE_UNTRACKED:-unset} paths=${MD_PARAM_PATHS:-unset}"
+` + "```" + `
+
+^sweep
+
+` + "```bash" + `
+echo "other untracked=${MD_PARAM_INCLUDE_UNTRACKED:-unset}"
+` + "```" + `
+
+^other
+`
+
+func TestParamsProjectedAsEnv(t *testing.T) {
+	md := writeRepo(t, "note.md", paramsDoc)
+	var stdout, stderr bytes.Buffer
+	_, _, err := RunTasks(md, []string{"sweep"}, nil, 0, &stdout, &stderr,
+		Params(map[string]string{"include_untracked": "1"}))
+	if err != nil {
+		t.Fatalf("declared param must run: %v", err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "untracked=1 paths=unset") {
+		t.Errorf("param projection wrong: %q", got)
+	}
+}
+
+func TestParamsUndeclaredFailsLoudBeforeExec(t *testing.T) {
+	md := writeRepo(t, "note.md", paramsDoc)
+	var stdout, stderr bytes.Buffer
+	results, _, err := RunTasks(md, []string{"sweep"}, nil, 0, &stdout, &stderr,
+		Params(map[string]string{"include_untraked": "1"})) // typo
+	if err == nil || !strings.Contains(err.Error(), "include_untraked") ||
+		!strings.Contains(err.Error(), "include_untracked, paths") {
+		t.Fatalf("typo'd param must fail loud listing accepted params, got: %v", err)
+	}
+	if len(results) != 0 || stdout.Len() != 0 {
+		t.Errorf("nothing must execute on unknown param: results=%+v stdout=%q", results, stdout.String())
+	}
+}
+
+func TestParamsOnlyReachDeclaringLeaf(t *testing.T) {
+	md := writeRepo(t, "note.md", paramsDoc)
+	var stdout, stderr bytes.Buffer
+	_, _, err := RunTasks(md, []string{"both"}, nil, 0, &stdout, &stderr,
+		Params(map[string]string{"include_untracked": "1"}))
+	if err != nil {
+		t.Fatalf("param declared by one composition leaf must run: %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "other untracked=unset") {
+		t.Errorf("non-declaring leaf must not see the param: %q", got)
+	}
+	if !strings.Contains(got, "untracked=1 paths=unset") {
+		t.Errorf("declaring leaf must see the param: %q", got)
+	}
+}
+
+func TestParamsAmbientEnvScrubbed(t *testing.T) {
+	md := writeRepo(t, "note.md", paramsDoc)
+	t.Setenv("MD_PARAM_INCLUDE_UNTRACKED", "1") // e.g. a parent md run's projection leaking down
+	var stdout, stderr bytes.Buffer
+	if _, _, err := RunTasks(md, []string{"sweep"}, nil, 0, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "untracked=unset") {
+		t.Errorf("ambient MD_PARAM_* must be scrubbed — default-off guard flipped on: %q", got)
+	}
+}
+
+func TestParamsContractRejectsInvalidName(t *testing.T) {
+	_, err := ExtractTasks(map[string]any{
+		"md-sweep":        "[[note#^sweep]]",
+		"md-sweep-params": "Include-Untracked",
+	})
+	if err == nil || !strings.Contains(err.Error(), "snake_case") {
+		t.Fatalf("invalid param name must fail loud, got: %v", err)
+	}
+}
+
+func TestParamsContractRejectsReservedShadow(t *testing.T) {
+	_, err := ExtractTasks(map[string]any{
+		"md-sweep":        "[[note#^sweep]]",
+		"md-sweep-params": "timeout",
+	})
+	if err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("reserved-key shadow must fail loud, got: %v", err)
+	}
+}
+
+func TestParamsContractOnCompositionRejected(t *testing.T) {
+	_, err := ExtractTasks(map[string]any{
+		"md-sweep":      "[[note#^sweep]]",
+		"md-all":        "sweep",
+		"md-all-params": "include_untracked",
+	})
+	if err == nil || !strings.Contains(err.Error(), "composition") {
+		t.Fatalf("params contract on a composition must fail loud, got: %v", err)
+	}
+}

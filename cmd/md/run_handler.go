@@ -33,10 +33,20 @@ func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 			Timeout string          `json:"timeout"`
 			Record  bool            `json:"record"`
 		}
+		var taskParams map[string]string
 		if req.Params != nil {
 			if err := json.Unmarshal(req.Params, &params); err != nil {
 				return cli.ErrorResponse(cli.ErrInvalidParams, "invalid params: "+err.Error())
 			}
+			// Non-reserved top-level keys are named task params — the doc's
+			// md-<task>-params contract is the schema; validation happens at
+			// resolution time so an undeclared key (or a typo of a reserved
+			// one) fails loud instead of silently running the default.
+			tp, err := extractTaskParams(req.Params)
+			if err != nil {
+				return cli.ErrorResponse(cli.ErrInvalidParams, err.Error())
+			}
+			taskParams = tp
 		}
 		if params.File == "" {
 			return cli.ErrorResponse(cli.ErrInvalidParams, "missing required param: file")
@@ -54,6 +64,9 @@ func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 		}
 
 		if params.List {
+			if len(taskParams) > 0 {
+				return cli.ErrorResponse(cli.ErrInvalidParams, "named task params make no sense with list: true — pass them with name")
+			}
 			infos, err := run.ListTasks(params.File)
 			if err != nil {
 				return cli.ErrorResponse(cli.ErrInvalidInput, err.Error())
@@ -62,7 +75,7 @@ func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 			for _, ti := range infos {
 				data.Tasks = append(data.Tasks, cli.RunListTaskData{
 					Name: ti.Name, Ref: ti.Ref, Composition: ti.Composition,
-					Args: ti.Args, Env: ti.Env,
+					Args: ti.Args, Env: ti.Env, Params: ti.Params,
 					Language: ti.Language, Error: ti.Error,
 				})
 			}
@@ -89,6 +102,9 @@ func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 		var opts []run.RunOpt
 		if params.Record {
 			opts = append(opts, run.Record())
+		}
+		if len(taskParams) > 0 {
+			opts = append(opts, run.Params(taskParams))
 		}
 		results, cwd, runErr := run.RunTasks(params.File, names, params.Args, timeout, outW, errW, opts...)
 
@@ -151,4 +167,46 @@ func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 
 		return &cli.Response{Version: cli.ResponseVersion, Data: data, Findings: findings}
 	}
+}
+
+// extractTaskParams partitions the request's top-level JSON keys: reserved
+// keys belong to md run itself; everything else is a named task param
+// (declared via md-<task>-params, validated at resolution time). Values are
+// string-converted for env projection: string verbatim, number as its
+// literal, true → "1", false → omitted (params are opt-in; false and absent
+// are the same state). Anything else fails loud — env vars carry strings.
+func extractTaskParams(raw json.RawMessage) (map[string]string, error) {
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &all); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	reserved := make(map[string]bool, len(run.ReservedParams))
+	for _, k := range run.ReservedParams {
+		reserved[k] = true
+	}
+	out := map[string]string{}
+	for k, v := range all {
+		if reserved[k] {
+			continue
+		}
+		var s string
+		if err := json.Unmarshal(v, &s); err == nil {
+			out[k] = s
+			continue
+		}
+		var b bool
+		if err := json.Unmarshal(v, &b); err == nil {
+			if b {
+				out[k] = "1"
+			}
+			continue
+		}
+		var n json.Number
+		if err := json.Unmarshal(v, &n); err == nil {
+			out[k] = n.String()
+			continue
+		}
+		return nil, fmt.Errorf("param %q: value must be a string, number, or bool (env vars carry strings) — got %s", k, string(v))
+	}
+	return out, nil
 }
