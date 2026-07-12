@@ -41,7 +41,10 @@ type RunOpt func(*runConfig)
 
 type runConfig struct {
 	record bool
-	params map[string]string
+	// named params, one map so presence and value can't drift: a key's presence
+	// means the caller supplied it (validated against declarations regardless of
+	// value); a non-nil value is what projects to the leaf's env.
+	params map[string]*string
 }
 
 // Record enables per-task output capture for a sidecar run record: each task's
@@ -53,12 +56,13 @@ func Record() RunOpt {
 }
 
 // Params supplies named task parameters (md run's non-reserved top-level JSON
-// keys, already string-converted). Every key must be declared by a requested
-// leaf's md-<name>-params contract — an undeclared key fails loud before
-// anything executes, so a typo can never silently run the default behavior.
-// Each leaf receives only the params IT declares, projected as MD_PARAM_*
-// env vars.
-func Params(p map[string]string) RunOpt {
+// keys) as one map so presence and value can't drift. A key's presence means the
+// caller supplied it — validated against md-<name>-params regardless of value,
+// so an undeclared or typo'd key fails loud before anything executes even when
+// its value is false. A non-nil value is what projects to the leaf's env; a nil
+// value is an opt-in false (present, but MD_PARAM_* stays unset). Each leaf
+// receives only the params IT declares.
+func Params(p map[string]*string) RunOpt {
 	return func(c *runConfig) { c.params = p }
 }
 
@@ -227,11 +231,13 @@ func resolveTaskBlock(mdPath, content string, task Task, res *noteResolver) (Blo
 	return b, targetPath, nil
 }
 
-// checkParams gates named params at resolution time: every passed key must be
-// declared by at least one requested leaf's md-<name>-params contract. The
-// error lists what the requested tasks accept, so a blind JSON caller can
-// self-correct.
-func checkParams(tasks map[string]Task, leaves []string, params map[string]string) error {
+// checkParams gates named params at resolution time: every supplied key must be
+// declared by at least one requested leaf's md-<name>-params contract. It keys
+// off PRESENCE (every key the caller supplied, whatever its value) so a typo'd
+// key still fails loud even when its value is false — value-carrying and
+// key-existence are separate questions. The error lists what the requested
+// tasks accept, so a blind JSON caller can self-correct.
+func checkParams(tasks map[string]Task, leaves []string, params map[string]*string) error {
 	if len(params) == 0 {
 		return nil
 	}
@@ -269,7 +275,7 @@ func checkParams(tasks map[string]Task, leaves []string, params map[string]strin
 // the leaf DECLARES. Scrubbing keeps the parameter surface per-invocation —
 // a default-off guard must not flip on because a parent process (e.g. a task
 // that itself calls md run) had a param set.
-func taskEnv(task Task, params map[string]string) []string {
+func taskEnv(task Task, params map[string]*string) []string {
 	environ := os.Environ()
 	env := make([]string, 0, len(environ)+len(task.Params))
 	for _, kv := range environ {
@@ -278,8 +284,9 @@ func taskEnv(task Task, params map[string]string) []string {
 		}
 	}
 	for _, p := range task.Params {
-		if v, ok := params[p]; ok {
-			env = append(env, ParamEnvVar(p)+"="+v)
+		// non-nil = projected; nil (opt-in false) or absent = leave unset
+		if v := params[p]; v != nil {
+			env = append(env, ParamEnvVar(p)+"="+*v)
 		}
 	}
 	return env

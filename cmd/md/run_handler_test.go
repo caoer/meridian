@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/caoer/meridian/internal/cli"
+	"github.com/caoer/meridian/internal/run"
 )
 
 const runHandlerDoc = `---
@@ -392,6 +394,115 @@ func TestRunHandlerParamBadValueType(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "string, number, or bool") {
 		t.Errorf("error must name allowed value types: %s", out.String())
+	}
+}
+
+// A null param value is a mistake, not the default — projecting it as an empty
+// env var is exactly what let {"paths":null} widen the asset sweep to the whole
+// repo. It must fail loud before anything runs.
+func TestRunHandlerNullParamRejected(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"sweep","format":"json","label":null}`
+	if code := r.Run([]string{"run", params}, nil); code != 2 {
+		t.Fatalf("null param value must exit 2, got %d: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "null is not a value") {
+		t.Errorf("error must explain null is not a value: %s", out.String())
+	}
+}
+
+func TestRunHandlerEmptyStringParamRejected(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"sweep","format":"json","label":""}`
+	if code := r.Run([]string{"run", params}, nil); code != 2 {
+		t.Fatalf("empty-string param value must exit 2, got %d: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "not a value") {
+		t.Errorf("error must explain empty string is not a value: %s", out.String())
+	}
+}
+
+// A whitespace-only value is the same mistake as "" — it must not project a
+// semantically-empty MD_PARAM_* (the null check trims, the empty check must too).
+func TestRunHandlerWhitespaceOnlyParamRejected(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"sweep","format":"json","label":"   "}`
+	if code := r.Run([]string{"run", params}, nil); code != 2 {
+		t.Fatalf("whitespace-only param value must exit 2, got %d: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "not a value") {
+		t.Errorf("error must reject the whitespace-only value: %s", out.String())
+	}
+}
+
+// A NUL (or other control char) in a value passes JSON decode but can never be
+// an env var — Go's exec rejects it. Catch it at resolution, before any task in
+// a chain runs, not as a mid-chain crash after earlier tasks mutated state.
+func TestRunHandlerControlCharParamRejected(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	// json.Marshal encodes the NUL rune as a \u0000 escape — valid JSON, no raw
+	// NUL byte in this source file.
+	raw, _ := json.Marshal(map[string]any{"file": md, "name": "sweep", "format": "json", "label": "a\x00b"})
+	if code := r.Run([]string{"run", string(raw)}, nil); code != 2 {
+		t.Fatalf("control-char param value must exit 2, got %d: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "control byte") {
+		t.Errorf("error must name the control byte: %s", out.String())
+	}
+}
+
+// The core of the fail-loud contract: a typo'd/undeclared key must fail loud
+// REGARDLESS of its value. A false value previously projected nothing and so
+// slipped past validation — {"include_untraked":false} silently ran the default.
+func TestRunHandlerFalseValuedTypoFailsLoud(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"sweep","format":"json","include_untraked":false}`
+	if code := r.Run([]string{"run", params}, nil); code != 2 {
+		t.Fatalf("false-valued undeclared param must still exit 2, got %d: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "include_untracked, label, limit") {
+		t.Errorf("error must list accepted params: %s", out.String())
+	}
+}
+
+// The three reserved-key sites (this struct, run.ReservedParams, and the help
+// map) must not drift. Cross-check the two that decide BEHAVIOR: a struct field
+// missing from ReservedParams would be misread as a task param, and vice versa.
+func TestReservedParamsMatchRequestStruct(t *testing.T) {
+	tags := map[string]bool{}
+	rt := reflect.TypeOf(runRequest{})
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		// An embedded field promotes ITS json keys into the request surface, but
+		// this walk only sees direct fields — so an embedded field would silently
+		// evade the cross-check (the very drift this test guards). Refuse it.
+		if f.Anonymous {
+			t.Fatalf("runRequest has an embedded field %q — its promoted json keys join the unmarshal surface but this cross-check only walks direct fields; flatten it or extend this test", f.Name)
+		}
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		tags[name] = true
+	}
+	reserved := map[string]bool{}
+	for _, k := range run.ReservedParams {
+		reserved[k] = true
+	}
+	for name := range tags {
+		if !reserved[name] {
+			t.Errorf("runRequest field %q is not in run.ReservedParams — a real md run key would be misread as a task param", name)
+		}
+	}
+	for _, k := range run.ReservedParams {
+		if !tags[k] {
+			t.Errorf("run.ReservedParams has %q but runRequest has no matching json field — partition/help would drift", k)
+		}
 	}
 }
 

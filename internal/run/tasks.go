@@ -116,7 +116,7 @@ func ExtractTasks(meta map[string]any) (map[string]Task, error) {
 	for _, c := range contracts {
 		task, ok := tasks[c.base]
 		if !ok {
-			return nil, fmt.Errorf("frontmatter %s: contract key has no base task md-%s — the -args/-env suffixes are reserved for task contracts", c.key, c.base)
+			return nil, fmt.Errorf("frontmatter %s: contract key has no base task md-%s — the -args/-env/-params suffixes are reserved for task contracts", c.key, c.base)
 		}
 		if task.Ref == "" {
 			return nil, fmt.Errorf("frontmatter %s: contracts attach to block-ref tasks, not compositions — declare it on the leaves of md-%s", c.key, c.base)

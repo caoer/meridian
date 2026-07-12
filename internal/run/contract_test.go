@@ -201,11 +201,15 @@ echo "other untracked=${MD_PARAM_INCLUDE_UNTRACKED:-unset}"
 ^other
 `
 
+// sp returns a pointer to s — a projected param value (non-nil = projects to
+// env; a nil map entry would be an opt-in false).
+func sp(s string) *string { return &s }
+
 func TestParamsProjectedAsEnv(t *testing.T) {
 	md := writeRepo(t, "note.md", paramsDoc)
 	var stdout, stderr bytes.Buffer
 	_, _, err := RunTasks(md, []string{"sweep"}, nil, 0, &stdout, &stderr,
-		Params(map[string]string{"include_untracked": "1"}))
+		Params(map[string]*string{"include_untracked": sp("1")}))
 	if err != nil {
 		t.Fatalf("declared param must run: %v", err)
 	}
@@ -218,7 +222,7 @@ func TestParamsUndeclaredFailsLoudBeforeExec(t *testing.T) {
 	md := writeRepo(t, "note.md", paramsDoc)
 	var stdout, stderr bytes.Buffer
 	results, _, err := RunTasks(md, []string{"sweep"}, nil, 0, &stdout, &stderr,
-		Params(map[string]string{"include_untraked": "1"})) // typo
+		Params(map[string]*string{"include_untraked": sp("1")})) // typo
 	if err == nil || !strings.Contains(err.Error(), "include_untraked") ||
 		!strings.Contains(err.Error(), "include_untracked, paths") {
 		t.Fatalf("typo'd param must fail loud listing accepted params, got: %v", err)
@@ -232,7 +236,7 @@ func TestParamsOnlyReachDeclaringLeaf(t *testing.T) {
 	md := writeRepo(t, "note.md", paramsDoc)
 	var stdout, stderr bytes.Buffer
 	_, _, err := RunTasks(md, []string{"both"}, nil, 0, &stdout, &stderr,
-		Params(map[string]string{"include_untracked": "1"}))
+		Params(map[string]*string{"include_untracked": sp("1")}))
 	if err != nil {
 		t.Fatalf("param declared by one composition leaf must run: %v", err)
 	}
