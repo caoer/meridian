@@ -303,6 +303,11 @@ func formatData(w io.Writer, data any) {
 			io.WriteString(w, m.Content)
 		}
 
+	case SkillRenderData:
+		// stdout carries the rendered body only — a harness injects it
+		// verbatim; skill/directive metadata goes to stderr from the handler.
+		io.WriteString(w, d.Content)
+
 	case RunData:
 		// Task rows follow the silence-is-ok law: success prints nothing
 		// (harness fenced-! blocks merge stderr into the capture, so even

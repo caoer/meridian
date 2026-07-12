@@ -219,6 +219,23 @@ func main() {
 	// llm-wiki check is deliberately NOT config-gated: it is the environment
 	// doctor that must run on a machine with nothing set up yet.
 	router.Handle("llm-wiki check", llmWikiCheckHandler())
+	// skill render is deliberately NOT config-gated: it renders a shipped
+	// skill folder anywhere, standing in for a harness's load-time
+	// pre-resolution.
+	router.Handle("skill render", skillRenderHandler())
+	// `md skill render <dir>` — positional sugar for {"skill": "<dir>"}. The
+	// bare path must exist, otherwise fail loud: a typo'd folder must never
+	// read as an empty render.
+	router.HandlePositional("skill render", func(arg string) (json.RawMessage, error) {
+		if _, err := os.Stat(arg); err != nil {
+			return nil, fmt.Errorf("skill render: %q is neither JSON params nor an existing skill folder", arg)
+		}
+		params, err := json.Marshal(map[string]string{"skill": arg})
+		if err != nil {
+			return nil, err
+		}
+		return params, nil
+	})
 
 	os.Exit(router.Run(os.Args[1:], stdinIfPiped()))
 }
