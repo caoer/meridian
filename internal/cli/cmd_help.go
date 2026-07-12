@@ -229,6 +229,20 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 				`md read '{"target":"wiki/meridian/development.md","strip-frontmatter":true}'`,
 			},
 		},
+		"skill render": {
+			Description: "Render a skill folder the way a harness does at load time: read <skill>/SKILL.md, strip frontmatter, execute both embedded-command styles in document order — fenced ```! blocks (whole fence replaced by merged stdout+stderr; a non-zero exit still inlines the output, the block's own failure line is the signal) and inline !`cmd` pre-resolution directives (stdout replaces on exit 0, stderr discarded; on failure the literal directive remains so fallback prose engages). Doc examples written as `` !`cmd` `` never execute. Env: caller's cwd, skill bin/ prepended to PATH, CCC_SKILL_DIR defaulted to the skill's parent dir (env wins). timeout bounds each directive (process group killed, exit 124). Text mode: rendered body on stdout, receipts on stderr; directive failures are warnings, never exit 1 — render is the load path",
+			Usage:       "md skill render <skill-dir>  |  md skill render '{\"skill\":\"<skill-dir>\"}'",
+			Params: map[string]paramHelp{
+				"skill":   {Type: "string", Required: true},
+				"timeout": {Type: "string", Required: false},
+				"format":  {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "rendered (directive failures are warnings)", "2": "no SKILL.md, invalid params, or spawn failure"},
+			Examples: []string{
+				`md skill render skills/llm-wiki`,
+				`md skill render '{"skill":"skills/llm-wiki","timeout":"30s"}'`,
+			},
+		},
 		"watch": {
 			Description: "Start filesystem watcher daemon",
 			Usage:       "md watch",
