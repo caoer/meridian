@@ -13,12 +13,16 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// metaFields are the 4 required fields every check rule must have.
+// metaFields are the loader-consumed top-level fields on a check rule: the 4
+// mandatory ones (check/message/severity/on) plus the optional `required`
+// registration-gate flag. Membership here keeps a field out of the
+// check-specific Params map.
 var metaFields = map[string]bool{
 	"check":    true,
 	"message":  true,
 	"severity": true,
 	"on":       true,
+	"required": true,
 }
 
 // propertyMetaFields are top-level fields consumed by the loader for property rules.
@@ -233,6 +237,17 @@ func loadCheckRule(raw map[string]any, path string) (Rule, []string, error) {
 		return Rule{}, nil, err
 	}
 
+	// Extract required — optional bool. A non-bool value is a config error, not
+	// a silently-ignored field: a typo'd `required: "true"` (string) must never
+	// read as an un-gated rule.
+	required := false
+	if rv, ok := raw["required"]; ok {
+		required, ok = rv.(bool)
+		if !ok {
+			return Rule{}, nil, fmt.Errorf("required must be a bool, got %T", rv)
+		}
+	}
+
 	// Collect check-specific params (everything not in meta)
 	params := make(map[string]any)
 	for k, v := range raw {
@@ -251,6 +266,7 @@ func loadCheckRule(raw map[string]any, path string) (Rule, []string, error) {
 		Severity: sev,
 		On:       onFilter,
 		Params:   params,
+		Required: required,
 	}, nil, nil
 }
 

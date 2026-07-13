@@ -28,6 +28,8 @@ var All = map[string]engine.CheckFunc{
 	"effect-checksum-reproduces": effectChecksumReproducesCheck,
 	"effect-pin-stale":           effectPinStaleCheck,
 	"effect-unpinned":            effectUnpinnedCheck,
+	"effect-rootless":            effectRootlessCheck,
+	"body-value-echo":            bodyValueEchoCheck,
 	"probe":                      probeCheck,
 	"stale-run-record":           staleRunRecordCheck,
 	"wikilink-canonicalize":      wikilinkCanonicalizeCheck,
@@ -55,6 +57,7 @@ var All = map[string]engine.CheckFunc{
 //     effect-pin-stale: resolve pins against external git refs under
 //     $CCC_LLM_WIKI_REPOS_ROOT (origin sha, ancestry, checksum), recomputed every
 //     run over a per-run snapshot (plan §2).
+//
 // Doc-local checks are deliberately absent: table-wikilink-pipe (unescaped
 // pipes in a row — no cross-file input) and wiki-navlink / backticked-wikilink
 // (pure body grammar) stay phase-1 and remain cacheable. effect-unpinned is also

@@ -25,6 +25,7 @@ type Engine struct {
 	checks       map[string]CheckFunc
 	phase2       map[string]bool // check names whose findings are recomputed every run, never cached
 	warnings     []types.Warning
+	fatalErr     error    // set when a `required:true` rule names an unregistered check — a tool failure, not a skip
 	skip         []string // directory names to skip during scan
 	maxFileSize  int64    // max file size in bytes; 0 = no limit
 	foreignRoots []string // root-relative path prefixes for foreign (resolution-only) content
@@ -117,6 +118,16 @@ func (e *Engine) Warnings() []types.Warning {
 	return e.warnings
 }
 
+// FatalErr returns a tool-failure error from the last run, or nil. It is set
+// when a rule marked `required: true` names a check the engine has no
+// implementation for: an unregistered required check must fail loud (exit 2)
+// rather than degrade to a skipped-rule warning, so a stale binary running an
+// evolved pack can never report a green gate while enforcing less. The caller
+// (a CLI handler) maps a non-nil result to an error response.
+func (e *Engine) FatalErr() error {
+	return e.fatalErr
+}
+
 // ScannedPaths returns the full path universe (the CollectPaths link-target set)
 // collected during the last full RunCached. U8's cache wiring passes it to
 // store.Prune after a complete run to evict entries for vanished documents. It is
@@ -139,6 +150,7 @@ func (e *Engine) Run(fsys fs.FS, ruleList []rules.Rule) []types.Finding {
 // This is O(walk + len(targetPaths)) instead of O(N) full-file reads.
 func (e *Engine) RunForPaths(fsys fs.FS, ruleList []rules.Rule, targetPaths []string) []types.Finding {
 	e.warnings = nil
+	e.fatalErr = nil
 	// A scoped run walks only part of the corpus, so it must never leave behind a
 	// path universe that a later Prune could treat as complete (and evict the
 	// unscanned majority). Clear it unconditionally.

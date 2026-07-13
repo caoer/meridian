@@ -692,6 +692,13 @@ func runCacheVerify(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Co
 	store, _ := cache.OpenForRoot(cfg.Scan.Root)
 	store.ResetStats()
 	cached := eng.RunCached(fsys, loadedRules, store)
+	if ferr := eng.FatalErr(); ferr != nil {
+		// The stale-binary floor holds even under the cache-verify honesty gate:
+		// a required unregistered check fails loud rather than reporting a
+		// divergence verdict computed with the rule silently skipped.
+		return cli.ErrorResponseWithHint(cli.ErrCheckNotRegistered, ferr.Error(),
+			"the rule pack requires a check this binary lacks — reinstall md (just install) or rebuild from the pinned commit")
+	}
 	hits := store.Stats().Hits
 	warnings := eng.Warnings()
 
@@ -862,6 +869,15 @@ func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Conf
 
 		store.ResetStats() // per-invocation stats, not cumulative
 		findings := eng.RunCached(fsys, loadedRules, store)
+
+		// A `required:true` rule whose check the binary does not register is a tool
+		// failure (exit 2), not a warn-and-continue: fail loud before persisting a
+		// cache or reporting a green gate. This is the stale-binary floor — an old
+		// build against an evolved pack must never pass emptily.
+		if ferr := eng.FatalErr(); ferr != nil {
+			return cli.ErrorResponseWithHint(cli.ErrCheckNotRegistered, ferr.Error(),
+				"the rule pack requires a check this binary lacks — reinstall md (just install) or rebuild from the pinned commit")
+		}
 
 		// Persist after a full run: evict entries for vanished documents, then
 		// write dirty shards. checkHandler always scans the whole corpus (scope is
