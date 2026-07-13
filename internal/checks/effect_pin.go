@@ -1,27 +1,47 @@
-// Effect-contract pin checks (home-wiki effects layer, advisor-ratified
-// 2026-07-06). An effect page pins its artifact with frontmatter:
+// Effect-contract pin checks (home-wiki effects layer; re-founded 2026-07-13
+// behind the tri-state shape predicate, plan §4 U-B2c / decision of record
+// effect-attestation-refounding). The pin is a RECEIPT written by the act of
+// applying, no longer a hand-maintained vouch — and the same five rules govern
+// both the legacy and the migrated page shape, discriminated by the two
+// frontmatter markers (no migration wedge, no push-freeze path):
 //
-//	repo: <slug>            resolves at $CCC_LLM_WIKI_REPOS_ROOT/<slug>
-//	branch: <branch>        canonical branch (on-origin target)
-//	commit: <sha>           pinned commit
-//	location: [<path>, …]   repo-relative paths (dir → tree, file → blob)
-//	checksum: <sha> | […]   git object id per location, paired by index
+//	legacy shape        `commit:` in frontmatter, `inputs:` absent — v1 field
+//	                    mechanics unchanged (repo/branch/commit/location/
+//	                    checksum all in frontmatter)
+//	receipt shape       `inputs:` present, no frontmatter `commit` — the git
+//	                    checks read commit/checksum from the fenced ^receipt
+//	                    body block (adopted only under a non-null `receipt:`
+//	                    ref; `receipt: null` is the D1 born-invalid state).
+//	                    `branch` is a repo-level fact on the sources/git/<slug>
+//	                    catalog page, resolved via __repo_branches.
+//	transitional shape  both markers — legacy verification still applies to the
+//	                    still-present frontmatter pin AND effect-unpinned warns,
+//	                    naming the mid-migration state (a page must never carry
+//	                    an unverified pin)
 //
 // Five checks share the pin parser and a per-RUN git snapshot (U6):
 //
 //	effect-pin-resolves      commit exists in the repo (cat-file type == commit)
-//	effect-pin-on-origin     commit is on origin/<branch> (ancestor of the origin
-//	                         tip); self-pins (pinned repo == scanned repo) also
-//	                         pass when the commit is an ancestor of HEAD — the
-//	                         pin and its content travel in the same push
+//	effect-pin-on-origin     pointed pins: commit is on origin/<branch>
+//	                         (ancestor of the origin tip). Owned pins (pinned
+//	                         repo IS the scanned repo, or `owned-repo` param
+//	                         match): the ancestry carve-out is DELETED — content
+//	                         at HEAD is the attestation, so the check is an
+//	                         owned-location stat (every pinned location exists
+//	                         in the working tree)
 //	effect-checksum-reproduces  <commit>:<location> object id == checksum — the
 //	                         ONLY sanctioned method (git-archive|shasum is
 //	                         git-version-dependent; working-tree find|shasum is
 //	                         contaminated by .DS_Store/untracked/order)
 //	effect-pin-stale         origin/<branch> advanced past the pin AND the
 //	                         location content drifted → the pin is stale
-//	effect-unpinned          a type/effect page carries no commit pin (pure —
-//	                         phase-1, no git; not in registry.go Phase2)
+//	effect-unpinned          the pin-state rule (pure — phase-1, no git; not in
+//	                         registry.go Phase2): no-marker pages warn as
+//	                         unpinned; transitional pages warn as mid-migration;
+//	                         receipt-shape pages carry the D1 tri-state
+//	                         (`receipt: null` born-invalid warn / valued
+//	                         `receipt: '[[#^receipt]]'` silent / owned pages
+//	                         carry no receipt key at all)
 //
 // PHASE-2 CLASSIFICATION (U6, plan §2/§4/§7). The verdict of the four git
 // checks depends on EXTERNAL STATE (git origin refs, $CCC_LLM_WIKI_REPOS_ROOT),
@@ -75,80 +95,58 @@ import (
 // envReposRoot mirrors cli.EnvReposRootVar (import would cycle: cli → checks).
 const envReposRoot = "CCC_LLM_WIKI_REPOS_ROOT"
 
-// effectPin is the parsed pin frontmatter of an effect page.
+// effectPin is the checks-side view of a parsed pin: the engine's PinFields
+// fact (the ONE pin parser — extraction lives in engine.ExtractPin, so the
+// __all_pins corpus batch and the per-doc checks can never disagree about a
+// pin's fields) plus the checks-side policy methods.
 type effectPin struct {
-	Repo      string
-	Branch    string
-	Commit    string
-	Locations []string
-	Checksums []string
+	engine.PinFields
 }
 
-// parsePin extracts pin fields. The commit IS the pin: present=false when the
-// page carries no commit — deliberate tombstones (status: retired, source lost,
-// no commit fabricated) are not malformed pins, they are unpinned. problem is
-// non-empty when a pin is present but malformed (missing fields, count mismatch).
-func parsePin(doc *engine.Document) (pin effectPin, present bool, problem string) {
-	fm := doc.Frontmatter
-	str := func(key string) string {
-		if v, ok := fm[key].(string); ok {
-			return strings.TrimSpace(v)
-		}
-		return ""
+// parsePin extracts the pin via the shared engine extractor and classifies its
+// shape. shape==PinShapeNone ⇔ the page carries neither marker — deliberate
+// tombstones (status: retired, source lost, no commit fabricated) are not
+// malformed pins, they are unpinned. problem is non-empty when a pin is
+// present but malformed (missing fields, count mismatch) under its shape's
+// completeness rules.
+func parsePin(doc *engine.Document) (pin effectPin, shape engine.PinShape, problem string) {
+	pf := engine.ExtractPin(doc)
+	shape = pf.Shape()
+	if shape == engine.PinShapeNone {
+		return effectPin{}, shape, ""
 	}
-	list := func(key string) []string {
-		switch v := fm[key].(type) {
-		case string:
-			if s := strings.TrimSpace(v); s != "" {
-				return []string{s}
-			}
-		case []any:
-			var out []string
-			for _, item := range v {
-				if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
-					out = append(out, strings.TrimSpace(s))
-				}
-			}
-			return out
-		}
-		return nil
-	}
-
-	pin.Repo = str("repo")
-	pin.Branch = str("branch")
-	pin.Commit = str("commit")
-	pin.Locations = list("location")
-	pin.Checksums = list("checksum")
-
-	if pin.Commit == "" {
-		return pin, false, ""
-	}
-	return pin, true, pin.completeness()
+	pin = effectPin{*pf}
+	return pin, shape, pin.completeness()
 }
 
 // effectPinFromFields adapts an engine.PinFields fact (extracted once at scan,
-// injected as __all_pins) into the checks-side effectPin. Only present pins
-// (commit != "") ever become PinFields, so no present flag is needed.
+// injected as __all_pins) into the checks-side effectPin.
 func effectPinFromFields(p engine.PinFields) effectPin {
-	return effectPin{
-		Repo:      p.Repo,
-		Branch:    p.Branch,
-		Commit:    p.Commit,
-		Locations: p.Locations,
-		Checksums: p.Checksums,
-	}
+	return effectPin{p}
 }
 
-// completeness reports a malformed-pin problem for a present pin (missing
-// fields or a location/checksum count mismatch), or "" when well-formed.
+// completeness reports a malformed-pin problem (missing fields or a
+// location/checksum count mismatch), or "" when well-formed. Shape-aware:
+//
+//   - legacy/transitional: the v1 rules — a present frontmatter commit must be
+//     accompanied by repo, branch, location, and index-paired checksums.
+//   - receipt: only a page that CLAIMS attestation (a commit adopted from the
+//     ^receipt block under a non-null receipt ref) is held to completeness —
+//     repo, location, index-paired checksums; branch is a catalog-page fact
+//     (__repo_branches), never required on the page. A receipt page with no
+//     adopted commit (receipt: null, key absent, dangling ref) is never
+//     malformed-error: it reads as unpinned-warn (effect-unpinned's D1
+//     tri-state) — the plan's no-push-freeze ground truth.
 func (p effectPin) completeness() string {
+	if p.Shape() == engine.PinShapeReceipt && p.Commit == "" {
+		return ""
+	}
 	var missing []string
-	for _, f := range []struct{ name, val string }{
-		{"repo", p.Repo}, {"branch", p.Branch},
-	} {
-		if f.val == "" {
-			missing = append(missing, f.name)
-		}
+	if p.Repo == "" {
+		missing = append(missing, "repo")
+	}
+	if p.Shape() != engine.PinShapeReceipt && p.Branch == "" {
+		missing = append(missing, "branch")
 	}
 	if len(p.Locations) == 0 {
 		missing = append(missing, "location")
@@ -203,7 +201,10 @@ func (p effectPin) safety() string {
 			return "checksum contains control characters"
 		}
 	}
-	if !branchRe.MatchString(p.Branch) || strings.Contains(p.Branch, "..") {
+	// Branch is validated only when present: a receipt-shape pin legitimately
+	// carries none on the page (catalog-page fact) — the corpus-resolved branch
+	// is re-validated through this same func before it reaches git.
+	if p.Branch != "" && (!branchRe.MatchString(p.Branch) || strings.Contains(p.Branch, "..")) {
 		return fmt.Sprintf("branch %q is not a valid ref name (allowed: letters, digits, . _ / -; no \"..\")", p.Branch)
 	}
 	// repo becomes a filesystem path via filepath.Join($CCC_LLM_WIKI_REPOS_ROOT,
@@ -232,15 +233,45 @@ func checkSafeField(name, val string) string {
 
 // queries returns the batch-check stdin object names a well-formed pin needs:
 // commit existence, origin ref resolution, and per-location checksum + stale
-// drift object ids. Callers MUST have validated the pin (safety) first.
+// drift object ids. Callers MUST have validated the pin (safety) first, and
+// resolved a receipt pin's branch (resolveBranch) beforehand — a pin with no
+// branch contributes no origin-ref queries (its on-origin verdict is "branch
+// unresolvable", not a git question), and a pin with no commit contributes
+// nothing (an owned receipt page has no commit at all).
 func (p effectPin) queries() []string {
-	ob := "origin/" + p.Branch
-	qs := []string{p.Commit, ob}
+	if p.Commit == "" {
+		return nil
+	}
+	qs := []string{p.Commit}
+	var ob string
+	if p.Branch != "" {
+		ob = "origin/" + p.Branch
+		qs = append(qs, ob)
+	}
 	for _, loc := range p.Locations {
 		tl := strings.TrimSuffix(loc, "/")
-		qs = append(qs, p.Commit+":"+tl, ob+":"+tl)
+		qs = append(qs, p.Commit+":"+tl)
+		if ob != "" {
+			qs = append(qs, ob+":"+tl)
+		}
 	}
 	return qs
+}
+
+// resolveBranch fills a receipt-shape pin's branch from the __repo_branches
+// corpus map (slug → the sources/git catalog page's `branch:`). Legacy and
+// transitional pins carry their own frontmatter branch and are untouched, as
+// is a receipt pin that still carries one (tolerant reader, mid-migration).
+// Both consumers — the __all_pins snapshot build and the per-doc preamble —
+// resolve through this one func, so a pin's batch queries can never diverge
+// between them (the U10 lock-free objs read depends on that).
+func resolveBranch(p *effectPin, params map[string]any) {
+	if p.Branch != "" || p.Shape() != engine.PinShapeReceipt {
+		return
+	}
+	if branches, ok := params["__repo_branches"].(map[string]string); ok {
+		p.Branch = branches[p.Repo]
+	}
 }
 
 // resolveRepoDir resolves a repo slug at $CCC_LLM_WIKI_REPOS_ROOT/<slug>.
@@ -363,7 +394,7 @@ type selfEntry struct {
 // the un-batchable ancestry queries per (commit, ref). Built ONCE per run behind
 // a sync.Once (see resolverFor) so it is never a concurrent populate race — the
 // U6 thundering-herd lesson carried into the U10 parallel phase-2 pass. The
-// cat-file snapshot is built ACROSS repos; the containment/self-pin queries run
+// cat-file snapshot is built ACROSS repos; the containment/owned-repo queries run
 // lazily but per-key single-flight, so parallel consumers never fork a redundant
 // git. Correctness never rests on the memo: it only dedups identical git queries
 // within a single run's fixed snapshot.
@@ -378,8 +409,8 @@ type pinResolver struct {
 	mu       sync.Mutex                // guards repos, ancestor, self map get-or-create
 	repos    map[string]*repoData      // slug → resolved data
 	ancestor map[string]*ancestorEntry // "slug\x00commit\x00ref" → single-flight is-ancestor
-	self     map[string]*selfEntry     // slug → single-flight self-pin detection
-	// scanRoot git-common-dir, resolved once for self-pin detection.
+	self     map[string]*selfEntry     // slug → single-flight owned-repo detection
+	// scanRoot git-common-dir, resolved once for owned-repo detection.
 	scanCommonOnce sync.Once
 	scanCommon     string
 	warn           func(msg string) // batch-infra failure → engine warning (Decision 8)
@@ -460,8 +491,9 @@ func (r *pinResolver) buildFromParams(params map[string]any) {
 	seen := map[string]map[string]bool{}
 	for _, pf := range pins {
 		p := effectPinFromFields(pf)
-		if p.completeness() != "" || p.safety() != "" {
-			continue
+		resolveBranch(&p, params)
+		if p.Commit == "" || p.completeness() != "" || p.safety() != "" {
+			continue // no commit = nothing batchable (owned/born-invalid receipt shapes)
 		}
 		rd := r.repo(p.Repo)
 		if !rd.present {
@@ -647,13 +679,15 @@ func (r *pinResolver) isAncestor(slug, commit, ref string) bool {
 	return e.val
 }
 
-// isSelfPin reports whether the pinned repo IS the repo being scanned — an
-// effect page pinning colocated content in its own repo. For self-pins git's
-// ancestor closure substitutes for origin-containment: any push carrying the pin
-// page necessarily carries every ancestor commit. Requires __scan_root (absent
-// on pure-VFS runs → not-self, keeping the strict origin predicate). One
-// git-common-dir spawn per repo (+ one for the scan root, memoized).
-func (r *pinResolver) isSelfPin(slug string, params map[string]any) bool {
+// isOwnedRepo reports whether the pinned repo IS the repo being scanned — an
+// effect page pinning colocated content in its own repo (the mechanical
+// fallback for the OWNED discriminator when no `owned-repo` param declares
+// it). Owned content is at wiki HEAD by definition, so no origin-containment
+// or ancestry question applies to it — the on-origin check degrades to the
+// owned-location stat. Requires __scan_root (absent on pure-VFS runs →
+// not-owned, keeping the strict origin predicate). One git-common-dir spawn
+// per repo (+ one for the scan root, memoized).
+func (r *pinResolver) isOwnedRepo(slug string, params map[string]any) bool {
 	r.mu.Lock()
 	e, ok := r.self[slug]
 	if !ok {
@@ -662,12 +696,12 @@ func (r *pinResolver) isSelfPin(slug string, params map[string]any) bool {
 	}
 	r.mu.Unlock()
 	e.once.Do(func() {
-		e.val = r.computeSelfPin(slug, params)
+		e.val = r.computeOwnedRepo(slug, params)
 	})
 	return e.val
 }
 
-func (r *pinResolver) computeSelfPin(slug string, params map[string]any) bool {
+func (r *pinResolver) computeOwnedRepo(slug string, params map[string]any) bool {
 	scanRoot, _ := params["__scan_root"].(string)
 	if scanRoot == "" {
 		return false
@@ -677,7 +711,7 @@ func (r *pinResolver) computeSelfPin(slug string, params map[string]any) bool {
 		return false
 	}
 	// The scan root's git-common-dir is resolved once per run (shared across all
-	// self-pin checks); the Once makes that safe under the parallel pool.
+	// owned-repo checks); the Once makes that safe under the parallel pool.
 	r.scanCommonOnce.Do(func() {
 		r.scanCommon = r.commonDir(scanRoot)
 	})
@@ -707,42 +741,72 @@ func (r *pinResolver) commonDir(dir string) string {
 // preamble + the five checks (thin consumers of the resolver)
 // ---------------------------------------------------------------------------
 
+// ownedRepoParam reads the `owned-repo` rule param: the corpus's explicit
+// declaration of its own repo slug (the contract's owned discriminator —
+// `repo: home-wiki` for the home wiki). When set it is authoritative in both
+// directions; when absent the phase-2 checks fall back to the mechanical
+// owned-repo detection (pinned repo's git dir == scan root's git dir).
+func ownedRepoParam(params map[string]any) string {
+	v, _ := params["owned-repo"].(string)
+	return strings.TrimSpace(v)
+}
+
 // pinPreamble handles the shared skip/malformed/unsafe/absent-repo ladder and
 // returns the run-scoped resolver with this pin's queries ensured. ok=true → the
 // pin is well-formed, safe, its repo is present, and the resolver is ready.
-// Malformed/unsafe pins are reported only when reportProblems is set
-// (effect-pin-resolves) so the four rules never quadruple-report one bad pin.
-func pinPreamble(doc *engine.Document, params map[string]any, reportProblems bool) (pin effectPin, r *pinResolver, findings []engine.RawFinding, ok bool) {
-	pin, present, problem := parsePin(doc)
-	if !present {
-		return pin, nil, nil, false
+// owned reports the pin targets the corpus's own repo (param or mechanical
+// detection) — owned pins get the location-stat verification in on-origin,
+// never an origin/ancestry question. A POINTED pin with no verifiable commit
+// (receipt: null / key absent / dangling ref) is ok=false: nothing reaches
+// git, effect-unpinned owns that state as a warn. Malformed/unsafe pins are
+// reported only when reportProblems is set (effect-pin-resolves) so the four
+// rules never quadruple-report one bad pin.
+func pinPreamble(doc *engine.Document, params map[string]any, reportProblems bool) (pin effectPin, r *pinResolver, owned bool, findings []engine.RawFinding, ok bool) {
+	pin, shape, problem := parsePin(doc)
+	if shape == engine.PinShapeNone {
+		return pin, nil, false, nil, false
 	}
+	// The catalog-page branch joins the pin before safety(): a corpus-resolved
+	// branch is attacker-influenced frontmatter too and must pass the same
+	// validation before it can reach git argv or batch stdin.
+	resolveBranch(&pin, params)
 	if problem == "" {
 		problem = pin.safety()
 	}
 	if problem != "" {
 		if reportProblems {
-			return pin, nil, []engine.RawFinding{pinFinding(pin, problem)}, false
+			return pin, nil, false, []engine.RawFinding{pinFinding(pin, problem)}, false
 		}
-		return pin, nil, nil, false
+		return pin, nil, false, nil, false
 	}
 	if _, found := resolveRepoDir(pin.Repo); !found {
 		if reportAbsentRepo(params) {
-			return pin, nil, []engine.RawFinding{pinFinding(pin,
+			return pin, nil, false, []engine.RawFinding{pinFinding(pin,
 				fmt.Sprintf("repo %q not present at $%s/%s — pin unverifiable on this machine", pin.Repo, envReposRoot, pin.Repo))}, false
 		}
-		return pin, nil, nil, false
+		return pin, nil, false, nil, false
 	}
 	r = resolverFor(params)
+	if or := ownedRepoParam(params); or != "" {
+		owned = pin.Repo == or
+	} else {
+		owned = r.isOwnedRepo(pin.Repo, params)
+	}
+	if !owned && pin.Commit == "" {
+		return pin, r, owned, nil, false
+	}
 	r.ensure(pin)
-	return pin, r, nil, true
+	return pin, r, owned, nil, true
 }
 
 // effectPinResolvesCheck: the pinned commit exists in the repo.
 func effectPinResolvesCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
-	pin, r, findings, ok := pinPreamble(doc, params, true)
+	pin, r, _, findings, ok := pinPreamble(doc, params, true)
 	if !ok {
 		return findings
+	}
+	if pin.Commit == "" {
+		return nil // owned receipt shape carries no commit — nothing to resolve
 	}
 	// A failed cat-file batch leaves objs empty for this repo; that is "unverified
 	// this run" (already surfaced as a warning, Decision 8), not proof the commit is
@@ -766,13 +830,27 @@ func effectPinResolvesCheck(doc *engine.Document, params map[string]any) []engin
 // effectPinOnOriginCheck: the pinned commit is on origin/<branch> — a pin that
 // only exists in a local or stale checkout is the pilot-defect class.
 func effectPinOnOriginCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
-	pin, r, findings, ok := pinPreamble(doc, params, false)
+	pin, r, owned, findings, ok := pinPreamble(doc, params, false)
 	if !ok {
 		return findings
+	}
+	// Owned pins: the ancestry carve-out is deleted (refounding 2026-07-13) —
+	// owned content is at HEAD by definition, so no origin/ancestry question
+	// applies. The verifiable fact is the owned-location stat: every pinned
+	// location exists in the owned working tree.
+	if owned {
+		return ownedLocationFindings(pin, r)
 	}
 	// A commit that doesn't resolve is effect-pin-resolves territory.
 	if !r.commitExists(pin) {
 		return nil
+	}
+	// A receipt pin whose branch resolved neither on the page nor from the
+	// sources/git catalog page cannot be origin-verified — and a page must
+	// never carry an unverified pin.
+	if pin.Branch == "" {
+		return []engine.RawFinding{pinFinding(pin,
+			fmt.Sprintf("branch unresolvable for repo %q — no frontmatter branch and no sources/git catalog page declares one; the receipt cannot be verified on origin", pin.Repo))}
 	}
 	originRef := "origin/" + pin.Branch
 	if osha, resolves := r.objID(pin.Repo, originRef); resolves {
@@ -782,29 +860,46 @@ func effectPinOnOriginCheck(doc *engine.Document, params map[string]any) []engin
 			return nil
 		}
 	}
-	// Self-pin carve-out (amended 2026-07-09): ancestor-of-HEAD satisfies the
-	// contract — the pin and its content travel in the same push. A non-ancestor
-	// self-pin (side-branch / dangling / rebased-away) still errors.
-	if r.isSelfPin(pin.Repo, params) {
-		if r.isAncestor(pin.Repo, pin.Commit, "HEAD") {
-			return nil
-		}
-		return []engine.RawFinding{pinFinding(pin,
-			fmt.Sprintf("self-pin commit %s is neither on %s nor an ancestor of HEAD — side-branch or dangling commit", pin.Commit, originRef))}
-	}
 	return []engine.RawFinding{pinFinding(pin,
 		fmt.Sprintf("commit %s is not on %s — pin exists only in a local/stale checkout", pin.Commit, originRef))}
+}
+
+// ownedLocationFindings is the owned-pin verification: every pinned location
+// must exist in the owned repo's working tree (content at HEAD IS the
+// attestation — a missing location means the colocated artifact is gone while
+// the effect page still claims it). Paths are containment-checked against the
+// repo dir before any stat: `location` is attacker-influenced frontmatter and
+// this is the one place it becomes a filesystem path.
+func ownedLocationFindings(pin effectPin, r *pinResolver) []engine.RawFinding {
+	rd := r.repo(pin.Repo)
+	if !rd.present {
+		return nil // absent-repo ladder already ran in the preamble
+	}
+	var out []engine.RawFinding
+	for _, loc := range pin.Locations {
+		target := filepath.Join(rd.dir, strings.TrimSuffix(loc, "/"))
+		if rel, err := filepath.Rel(rd.dir, target); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			out = append(out, pinFinding(pin,
+				fmt.Sprintf("owned location %q escapes the repo root — refusing to stat", loc)))
+			continue
+		}
+		if _, err := os.Stat(target); err != nil {
+			out = append(out, pinFinding(pin,
+				fmt.Sprintf("owned location %q missing from the %s working tree — colocated content is the attestation and it is gone", loc, pin.Repo)))
+		}
+	}
+	return out
 }
 
 // effectChecksumReproducesCheck: per location, the pinned checksum reproduces
 // from the pin alone via <commit>:<location>'s object id.
 func effectChecksumReproducesCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
-	pin, r, findings, ok := pinPreamble(doc, params, false)
+	pin, r, _, findings, ok := pinPreamble(doc, params, false)
 	if !ok {
 		return findings
 	}
-	if !r.commitExists(pin) {
-		return nil // effect-pin-resolves reports this
+	if pin.Commit == "" || !r.commitExists(pin) {
+		return nil // no commit (owned receipt) has nothing to reproduce; a missing commit is effect-pin-resolves territory
 	}
 	var out []engine.RawFinding
 	for i, loc := range pin.Locations {
@@ -826,12 +921,12 @@ func effectChecksumReproducesCheck(doc *engine.Document, params map[string]any) 
 // location's content differs at origin — the pin is stale (content drifted).
 // Divergence (commit not an ancestor) is effect-pin-on-origin territory.
 func effectPinStaleCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
-	pin, r, findings, ok := pinPreamble(doc, params, false)
+	pin, r, _, findings, ok := pinPreamble(doc, params, false)
 	if !ok {
 		return findings
 	}
-	if !r.commitExists(pin) {
-		return nil
+	if pin.Commit == "" || pin.Branch == "" || !r.commitExists(pin) {
+		return nil // no commit/branch = no staleness question; unresolvable branch is on-origin's finding
 	}
 	originRef := "origin/" + pin.Branch
 	originSha, resolves := r.objID(pin.Repo, originRef)
@@ -856,10 +951,27 @@ func effectPinStaleCheck(doc *engine.Document, params map[string]any) []engine.R
 	return out
 }
 
-// effectUnpinnedCheck: silence must be earned — a page tagged type/effect with
-// no commit pin is either a declared tombstone (status: retired or pending) or
-// an authoring accident worth surfacing. Tag-scoped on parsed frontmatter tags,
-// never on path or body text. PURE (no git) → phase-1, cacheable.
+// effectUnpinnedCheck: the pin-STATE rule — silence must be earned. Tag-scoped
+// on parsed frontmatter tags, never on path or body text. PURE (the page's own
+// frontmatter + its ^receipt block — no git, no corpus) → phase-1, cacheable;
+// ownedness comes only from the `owned-repo` param (config, part of the scan
+// identity), never from git.
+//
+// Re-founded behind the tri-state shape predicate (U-B2c):
+//
+//   - no marker: the v1 warn — an unpinned type/effect page is either a
+//     declared tombstone (status: retired|pending, silent) or an accident.
+//   - legacy: silent — the four git checks verify the frontmatter pin.
+//   - transitional (both markers): a warn NAMES the mid-migration state; the
+//     frontmatter pin stays verified by the git checks until it is removed
+//     (closes the half-migrated dodge).
+//   - receipt: the D1 tri-state. Owned pages (repo == owned-repo) carry no
+//     receipt key at all — content at wiki HEAD is the attestation. Pointed
+//     pages: `receipt: null` is the born-invalid realise-queue member (warn,
+//     D1 severity ruling); `receipt: '[[#^receipt]]'` whose block carries
+//     commit+checksum values is pinned (silent); anything else — key absent
+//     (omission never carries meaning) or a ref without resolvable values —
+//     warns.
 func effectUnpinnedCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
 	isEffect := false
 	for _, tag := range doc.Tags {
@@ -871,16 +983,41 @@ func effectUnpinnedCheck(doc *engine.Document, params map[string]any) []engine.R
 	if !isEffect {
 		return nil
 	}
-	if _, present, _ := parsePin(doc); present {
-		return nil
-	}
 	if status, _ := doc.Frontmatter["status"].(string); status == "retired" || status == "pending" {
 		return nil
 	}
-	return []engine.RawFinding{{
-		Line: 1,
-		TemplateData: map[string]string{
-			"Reason": "type/effect page has no commit pin — pin it (repo/branch/commit/location/checksum) or declare status: retired|pending",
-		},
-	}}
+
+	warn := func(reason string) []engine.RawFinding {
+		return []engine.RawFinding{{
+			Line:         1,
+			TemplateData: map[string]string{"Reason": reason},
+		}}
+	}
+
+	pin := engine.ExtractPin(doc)
+	switch pin.Shape() {
+	case engine.PinShapeLegacy:
+		return nil
+	case engine.PinShapeTransitional:
+		return warn("mid-migration: page carries both the legacy frontmatter pin and receipt-era inputs: — the frontmatter pin remains verified until the migration completes (move commit/checksum into the ^receipt block and drop them from frontmatter)")
+	case engine.PinShapeReceipt:
+		owned := ownedRepoParam(params) != "" && pin.Repo == ownedRepoParam(params)
+		if owned {
+			if pin.HasReceiptKey {
+				return warn(fmt.Sprintf("owned effect (repo: %s) must not carry receipt: — colocated content at wiki HEAD is the attestation", pin.Repo))
+			}
+			return nil
+		}
+		switch {
+		case !pin.HasReceiptKey:
+			return warn("receipt: key absent on a pointed receipt-shape page — omission never carries meaning: declare receipt: null (born-invalid) or receipt: '[[#^receipt]]'")
+		case pin.ReceiptNull:
+			return warn("born invalid (D1): receipt: null — realise-queue member; the first realise writes the receipt and makes the effect valid")
+		case pin.ReceiptBlock && pin.Commit != "" && len(pin.Checksums) > 0:
+			return nil // pinned: the receipt ref resolves to commit+checksum values
+		default:
+			return warn(fmt.Sprintf("receipt: %q does not resolve to a fenced ^receipt block carrying commit+checksum values — the attestation claim is dangling", pin.ReceiptRef))
+		}
+	}
+	return warn("type/effect page has no pin — a legacy frontmatter pin (repo/branch/commit/location/checksum), a receipt-era inputs: chain, or status: retired|pending is required")
 }

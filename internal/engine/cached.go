@@ -235,8 +235,25 @@ func (e *Engine) runPhase2(fsys fs.FS, docs []*Document, phase2Active []activeRu
 		if !matched {
 			continue
 		}
-		if pin := extractPin(doc.Frontmatter); pin != nil {
+		if pin := ExtractPin(doc); pin != nil {
 			allPins = append(allPins, *pin)
+		}
+	}
+
+	// Corpus branch map (B2c): a receipt-shape page carries no `branch:` —
+	// branch is a repo-level fact on the sources/git/<slug> catalog page
+	// (type: repo, frontmatter name + branch). Gathered over ALL scanned docs
+	// (a catalog page need not match any effect rule) so the git checks can
+	// resolve origin/<branch> for receipt pins.
+	repoBranches := map[string]string{}
+	for _, doc := range docs {
+		if e.isForeignDoc(doc.Path) {
+			continue
+		}
+		if name, isRepo := extractRepo(doc.Frontmatter, doc.Tags); isRepo && name != "" {
+			if branch := fmStr(doc.Frontmatter, "branch"); branch != "" {
+				repoBranches[name] = branch
+			}
 		}
 	}
 
@@ -246,7 +263,8 @@ func (e *Engine) runPhase2(fsys fs.FS, docs []*Document, phase2Active []activeRu
 	var warnMu sync.Mutex
 	var phase2Warnings []string
 	extra := map[string]any{
-		"__all_pins": allPins,
+		"__all_pins":      allPins,
+		"__repo_branches": repoBranches,
 		"__warn": func(msg string) {
 			warnMu.Lock()
 			phase2Warnings = append(phase2Warnings, msg)

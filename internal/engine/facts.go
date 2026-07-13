@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 
+	"go.yaml.in/yaml/v3"
+
 	"github.com/caoer/meridian/internal/run"
 )
 
@@ -93,17 +95,67 @@ type HeadingFact struct {
 	Line  int
 }
 
-// PinFields is the effect-contract pin frontmatter of a document, extracted as
-// a pure fact. The malformed/present/absent policy stays in the effect-pin
-// checks (U6 consumes this) — here it is only the raw parsed fields. Facts.Pin
-// is nil exactly when the page carries no `commit:` field (the commit IS the
-// pin: an unpinned page is not a malformed pin).
+// PinFields is the effect-contract pin state of a document, extracted as a
+// pure fact. The malformed/present/absent policy stays in the effect-pin
+// checks — here it is only the raw parsed fields. Facts.Pin is nil exactly
+// when the page carries NEITHER pin marker: no frontmatter `commit:` (the
+// legacy pin) and no `inputs:` key (the receipt-era marker). B2c refounds the
+// pin behind a tri-state shape (see Shape): on a receipt-shape page the
+// verifiable Commit/Checksums are sourced from the `^receipt` body block (the
+// SCHEMA block-pointer convention), not from frontmatter, and Branch is a
+// repo-level fact that lives on the sources/git/<slug> catalog page — it stays
+// "" here and is resolved corpus-side (__repo_branches).
 type PinFields struct {
 	Repo      string
-	Branch    string
-	Commit    string
+	Branch    string // frontmatter branch; "" on receipt shape (catalog-page fact)
+	Commit    string // frontmatter commit (legacy/transitional) or ^receipt block commit (receipt)
 	Locations []string
-	Checksums []string
+	Checksums []string // frontmatter checksum (legacy/transitional) or ^receipt block checksum (receipt)
+
+	// Receipt-era shape markers (B2c). All pure per-doc facts.
+	HasFMCommit   bool   // frontmatter `commit:` present (the legacy marker)
+	HasInputs     bool   // frontmatter `inputs:` key present (the receipt-era marker)
+	HasReceiptKey bool   // frontmatter `receipt:` key present (distinguishes absent from null)
+	ReceiptNull   bool   // `receipt: null` — born-invalid realise-queue member (D1)
+	ReceiptRef    string // `receipt:` ref string when non-null ("" when absent or null)
+	ReceiptBlock  bool   // a fenced ^receipt block parsed as a YAML mapping
+}
+
+// PinShape is the tri-state shape predicate the re-founded effect-pin rules
+// share (plan §4 U-B2c): the same five rules govern both the legacy and the
+// migrated (receipt) page shapes, discriminated by the two frontmatter markers
+// — no migration wedge, no push-freeze path.
+type PinShape int
+
+const (
+	// PinShapeNone: neither marker — not a pin-bearing page.
+	PinShapeNone PinShape = iota
+	// PinShapeLegacy: `commit` in frontmatter AND `inputs:` absent — v1 field
+	// mechanics apply unchanged.
+	PinShapeLegacy
+	// PinShapeReceipt: `inputs:` present AND no frontmatter `commit` — the git
+	// checks read commit/checksum from the ^receipt block and verify them there.
+	PinShapeReceipt
+	// PinShapeTransitional: both markers present — legacy verification still
+	// applies to the still-present frontmatter pin, and a warn finding names the
+	// mid-migration state (a page must never carry an unverified pin).
+	PinShapeTransitional
+)
+
+// Shape derives the tri-state shape from the extracted markers. nil-safe:
+// a nil pin is PinShapeNone.
+func (p *PinFields) Shape() PinShape {
+	switch {
+	case p == nil:
+		return PinShapeNone
+	case p.HasFMCommit && p.HasInputs:
+		return PinShapeTransitional
+	case p.HasFMCommit:
+		return PinShapeLegacy
+	case p.HasInputs:
+		return PinShapeReceipt
+	}
+	return PinShapeNone
 }
 
 // These regexes are byte-identical to the ones in internal/checks
@@ -131,7 +183,7 @@ func ExtractFacts(doc *Document) Facts {
 	var f Facts
 	f.Tags = doc.Tags
 	f.Title = extractTitle(doc.Frontmatter)
-	f.Pin = extractPin(doc.Frontmatter)
+	f.Pin = ExtractPin(doc)
 	f.RepoName, f.IsRepoPage = extractRepo(doc.Frontmatter, doc.Tags)
 
 	var embeds []EmbedEdge
@@ -414,44 +466,91 @@ func extractTitle(fm map[string]any) string {
 	return ""
 }
 
-// extractPin parses the effect-contract pin frontmatter into PinFields. It
-// mirrors effect_pin.go's parsePin field reading (repo/branch/commit + the
-// location/checksum lists) but carries none of the malformed/present policy —
-// that stays with the checks. nil ⇔ no commit pin.
-func extractPin(fm map[string]any) *PinFields {
-	str := func(key string) string {
-		if v, ok := fm[key].(string); ok {
-			return strings.TrimSpace(v)
-		}
-		return ""
+// fmStr / fmList are the shared frontmatter scalar/list readers of the pin
+// extractor (tolerant reader: a scalar or a list both read as a list).
+func fmStr(fm map[string]any, key string) string {
+	if v, ok := fm[key].(string); ok {
+		return strings.TrimSpace(v)
 	}
-	list := func(key string) []string {
-		switch v := fm[key].(type) {
-		case string:
-			if s := strings.TrimSpace(v); s != "" {
-				return []string{s}
-			}
-		case []any:
-			var out []string
-			for _, item := range v {
-				if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
-					out = append(out, strings.TrimSpace(s))
-				}
-			}
-			return out
+	return ""
+}
+
+func fmList(fm map[string]any, key string) []string {
+	switch v := fm[key].(type) {
+	case string:
+		if s := strings.TrimSpace(v); s != "" {
+			return []string{s}
 		}
+	case []any:
+		var out []string
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				out = append(out, strings.TrimSpace(s))
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// ExtractPin parses the effect-contract pin state of a document into
+// PinFields — the ONE pin parser (checks-side parsePin consumes it, killing
+// the pre-B2c duplicated-parser drift the pin-parity test guarded). It carries
+// none of the malformed/present policy — that stays with the checks.
+// nil ⇔ neither pin marker (no frontmatter commit, no inputs key).
+//
+// Field sourcing by shape:
+//   - legacy / transitional: repo/branch/commit/location/checksum from
+//     frontmatter, exactly the v1 mechanics (transitional keeps the legacy
+//     field source — the still-present frontmatter pin stays verified).
+//   - receipt: repo/location from frontmatter; commit/checksum from the
+//     fenced ^receipt body block, adopted ONLY when the frontmatter `receipt:`
+//     key is a non-null ref (`receipt: null` is the D1 born-invalid state —
+//     block values without a pointing ref are not an attestation). Branch is
+//     a catalog-page fact and stays "".
+//
+// Pure per-doc (frontmatter + the doc's own body block) — safe for the
+// phase-1 fact cache; no bytes are retained (commit/checksum are derived
+// scalars).
+func ExtractPin(doc *Document) *PinFields {
+	fm := doc.Frontmatter
+	commit := fmStr(fm, "commit")
+	_, hasInputs := fm["inputs"]
+
+	if commit == "" && !hasInputs {
 		return nil
 	}
 
-	commit := str("commit")
-	if commit == "" {
-		return nil
+	p := &PinFields{
+		Repo:        fmStr(fm, "repo"),
+		Branch:      fmStr(fm, "branch"),
+		Commit:      commit,
+		Locations:   fmList(fm, "location"),
+		Checksums:   fmList(fm, "checksum"),
+		HasFMCommit: commit != "",
+		HasInputs:   hasInputs,
 	}
-	return &PinFields{
-		Repo:      str("repo"),
-		Branch:    str("branch"),
-		Commit:    commit,
-		Locations: list("location"),
-		Checksums: list("checksum"),
+
+	if rv, ok := fm["receipt"]; ok {
+		p.HasReceiptKey = true
+		if rv == nil {
+			p.ReceiptNull = true
+		} else if s, isStr := rv.(string); isStr && strings.TrimSpace(s) != "" {
+			p.ReceiptRef = strings.TrimSpace(s)
+		}
 	}
+
+	// Receipt shape: the ^receipt block is the field source for the verifiable
+	// values. Adopted only under a non-null receipt ref.
+	if p.Shape() == PinShapeReceipt && p.ReceiptRef != "" {
+		if blk, err := run.FindBlock(string(doc.RawContent), "receipt"); err == nil && blk.Fence {
+			var m map[string]any
+			if yaml.Unmarshal([]byte(blk.Code), &m) == nil && m != nil {
+				p.ReceiptBlock = true
+				p.Commit = fmStr(m, "commit")
+				p.Checksums = fmList(m, "checksum")
+			}
+		}
+	}
+	return p
 }
