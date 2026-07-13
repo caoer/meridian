@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -58,6 +59,7 @@ func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 		if params.File == "" {
 			return cli.ErrorResponse(cli.ErrInvalidParams, "missing required param: file")
 		}
+		params.File = expandTilde(params.File)
 		// Per-task wall-clock deadline — a wedged block must not hang the
 		// caller (e.g. a skill-load preflight) indefinitely.
 		var timeout time.Duration
@@ -174,6 +176,25 @@ func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 
 		return &cli.Response{Version: cli.ResponseVersion, Data: data, Findings: findings}
 	}
+}
+
+// expandTilde resolves a leading "~" or "~/" against the caller's home
+// directory. The JSON param surface bypasses shell expansion — a ~ inside a
+// quoted string arrives verbatim — so md does what the caller's shell would
+// have done. "~user" forms pass through untouched (user lookup is a different
+// contract), as does everything else.
+func expandTilde(p string) string {
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	if p == "~" {
+		return home
+	}
+	return filepath.Join(home, p[2:])
 }
 
 // extractTaskParams partitions the request's top-level JSON keys: reserved keys

@@ -535,3 +535,41 @@ func TestRunHandlerListShowsParams(t *testing.T) {
 		t.Errorf("list must carry the params contract: %+v", data.Tasks)
 	}
 }
+
+func TestRunHandlerTildeFileExpands(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, "repo", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "repo", "note.md"), []byte(runHandlerDoc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, out := newRunRouter()
+	params := `{"file":"~/repo/note.md","name":"demo","format":"json"}`
+	if code := r.Run([]string{"run", params}, nil); code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	_, data := decodeRunData(t, out)
+	if !strings.Contains(data.Stdout, "demo argv:") {
+		t.Errorf("captured stdout = %q", data.Stdout)
+	}
+}
+
+func TestExpandTilde(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cases := []struct{ in, want string }{
+		{"~", home},
+		{"~/x/y.md", filepath.Join(home, "x", "y.md")},
+		{"~user/x.md", "~user/x.md"},
+		{"/abs/x.md", "/abs/x.md"},
+		{"rel/x.md", "rel/x.md"},
+		{"x~y.md", "x~y.md"},
+	}
+	for _, c := range cases {
+		if got := expandTilde(c.in); got != c.want {
+			t.Errorf("expandTilde(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
