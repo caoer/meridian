@@ -92,6 +92,43 @@ func TestRunHandlerComposite(t *testing.T) {
 	}
 }
 
+// TestRunHandlerInherit wires inherit:true end-to-end through the router: a leaf
+// carrying zero md-* machinery resolves its ^check from an ancestor blurb, and
+// the block sees MD_PARAM_PAGE = the leaf's repo-relative path.
+func TestRunHandlerInherit(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	blurb := "---\nmd-check: \"[[#^check]]\"\n---\n\n" +
+		"```bash\necho \"page=$MD_PARAM_PAGE\"\n```\n\n^check\n"
+	write := func(rel, content string) {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("effects/skills/SKILLS.md", blurb)
+	write("effects/skills/caveman.md", "# Caveman\n")
+
+	r, out := newRunRouter()
+	leaf := filepath.Join(root, "effects/skills/caveman.md")
+	params := `{"file":"` + leaf + `","name":"check","inherit":true,"format":"json"}`
+	if code := r.Run([]string{"run", params}, nil); code != 0 {
+		t.Fatalf("inherit run exit = %d, out: %s", code, out.String())
+	}
+	_, data := decodeRunData(t, out)
+	if len(data.Tasks) != 1 {
+		t.Fatalf("tasks = %+v", data.Tasks)
+	}
+	if !strings.Contains(data.Stdout, "page=effects/skills/caveman.md") {
+		t.Errorf("MD_PARAM_PAGE not projected via the router: %q", data.Stdout)
+	}
+}
+
 func TestRunHandlerTaskFailureExitsOne(t *testing.T) {
 	md := writeRunRepo(t)
 	r, out := newRunRouter()

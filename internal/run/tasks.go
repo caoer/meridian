@@ -28,7 +28,7 @@ type Task struct {
 // ReservedParams are `md run`'s own top-level JSON keys. A declared named
 // param may not shadow one — the CLI consumes these before task params are
 // partitioned, so a shadowing param could never reach its task.
-var ReservedParams = []string{"file", "name", "args", "list", "format", "timeout", "record"}
+var ReservedParams = []string{"file", "name", "args", "list", "format", "timeout", "record", "inherit"}
 
 // ParamEnvPrefix namespaces the env projection of named params: param
 // include_untracked arrives in the task as MD_PARAM_INCLUDE_UNTRACKED.

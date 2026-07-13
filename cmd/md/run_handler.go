@@ -34,6 +34,7 @@ type runRequest struct {
 	Format  string          `json:"format"`
 	Timeout string          `json:"timeout"`
 	Record  bool            `json:"record"`
+	Inherit bool            `json:"inherit"`
 }
 
 // runHandlerWith is the injectable core: in text mode child output streams
@@ -111,6 +112,9 @@ func runHandlerWith(stdout, stderr io.Writer) cli.Handler {
 		var opts []run.RunOpt
 		if params.Record {
 			opts = append(opts, run.Record())
+		}
+		if params.Inherit {
+			opts = append(opts, run.Inherit())
 		}
 		if len(taskParams) > 0 {
 			opts = append(opts, run.Params(taskParams))

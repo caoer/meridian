@@ -173,7 +173,7 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 			},
 		},
 		"run": {
-			Description: "Execute frontmatter-addressed task blocks (md-<name> keys → ^id fences); format json captures task stdout/stderr into the envelope, text streams it live. timeout bounds each task's wall clock (Go duration, e.g. \"30s\") — at the deadline the process group is killed and the task reports exit 124. record:true writes each task's outcome + output to a sidecar run record (<stem>.runs.md, block-addressable per task as ^<task>) without ever mutating the source doc; response carries record_path. Any OTHER top-level key is a named task param: it must be declared by a requested task's md-<task>-params contract (undeclared keys fail loud regardless of value) and reaches the task as MD_PARAM_<UPPER> in its env — string/number verbatim, true → \"1\", false → omitted (opt-in: false and absent are the same env state). A param value of null or empty string fails loud (a param with no value is a mistake, not the default — omit the key to use the default)",
+			Description: "Execute frontmatter-addressed task blocks (md-<name> keys → ^id fences); format json captures task stdout/stderr into the envelope, text streams it live. timeout bounds each task's wall clock (Go duration, e.g. \"30s\") — at the deadline the process group is killed and the task reports exit 124. record:true writes each task's outcome + output to a sidecar run record (<stem>.runs.md, block-addressable per task as ^<task>) without ever mutating the source doc; response carries record_path. inherit:true resolves any requested task the file does not itself declare by walking its ancestor blurb pages (the page's own directory blurb <DIR>/<UPPER>.md first, up to LLM_WIKI.md at the git toplevel) — nearest ancestor wins, a leaf-defined task replaces the inherited one wholesale — and projects MD_PARAM_PAGE = the file's repo-relative path into every task's env so a shared ^check/^apply block can locate the page it runs against. Any OTHER top-level key is a named task param: it must be declared by a requested task's md-<task>-params contract (undeclared keys fail loud regardless of value) and reaches the task as MD_PARAM_<UPPER> in its env — string/number verbatim, true → \"1\", false → omitted (opt-in: false and absent are the same env state). A param value of null or empty string fails loud (a param with no value is a mistake, not the default — omit the key to use the default)",
 			Usage:       "md run '{\"file\":\"<doc.md>\",\"name\":\"<task>\"}'  |  md run '{\"file\":\"<doc.md>\",\"list\":true}'",
 			Params: map[string]paramHelp{
 				"file":       {Type: "string", Required: true},
@@ -183,6 +183,7 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 				"format":     {Type: "string", Required: false},
 				"timeout":    {Type: "string", Required: false},
 				"record":     {Type: "bool", Required: false},
+				"inherit":    {Type: "bool", Required: false},
 				"<declared>": {Type: "string|number|bool", Required: false},
 			},
 			ExitCodes: map[string]string{"0": "all tasks succeeded", "1": "a task exited non-zero (124 = timed out)", "2": "resolution or tool failure"},
