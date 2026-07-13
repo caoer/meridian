@@ -75,8 +75,6 @@ type fencedBlock struct {
 
 var (
 	fenceDelimRe = regexp.MustCompile("^(`{3,}|~{3,})(.*)$")
-	itemStartRe  = regexp.MustCompile(`^- `)
-	hashLineRe   = regexp.MustCompile(`^((?:- |\s+))hash:(\s|$)`)
 	seqEntryRe   = regexp.MustCompile(`^\s+- `)
 )
 
@@ -218,47 +216,70 @@ func locateFencedBlock(lines []string, bodyStart int, id string) (fencedBlock, b
 }
 
 // parseInputs decodes the ^inputs block (ordered YAML sequence of
-// {ref, claim?, hash?}) and maps each item to its file lines. Fail closed on
-// anything it cannot map — a hash written to the wrong item is worse than an
-// error.
+// {ref, claim?, hash?}) and binds each item's machine `hash:` line
+// STRUCTURALLY — from the parsed YAML mapping-key node's own line/column, never
+// by a raw-line regex. A `hash:`-shaped line inside a `claim: |` block-scalar is
+// human prose, not the key: the parser distinguishes them, a first-match regex
+// cannot (CORR-1). Fail closed on anything it cannot map — a hash written to the
+// wrong item, or spliced into claim text, is worse than an error.
 func (p *pageState) parseInputs() string {
 	content := blockContent(p.lines, p.inputs)
-	var parsed []map[string]any
-	if err := yaml.Unmarshal([]byte(content), &parsed); err != nil {
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(content), &root); err != nil {
 		return "inputs block is not a YAML sequence: " + err.Error()
 	}
-
-	// Line mapping: top-level sequence items start at column 0 with "- ".
-	var starts []int
-	for i := p.inputs.open + 1; i < p.inputs.close; i++ {
-		if itemStartRe.MatchString(p.lines[i]) {
-			starts = append(starts, i)
-		}
+	if len(root.Content) == 0 {
+		return "" // empty block — the caller reports "inputs block is empty"
 	}
-	if len(starts) != len(parsed) {
-		return fmt.Sprintf("cannot map inputs block items to lines (%d parsed, %d found) — refusing to write hashes", len(parsed), len(starts))
+	seq := root.Content[0]
+	if seq.Kind != yaml.SequenceNode {
+		return "inputs block is not a YAML sequence — refusing to write hashes"
 	}
 
-	for n, m := range parsed {
-		item := inputItem{start: starts[n], end: p.inputs.close, hashLine: -1, hashIndent: "  "}
-		if n+1 < len(starts) {
-			item.end = starts[n+1]
+	// yaml.Node lines are 1-indexed relative to the unmarshaled content, whose
+	// line 1 is the line just below the opening fence; file-absolute line =
+	// p.inputs.open + node.Line.
+	base := p.inputs.open
+	for n, itemNode := range seq.Content {
+		if itemNode.Kind != yaml.MappingNode {
+			return fmt.Sprintf("inputs item %d is not a mapping — refusing to write hashes", n+1)
 		}
-		ref, _ := m["ref"].(string)
-		if strings.TrimSpace(ref) == "" {
-			return fmt.Sprintf("inputs item %d has no ref", n+1)
+		item := inputItem{start: base + itemNode.Line, end: p.inputs.close, hashLine: -1, hashIndent: "  "}
+		if n+1 < len(seq.Content) {
+			item.end = base + seq.Content[n+1].Line
 		}
-		item.Ref = strings.TrimSpace(ref)
-		if h, ok := m["hash"]; ok && h != nil {
-			item.Hash = strings.TrimSpace(fmt.Sprintf("%v", h))
-		}
-		for i := item.start; i < item.end; i++ {
-			if hm := hashLineRe.FindStringSubmatch(p.lines[i]); hm != nil {
-				item.hashLine = i
-				item.hashIndent = hm[1]
-				break
+		var ref string
+		sawHash := false
+		for k := 0; k+1 < len(itemNode.Content); k += 2 {
+			key, val := itemNode.Content[k], itemNode.Content[k+1]
+			switch key.Value {
+			case "ref":
+				ref = strings.TrimSpace(val.Value)
+			case "hash":
+				if sawHash {
+					return fmt.Sprintf("inputs item %d declares hash twice — ambiguous, refusing to write", n+1)
+				}
+				sawHash = true
+				line := base + key.Line
+				col := key.Column - 1
+				// Belt: the located line must actually carry the mapping key at
+				// the node's column — fail closed when structure and bytes
+				// disagree rather than splice a hash into an unconfirmed line.
+				if line >= len(p.lines) || col < 0 || col > len(p.lines[line]) ||
+					!strings.HasPrefix(p.lines[line][col:], "hash:") {
+					return fmt.Sprintf("inputs item %d: hash key node does not resolve to its line — refusing to write", n+1)
+				}
+				item.hashLine = line
+				item.hashIndent = p.lines[line][:col]
+				if val.Tag != "!!null" && val.Value != "" {
+					item.Hash = strings.TrimSpace(val.Value)
+				}
 			}
 		}
+		if ref == "" {
+			return fmt.Sprintf("inputs item %d has no ref", n+1)
+		}
+		item.Ref = ref
 		p.items = append(p.items, item)
 	}
 	return ""
