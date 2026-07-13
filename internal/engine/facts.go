@@ -214,7 +214,12 @@ func extractBodyFacts(doc *Document, f *Facts, embeds *[]EmbedEdge) {
 			continue
 		}
 
-		lineNum := doc.BodyOffset + i + 1
+		// BodyOffset IS the 1-indexed file line of the first body line
+		// (frontmatter/parse.go), so body index i maps to file line
+		// BodyOffset+i exactly — matching scanLines' absolute numbering, which
+		// extractSliceFacts' embed bucketing compares against. A +1 here pushed
+		// every edge on a slice's last line into the following slice.
+		lineNum := doc.BodyOffset + i
 
 		// Headings: a heading line may still carry links (e.g. "## See [[x]]"),
 		// so fall through to the link scan rather than continue.

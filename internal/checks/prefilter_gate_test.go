@@ -41,8 +41,8 @@ func TestPrefilterGate_TablePipe_HeaderSeparatorNoBracket(t *testing.T) {
 	if len(findings) != 1 {
 		t.Fatalf("want 1 finding on the data row (grouping survives bracket-free header/sep), got %d", len(findings))
 	}
-	if findings[0].Line != 4 {
-		t.Errorf("Line = %d, want 4 (the data row)", findings[0].Line)
+	if findings[0].Line != 3 {
+		t.Errorf("Line = %d, want 3 (the data row)", findings[0].Line)
 	}
 }
 
@@ -78,8 +78,8 @@ func TestPrefilterGate_BrokenWikilink_FenceMarkerNoBracket(t *testing.T) {
 	if findings[0].TemplateData["Target"] != "outside" {
 		t.Errorf("Target = %q, want outside", findings[0].TemplateData["Target"])
 	}
-	if findings[0].Line != 5 {
-		t.Errorf("Line = %d, want 5", findings[0].Line)
+	if findings[0].Line != 4 {
+		t.Errorf("Line = %d, want 4", findings[0].Line)
 	}
 }
 
@@ -96,8 +96,8 @@ func TestPrefilterGate_Canonicalize_FenceMarkerNoBracket(t *testing.T) {
 	if len(findings) != 1 {
 		t.Fatalf("want 1 finding (over-long link OUTSIDE the fence only), got %d", len(findings))
 	}
-	if findings[0].Line != 5 {
-		t.Errorf("Line = %d, want 5 (link inside fence must be skipped)", findings[0].Line)
+	if findings[0].Line != 4 {
+		t.Errorf("Line = %d, want 4 (link inside fence must be skipped)", findings[0].Line)
 	}
 }
 

@@ -147,11 +147,11 @@ func TestParseInlineSuppress_MdIgnore_NextLine(t *testing.T) {
 	if len(fileIgnores) != 0 {
 		t.Errorf("expected no file ignores, got %v", fileIgnores)
 	}
-	// Directive at body idx 0, standalone → next line: 3+0+2=5.
-	if suppress == nil || !suppress[5]["rule-a"] {
-		t.Errorf("expected rule-a suppressed on line 5, got %v", suppress)
+	// Directive at body idx 0 (file line 3), standalone → next line 4.
+	if suppress == nil || !suppress[4]["rule-a"] {
+		t.Errorf("expected rule-a suppressed on line 4, got %v", suppress)
 	}
-	if suppress[4] != nil && suppress[4]["rule-a"] {
+	if suppress[3] != nil && suppress[3]["rule-a"] {
 		t.Error("directive line itself should not be suppressed")
 	}
 }
@@ -160,9 +160,9 @@ func TestParseInlineSuppress_MdIgnore_SameLine(t *testing.T) {
 	body := "bad line <!-- md:ignore rule-a -->"
 	suppress, _ := parseInlineSuppress(body, 3)
 
-	// Inline on body idx 0 → same line: 3+0+1=4.
-	if suppress == nil || !suppress[4]["rule-a"] {
-		t.Errorf("expected rule-a suppressed on line 4, got %v", suppress)
+	// Inline on body idx 0 → same line: 3+0=3.
+	if suppress == nil || !suppress[3]["rule-a"] {
+		t.Errorf("expected rule-a suppressed on line 3, got %v", suppress)
 	}
 }
 
@@ -170,9 +170,9 @@ func TestParseInlineSuppress_MdIgnore_Wildcard(t *testing.T) {
 	body := "<!-- md:ignore -->\nbad line"
 	suppress, _ := parseInlineSuppress(body, 3)
 
-	// Standalone wildcard → next line 5.
-	if suppress == nil || !suppress[5]["*"] {
-		t.Errorf("expected wildcard on line 5, got %v", suppress)
+	// Standalone wildcard → next line 4.
+	if suppress == nil || !suppress[4]["*"] {
+		t.Errorf("expected wildcard on line 4, got %v", suppress)
 	}
 }
 
@@ -180,9 +180,9 @@ func TestParseInlineSuppress_MdIgnore_SameLineWildcard(t *testing.T) {
 	body := "bad line <!-- md:ignore -->"
 	suppress, _ := parseInlineSuppress(body, 3)
 
-	// Inline wildcard → same line 4.
-	if suppress == nil || !suppress[4]["*"] {
-		t.Errorf("expected wildcard on line 4, got %v", suppress)
+	// Inline wildcard → same line 3.
+	if suppress == nil || !suppress[3]["*"] {
+		t.Errorf("expected wildcard on line 3, got %v", suppress)
 	}
 }
 
@@ -224,8 +224,8 @@ func TestParseInlineSuppress_MdIgnore_Obsidian(t *testing.T) {
 	body := "%% md:ignore rule-a %%\nbad line"
 	suppress, _ := parseInlineSuppress(body, 3)
 
-	if suppress == nil || !suppress[5]["rule-a"] {
-		t.Errorf("expected rule-a suppressed on line 5, got %v", suppress)
+	if suppress == nil || !suppress[4]["rule-a"] {
+		t.Errorf("expected rule-a suppressed on line 4, got %v", suppress)
 	}
 }
 
@@ -242,7 +242,7 @@ func TestParseInlineSuppress_Legacy_StillWorks(t *testing.T) {
 	body := "<!-- md-disable-next-line rule-a -->\nbad line"
 	suppress, _ := parseInlineSuppress(body, 3)
 
-	if suppress == nil || !suppress[5]["rule-a"] {
+	if suppress == nil || !suppress[4]["rule-a"] {
 		t.Errorf("legacy directive should still work, got %v", suppress)
 	}
 }
@@ -251,8 +251,8 @@ func TestParseInlineSuppress_MdIgnore_MultipleRulesCSV(t *testing.T) {
 	body := "<!-- md:ignore rule-a, rule-b -->\nbad line"
 	suppress, _ := parseInlineSuppress(body, 3)
 
-	if suppress == nil || !suppress[5]["rule-a"] || !suppress[5]["rule-b"] {
-		t.Errorf("expected both rules suppressed on line 5, got %v", suppress)
+	if suppress == nil || !suppress[4]["rule-a"] || !suppress[4]["rule-b"] {
+		t.Errorf("expected both rules suppressed on line 4, got %v", suppress)
 	}
 }
 

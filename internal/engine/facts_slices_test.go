@@ -5,9 +5,57 @@ import (
 	"encoding/hex"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/caoer/meridian/internal/run"
 )
+
+// TestExtractFacts_BoundaryEmbedBucketing_RealParser reproduces the facts.go
+// line off-by-one through the REAL scan pipeline (frontmatter.ParseBytes →
+// Document → ExtractFacts): an embed on the LAST line of a section must bucket
+// into THAT section, never the following one. Assertions are ABSOLUTE file
+// lines so a canceling helper offset cannot mask a drift — the original bug
+// hid behind docFromRaw's compensating off-by-one.
+func TestExtractFacts_BoundaryEmbedBucketing_RealParser(t *testing.T) {
+	// File layout (1-indexed):
+	//   1 ---
+	//   2 type: note
+	//   3 ---
+	//   4 ## Alpha
+	//   5 ![[A]]      ← last line of Alpha's section
+	//   6 ## Beta
+	//   7 ![[B]]
+	raw := "---\ntype: note\n---\n## Alpha\n![[A]]\n## Beta\n![[B]]\n"
+	docs, err := Scan(fstest.MapFS{"page.md": &fstest.MapFile{Data: []byte(raw)}})
+	if err != nil || len(docs) != 1 {
+		t.Fatalf("Scan: %v (docs=%d)", err, len(docs))
+	}
+	doc := docs[0]
+	// Pin the parser contract the line mapping relies on: BodyOffset IS the
+	// 1-indexed file line of the first body line.
+	if doc.BodyOffset != 4 {
+		t.Fatalf("BodyOffset = %d, want 4 (first body line)", doc.BodyOffset)
+	}
+	f := ExtractFacts(doc)
+
+	alpha := f.Embeds["Alpha"]
+	if len(alpha) != 1 || alpha[0].Target != "A" {
+		t.Fatalf("Embeds[Alpha] = %+v, want exactly [A] — a last-line embed must bucket into its own section", f.Embeds)
+	}
+	if alpha[0].Line != 5 {
+		t.Errorf("A edge Line = %d, want absolute file line 5", alpha[0].Line)
+	}
+	beta := f.Embeds["Beta"]
+	if len(beta) != 1 || beta[0].Target != "B" {
+		t.Fatalf("Embeds[Beta] = %+v, want exactly [B]", f.Embeds)
+	}
+	if beta[0].Line != 7 {
+		t.Errorf("B edge Line = %d, want absolute file line 7", beta[0].Line)
+	}
+	if all := f.Embeds[""]; len(all) != 2 || all[0].Target != "A" || all[1].Target != "B" {
+		t.Errorf(`Embeds[""] = %+v, want [A B] in document order`, all)
+	}
+}
 
 // docFromRaw builds a Document the way the loader would: frontmatter split off
 // into Body + BodyOffset, RawContent retained whole. It assumes a leading
@@ -18,7 +66,11 @@ func docFromRaw(raw string) *Document {
 	if len(lines) > 0 && strings.TrimSpace(lines[0]) == "---" {
 		for i := 1; i < len(lines); i++ {
 			if strings.TrimSpace(lines[i]) == "---" {
-				d.BodyOffset = i + 1
+				// Independently derived, not copied from production: the
+				// closing --- sits at 0-based index i = 1-indexed file line
+				// i+1, so the body's first line is file line i+2. BodyOffset
+				// is that first-body-line number (frontmatter.Doc contract).
+				d.BodyOffset = i + 2
 				d.Body = strings.Join(lines[i+1:], "\n")
 				// Minimal flat "key: value" frontmatter parse — enough for tests.
 				for _, fl := range lines[1:i] {

@@ -79,7 +79,7 @@ func tableWikilinkPipeCheck(doc *engine.Document, params map[string]any) []engin
 			actualCols := countColumns(line)
 
 			out = append(out, engine.RawFinding{
-				Line: doc.BodyOffset + row + 1,
+				Line: doc.BodyOffset + row,
 				TemplateData: map[string]string{
 					"Expected":  strconv.Itoa(headerCols),
 					"Actual":    strconv.Itoa(actualCols),

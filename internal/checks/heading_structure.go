@@ -72,7 +72,7 @@ func headingStructureCheck(doc *engine.Document, params map[string]any) []engine
 			continue
 		}
 
-		lineNum := doc.BodyOffset + i + 1
+		lineNum := doc.BodyOffset + i
 
 		// Check multiple H1.
 		if level == 1 {

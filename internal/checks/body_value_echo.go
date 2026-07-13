@@ -70,7 +70,7 @@ func bodyValueEchoCheck(doc *engine.Document, params map[string]any) []engine.Ra
 					continue
 				}
 				out = append(out, engine.RawFinding{
-					Line: doc.BodyOffset + i + 1,
+					Line: doc.BodyOffset + i,
 					TemplateData: map[string]string{
 						"Reason": fmt.Sprintf("body echoes pin value %q — the pin lives in frontmatter; a body copy drifts and defeats attestation", tok),
 					},

@@ -28,8 +28,8 @@ func TestExtractFacts_EmptyBody(t *testing.T) {
 
 func TestExtractFacts_BasicLink(t *testing.T) {
 	f := ExtractFacts(&Document{Body: "see [[page-a]] for details", BodyOffset: 1})
-	if got := linkTLs(f.Links); !reflect.DeepEqual(got, []linkTL{{"page-a", 2}}) {
-		t.Fatalf("links = %+v, want [{page-a 2}]", got)
+	if got := linkTLs(f.Links); !reflect.DeepEqual(got, []linkTL{{"page-a", 1}}) {
+		t.Fatalf("links = %+v, want [{page-a 1}]", got)
 	}
 	if f.Links[0].Original != "[[page-a]]" {
 		t.Errorf("Original = %q, want [[page-a]]", f.Links[0].Original)
@@ -43,7 +43,7 @@ func TestExtractFacts_BasicLink(t *testing.T) {
 func TestExtractFacts_AliasAndAnchorTarget(t *testing.T) {
 	f := ExtractFacts(&Document{Body: "[[page-a|display]] and [[page-b#section]]", BodyOffset: 1})
 	got := linkTLs(f.Links)
-	want := []linkTL{{"page-a", 2}, {"page-b", 2}}
+	want := []linkTL{{"page-a", 1}, {"page-b", 1}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("links = %+v, want %+v", got, want)
 	}
@@ -68,7 +68,7 @@ func TestExtractFacts_AnchorOnlyTargetEmpty(t *testing.T) {
 func TestExtractFacts_TrailingBackslashAndSlash(t *testing.T) {
 	f := ExtractFacts(&Document{Body: "[[daemon/architecture\\]] and [[folder/page/]]", BodyOffset: 1})
 	got := linkTLs(f.Links)
-	want := []linkTL{{"daemon/architecture", 2}, {"folder/page", 2}}
+	want := []linkTL{{"daemon/architecture", 1}, {"folder/page", 1}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("links = %+v, want %+v", got, want)
 	}
@@ -99,7 +99,7 @@ func TestExtractFacts_InlineCodeExcluded(t *testing.T) {
 func TestExtractFacts_InlineCodeMixed(t *testing.T) {
 	f := ExtractFacts(&Document{Body: "`[[code-link]]` and [[real-missing]]", BodyOffset: 1})
 	got := linkTLs(f.Links)
-	if !reflect.DeepEqual(got, []linkTL{{"real-missing", 2}}) {
+	if !reflect.DeepEqual(got, []linkTL{{"real-missing", 1}}) {
 		t.Fatalf("links = %+v, want only real-missing", got)
 	}
 }
@@ -107,23 +107,24 @@ func TestExtractFacts_InlineCodeMixed(t *testing.T) {
 func TestExtractFacts_MultipleInlineCodeSpans(t *testing.T) {
 	f := ExtractFacts(&Document{Body: "`[[a]]` then `[[b]]` then [[real]]", BodyOffset: 1})
 	got := linkTLs(f.Links)
-	if !reflect.DeepEqual(got, []linkTL{{"real", 2}}) {
+	if !reflect.DeepEqual(got, []linkTL{{"real", 1}}) {
 		t.Fatalf("links = %+v, want only real", got)
 	}
 }
 
 func TestExtractFacts_LineNumbersUseBodyOffset(t *testing.T) {
 	f := ExtractFacts(&Document{Body: "line1\nline2\n[[broken]] line3", BodyOffset: 5})
-	if len(f.Links) != 1 || f.Links[0].Line != 8 {
-		t.Fatalf("want 1 link at line 8, got %+v", linkTLs(f.Links))
+	if len(f.Links) != 1 || f.Links[0].Line != 7 {
+		t.Fatalf("want 1 link at line 7, got %+v", linkTLs(f.Links))
 	}
 }
 
 func TestExtractFacts_Embeds(t *testing.T) {
-	// RawContent is the slice-fact input (frontmatter-free here, so BodyOffset 0);
-	// the embed's inner [[...]] is still a Link (broken_wikilink parity).
+	// RawContent is the slice-fact input (frontmatter-free: the scanner sets
+	// BodyOffset 1 — body starts at file line 1); the embed's inner [[...]] is
+	// still a Link (broken_wikilink parity).
 	body := "before ![[SOURCES.base#Buckets]] after"
-	f := ExtractFacts(&Document{RawContent: []byte(body), Body: body, BodyOffset: 0})
+	f := ExtractFacts(&Document{RawContent: []byte(body), Body: body, BodyOffset: 1})
 	if len(f.Links) != 1 || f.Links[0].Target != "SOURCES.base" {
 		t.Fatalf("links = %+v, want one SOURCES.base", linkTLs(f.Links))
 	}
@@ -143,7 +144,7 @@ func TestExtractFacts_Embeds(t *testing.T) {
 
 func TestExtractFacts_NonEmbedNotEmbed(t *testing.T) {
 	body := "plain [[link]] here"
-	f := ExtractFacts(&Document{RawContent: []byte(body), Body: body, BodyOffset: 0})
+	f := ExtractFacts(&Document{RawContent: []byte(body), Body: body, BodyOffset: 1})
 	if len(f.Embeds) != 0 {
 		t.Fatalf("plain wikilink must not be an embed, got %+v", f.Embeds)
 	}
@@ -153,9 +154,9 @@ func TestExtractFacts_Headings(t *testing.T) {
 	body := "# Title\ntext\n## Sub A\n```\n### fenced-not-heading\n```\n###### Deep\n####### too-deep"
 	f := ExtractFacts(&Document{Body: body, BodyOffset: 1})
 	want := []HeadingFact{
-		{Level: 1, Text: "Title", Line: 2},
-		{Level: 2, Text: "Sub A", Line: 4},
-		{Level: 6, Text: "Deep", Line: 8},
+		{Level: 1, Text: "Title", Line: 1},
+		{Level: 2, Text: "Sub A", Line: 3},
+		{Level: 6, Text: "Deep", Line: 7},
 	}
 	if !reflect.DeepEqual(f.Headings, want) {
 		t.Fatalf("headings = %+v, want %+v", f.Headings, want)
@@ -167,7 +168,7 @@ func TestExtractFacts_HeadingLineAlsoCarriesLink(t *testing.T) {
 	if len(f.Headings) != 1 || f.Headings[0].Text != "See [[page-x]]" {
 		t.Fatalf("heading = %+v", f.Headings)
 	}
-	if got := linkTLs(f.Links); !reflect.DeepEqual(got, []linkTL{{"page-x", 2}}) {
+	if got := linkTLs(f.Links); !reflect.DeepEqual(got, []linkTL{{"page-x", 1}}) {
 		t.Fatalf("links on heading line = %+v, want [{page-x 1}]", got)
 	}
 }

@@ -61,7 +61,7 @@ func parseInlineSuppress(body string, bodyOffset int) (map[int]map[string]bool, 
 		legacyMatches = append(legacyMatches, inlineSuppressHTMLRe.FindAllStringSubmatch(line, -1)...)
 		legacyMatches = append(legacyMatches, inlineSuppressObsidianRe.FindAllStringSubmatch(line, -1)...)
 		for _, m := range legacyMatches {
-			addRulesByCSV(out, bodyOffset+i+2, m[1])
+			addRulesByCSV(out, bodyOffset+i+1, m[1])
 		}
 
 		// md:ignore-file — whole-file suppression.
@@ -93,9 +93,9 @@ func parseInlineSuppress(body string, bodyOffset int) (map[int]map[string]bool, 
 		ignoreMatches = append(ignoreMatches, mdIgnoreObsidianRe.FindAllStringSubmatch(line, -1)...)
 		if len(ignoreMatches) > 0 {
 			standalone := isMdIgnoreStandalone(line)
-			targetLine := bodyOffset + i + 1
+			targetLine := bodyOffset + i
 			if standalone {
-				targetLine = bodyOffset + i + 2
+				targetLine = bodyOffset + i + 1
 			}
 
 			for _, m := range ignoreMatches {
