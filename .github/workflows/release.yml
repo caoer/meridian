@@ -143,21 +143,56 @@ jobs:
       - name: "Re-point rolling latest"
         env:
           GH_TOKEN: "${{ github.token }}"
+          REPO: "${{ github.repository }}"
           TAG: "${{ github.ref_name }}"
           SHA: "${{ github.sha }}"
         run: |
           set -euo pipefail
 
-          # Newest-commit-wins: if `latest` already tracks a commit at least as
-          # new as this one, a newer release won the serialized slot first —
-          # leave it. (Serialization guarantees this read-modify-write is atomic
-          # w.r.t. other `latest` jobs.) Unknown/unreachable target => proceed.
-          if gh release view latest >/dev/null 2>&1; then
-            cur="$(gh release view latest --json targetCommitish -q .targetCommitish)"
-            cur_ts="$(git log -1 --format=%ct "$cur" 2>/dev/null || echo 0)"
-            new_ts="$(git log -1 --format=%ct "$SHA")"
-            if [ "$new_ts" -lt "$cur_ts" ]; then
-              echo "latest already tracks a newer commit ($cur); leaving it."
+          # Committer date (epoch) for a commitish, resolved via the GitHub API
+          # — NOT local git. `fetch-depth: 0` on a tag checkout only fetches
+          # history reachable from THIS tag, so a newer commit on a divergent
+          # line (hotfix off an older base; GA after rc on a side branch) is
+          # unresolvable locally — exactly the case this guard exists for. The
+          # API sees every commit. Empty output => unresolvable.
+          commit_epoch() {
+            local d
+            d="$(gh api "repos/$REPO/commits/$1" -q .commit.committer.date 2>/dev/null || true)"
+            [ -n "$d" ] && date -u -d "$d" +%s 2>/dev/null || true
+          }
+
+          # Read what `latest` currently tracks, distinguishing genuinely-absent
+          # (HTTP 404 => create fresh) from a transient API error (=> fail
+          # closed: leave `latest` untouched, never redden a legit release).
+          cur=""
+          if cur="$(gh api "repos/$REPO/releases/tags/latest" -q .target_commitish 2>/dev/null)"; then
+            :
+          else
+            code="$(gh api "repos/$REPO/releases/tags/latest" -i 2>/dev/null | awk 'toupper($1) ~ /^HTTP/ {print $2; exit}')"
+            if [ "$code" = "404" ]; then
+              cur=""
+            else
+              echo "::notice::could not read current latest release (status=${code:-unknown}); leaving it untouched."
+              exit 0
+            fi
+          fi
+
+          if [ -n "$cur" ] && [ "$cur" != "null" ]; then
+            cur_ts="$(commit_epoch "$cur")"
+            new_ts="$(commit_epoch "$SHA")"
+            # Fail CLOSED: if either committer date is unresolvable, do NOT
+            # overwrite. A stale `latest` is recoverable next run; a silently
+            # regressed one is a lie.
+            if [ -z "$cur_ts" ] || [ -z "$new_ts" ]; then
+              echo "::notice::cannot resolve committer date(s) (cur=$cur); leaving latest untouched."
+              exit 0
+            fi
+            # Newest-commit-wins; equal => skip (no churn). Overwrite only when
+            # THIS build is strictly newer than what `latest` already tracks —
+            # serialization (fixed concurrency group) makes this read-modify-
+            # write atomic w.r.t. other `latest` jobs.
+            if [ "$new_ts" -le "$cur_ts" ]; then
+              echo "::notice::latest already tracks an equal-or-newer commit ($cur); leaving it."
               exit 0
             fi
             gh release delete latest --cleanup-tag --yes
