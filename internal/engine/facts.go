@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 
+	"go.yaml.in/yaml/v3"
+
 	"github.com/caoer/meridian/internal/run"
 )
 
@@ -54,6 +56,33 @@ type Facts struct {
 	// source page, RepoName is its frontmatter `name`. Facts stay byte-free.
 	RepoName   string
 	IsRepoPage bool
+
+	// Chain is the parsed `^inputs` block (receipt-era schema, SCHEMA "Effect
+	// pages — the receipt schema"): one edge per `- ref:` entry, with the
+	// recorded hash ("" = born-null, pre-first-attest) and the entry's true file
+	// line. nil ⇔ no ^inputs block. Chain-fresh consumes these — refs inside the
+	// fenced YAML block are invisible to Links (fence-excluded), so the chain is
+	// its own fact, not a Links subset. Facts stay byte-free: refs + hashes only.
+	Chain []ChainEdge
+	// ChainHashAlgo is the ^inputs block's `hash-algo` scalar ("" when absent).
+	// A version mismatch is a mechanical re-hash trigger, never content
+	// invalidation (contract C6) — chain-fresh skips hash comparison on mismatch.
+	ChainHashAlgo string
+	// ReceiptProcedureHash is the ^receipt block's `procedure-hash` scalar (""
+	// when absent) — the recorded half of the cond-4 freshness term.
+	ReceiptProcedureHash string
+}
+
+// ChainEdge is one `^inputs` entry: the authored dependency ref and its
+// machine-recorded hash. Target/Anchor mirror LinkFact/EmbedEdge normalization
+// (Target "" = same-page self-ref); Line is the 1-indexed file line of the
+// entry's `ref:` key, for finding placement.
+type ChainEdge struct {
+	Ref    string // raw ref value as authored: "[[page#Section]]"
+	Target string // normalized resolution target ("" = self)
+	Anchor string // ref fragment: "Heading", "^id", or ""
+	Hash   string // recorded hash; "" when null/absent (attest fills it)
+	Line   int    // 1-indexed file line of the entry
 }
 
 // EmbedEdge is one ![[target#frag]] transclusion occurrence, recorded as an edge
@@ -93,17 +122,67 @@ type HeadingFact struct {
 	Line  int
 }
 
-// PinFields is the effect-contract pin frontmatter of a document, extracted as
-// a pure fact. The malformed/present/absent policy stays in the effect-pin
-// checks (U6 consumes this) — here it is only the raw parsed fields. Facts.Pin
-// is nil exactly when the page carries no `commit:` field (the commit IS the
-// pin: an unpinned page is not a malformed pin).
+// PinFields is the effect-contract pin state of a document, extracted as a
+// pure fact. The malformed/present/absent policy stays in the effect-pin
+// checks — here it is only the raw parsed fields. Facts.Pin is nil exactly
+// when the page carries NEITHER pin marker: no frontmatter `commit:` (the
+// legacy pin) and no `inputs:` key (the receipt-era marker). B2c refounds the
+// pin behind a tri-state shape (see Shape): on a receipt-shape page the
+// verifiable Commit/Checksums are sourced from the `^receipt` body block (the
+// SCHEMA block-pointer convention), not from frontmatter, and Branch is a
+// repo-level fact that lives on the sources/git/<slug> catalog page — it stays
+// "" here and is resolved corpus-side (__repo_branches).
 type PinFields struct {
 	Repo      string
-	Branch    string
-	Commit    string
+	Branch    string // frontmatter branch; "" on receipt shape (catalog-page fact)
+	Commit    string // frontmatter commit (legacy/transitional) or ^receipt block commit (receipt)
 	Locations []string
-	Checksums []string
+	Checksums []string // frontmatter checksum (legacy/transitional) or ^receipt block checksum (receipt)
+
+	// Receipt-era shape markers (B2c). All pure per-doc facts.
+	HasFMCommit   bool   // frontmatter `commit:` present (the legacy marker)
+	HasInputs     bool   // frontmatter `inputs:` key present (the receipt-era marker)
+	HasReceiptKey bool   // frontmatter `receipt:` key present (distinguishes absent from null)
+	ReceiptNull   bool   // `receipt: null` — born-invalid realise-queue member (D1)
+	ReceiptRef    string // `receipt:` ref string when non-null ("" when absent or null)
+	ReceiptBlock  bool   // a fenced ^receipt block parsed as a YAML mapping
+}
+
+// PinShape is the tri-state shape predicate the re-founded effect-pin rules
+// share (plan §4 U-B2c): the same five rules govern both the legacy and the
+// migrated (receipt) page shapes, discriminated by the two frontmatter markers
+// — no migration wedge, no push-freeze path.
+type PinShape int
+
+const (
+	// PinShapeNone: neither marker — not a pin-bearing page.
+	PinShapeNone PinShape = iota
+	// PinShapeLegacy: `commit` in frontmatter AND `inputs:` absent — v1 field
+	// mechanics apply unchanged.
+	PinShapeLegacy
+	// PinShapeReceipt: `inputs:` present AND no frontmatter `commit` — the git
+	// checks read commit/checksum from the ^receipt block and verify them there.
+	PinShapeReceipt
+	// PinShapeTransitional: both markers present — legacy verification still
+	// applies to the still-present frontmatter pin, and a warn finding names the
+	// mid-migration state (a page must never carry an unverified pin).
+	PinShapeTransitional
+)
+
+// Shape derives the tri-state shape from the extracted markers. nil-safe:
+// a nil pin is PinShapeNone.
+func (p *PinFields) Shape() PinShape {
+	switch {
+	case p == nil:
+		return PinShapeNone
+	case p.HasFMCommit && p.HasInputs:
+		return PinShapeTransitional
+	case p.HasFMCommit:
+		return PinShapeLegacy
+	case p.HasInputs:
+		return PinShapeReceipt
+	}
+	return PinShapeNone
 }
 
 // These regexes are byte-identical to the ones in internal/checks
@@ -131,7 +210,7 @@ func ExtractFacts(doc *Document) Facts {
 	var f Facts
 	f.Tags = doc.Tags
 	f.Title = extractTitle(doc.Frontmatter)
-	f.Pin = extractPin(doc.Frontmatter)
+	f.Pin = ExtractPin(doc)
 	f.RepoName, f.IsRepoPage = extractRepo(doc.Frontmatter, doc.Tags)
 
 	var embeds []EmbedEdge
@@ -143,7 +222,9 @@ func ExtractFacts(doc *Document) Facts {
 	// slice that contains them. Pure per-doc — no other document's bytes are read
 	// (the governing two-phase invariant); this is the phase-1 half the resolver's
 	// Merkle composition consumes.
-	extractSliceFacts(doc, &f, embeds)
+	slices := run.AnchoredSlices(string(doc.RawContent))
+	extractSliceFacts(&f, slices, embeds)
+	extractChainFacts(&f, slices)
 	return f
 }
 
@@ -154,8 +235,7 @@ func ExtractFacts(doc *Document) Facts {
 // are line-bucketed into their containing slice by the half-open [Start, End)
 // range AnchoredSlices reports; embed line numbers and slice ranges are both
 // original-content (BodyOffset-adjusted / scanLines num), so they align exactly.
-func extractSliceFacts(doc *Document, f *Facts, embeds []EmbedEdge) {
-	slices := run.AnchoredSlices(string(doc.RawContent))
+func extractSliceFacts(f *Facts, slices []run.AnchoredSlice, embeds []EmbedEdge) {
 	if len(slices) == 0 {
 		return
 	}
@@ -182,6 +262,153 @@ func extractSliceFacts(doc *Document, f *Facts, embeds []EmbedEdge) {
 			f.Embeds[s.Anchor] = edges
 		}
 	}
+}
+
+// extractChainFacts parses the receipt-era machine blocks (SCHEMA "Effect pages
+// — the receipt schema") out of the already-computed anchored slices: the
+// `^inputs` chain block into Chain/ChainHashAlgo and the `^receipt` block's
+// `procedure-hash` scalar. The blocks are fenced YAML, but the ^inputs shape is
+// a top-level sequence FOLLOWED by top-level scalars (`hash-algo: v1`) — not one
+// well-formed YAML document — so parsing is a tolerant line-walker (strict
+// writer, tolerant reader): `- ref:` opens an entry, indented `hash:`/`claim:`
+// attach to it, column-0 `key: value` lines are block scalars. Line numbers are
+// true file lines (slice Start + offset).
+func extractChainFacts(f *Facts, slices []run.AnchoredSlice) {
+	for _, s := range slices {
+		switch s.Anchor {
+		case "^inputs":
+			parseChainBlock(f, s)
+		case "^receipt":
+			for _, kv := range blockScalars(s) {
+				if kv.key == "procedure-hash" {
+					f.ReceiptProcedureHash = kv.value
+				}
+			}
+		}
+	}
+}
+
+// chainScalar is one column-0 `key: value` line of a machine block.
+type chainScalar struct {
+	key, value string
+	line       int
+}
+
+// parseChainBlock walks the ^inputs slice: sequence entries become ChainEdges,
+// trailing top-level scalars are block metadata (hash-algo). A `hash` of "null"
+// or "~" reads as the born-null "" (D1: stated, never omitted).
+func parseChainBlock(f *Facts, s run.AnchoredSlice) {
+	lines := strings.Split(s.Text, "\n")
+	var cur *ChainEdge
+	flush := func() {
+		if cur != nil {
+			f.Chain = append(f.Chain, *cur)
+			cur = nil
+		}
+	}
+	for i, ln := range lines {
+		fileLine := s.Start + i
+		trimmed := strings.TrimSpace(ln)
+		if trimmed == "" || isFenceOrMarker(trimmed) || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		indented := ln != strings.TrimLeft(ln, " \t")
+		if strings.HasPrefix(trimmed, "- ") {
+			flush()
+			cur = &ChainEdge{Line: fileLine}
+			trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+			if trimmed == "" {
+				continue
+			}
+			// fall through: "- ref: ..." carries the first key on the dash line
+		} else if !indented && cur != nil {
+			// A column-0 non-dash line ends the sequence: block scalars follow.
+			flush()
+		}
+		key, value, ok := splitScalar(trimmed)
+		if !ok {
+			continue
+		}
+		if cur != nil {
+			switch key {
+			case "ref":
+				cur.Ref = value
+				cur.Target = normalizeLinkTarget(stripBrackets(value))
+				cur.Anchor = linkFragment(stripBrackets(value))
+				cur.Line = fileLine
+			case "hash":
+				if value == "null" || value == "~" {
+					value = ""
+				}
+				cur.Hash = value
+			}
+			continue
+		}
+		if key == "hash-algo" {
+			f.ChainHashAlgo = value
+		}
+	}
+	flush()
+}
+
+// blockScalars returns the column-0 `key: value` lines of a block slice.
+func blockScalars(s run.AnchoredSlice) []chainScalar {
+	var out []chainScalar
+	for i, ln := range strings.Split(s.Text, "\n") {
+		trimmed := strings.TrimSpace(ln)
+		if trimmed == "" || isFenceOrMarker(trimmed) || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if ln != strings.TrimLeft(ln, " \t") || strings.HasPrefix(trimmed, "- ") {
+			continue
+		}
+		if key, value, ok := splitScalar(trimmed); ok {
+			out = append(out, chainScalar{key: key, value: value, line: s.Start + i})
+		}
+	}
+	return out
+}
+
+// splitScalar splits a "key: value" line, trimming quotes and an inline
+// `# comment` from the value. ok=false when the line carries no colon.
+func splitScalar(line string) (key, value string, ok bool) {
+	i := strings.Index(line, ":")
+	if i < 1 {
+		return "", "", false
+	}
+	key = strings.TrimSpace(line[:i])
+	value = strings.TrimSpace(line[i+1:])
+	// Strip an unquoted trailing comment before unquoting (a quoted value keeps
+	// its # bytes; SCHEMA examples carry `hash-algo: v1  # comment` forms).
+	if !strings.HasPrefix(value, "'") && !strings.HasPrefix(value, "\"") {
+		if j := strings.Index(value, " #"); j != -1 {
+			value = strings.TrimSpace(value[:j])
+		}
+	}
+	value = strings.Trim(value, "'\"")
+	return key, value, true
+}
+
+// isFenceOrMarker reports a fence delimiter or the block's own ^id marker line —
+// structure, not data. (AnchoredSlices block text includes the fence lines.)
+func isFenceOrMarker(trimmed string) bool {
+	return strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") ||
+		blockMarkerRe.MatchString(trimmed)
+}
+
+// blockMarkerRe matches a standalone ^id marker line (run.blockIDLine's class).
+var blockMarkerRe = regexp.MustCompile(`^\^[A-Za-z0-9-]+\s*$`)
+
+// stripBrackets removes a wikilink's [[ ]] wrapper, tolerating a bare ref.
+func stripBrackets(ref string) string {
+	ref = strings.TrimSpace(ref)
+	ref = strings.TrimPrefix(ref, "[[")
+	ref = strings.TrimSuffix(ref, "]]")
+	// Drop a |alias if authored.
+	if i := strings.IndexByte(ref, '|'); i != -1 {
+		ref = ref[:i]
+	}
+	return ref
 }
 
 // extractBodyFacts walks the body once, tracking fenced-code state, and
@@ -414,44 +641,91 @@ func extractTitle(fm map[string]any) string {
 	return ""
 }
 
-// extractPin parses the effect-contract pin frontmatter into PinFields. It
-// mirrors effect_pin.go's parsePin field reading (repo/branch/commit + the
-// location/checksum lists) but carries none of the malformed/present policy —
-// that stays with the checks. nil ⇔ no commit pin.
-func extractPin(fm map[string]any) *PinFields {
-	str := func(key string) string {
-		if v, ok := fm[key].(string); ok {
-			return strings.TrimSpace(v)
-		}
-		return ""
+// fmStr / fmList are the shared frontmatter scalar/list readers of the pin
+// extractor (tolerant reader: a scalar or a list both read as a list).
+func fmStr(fm map[string]any, key string) string {
+	if v, ok := fm[key].(string); ok {
+		return strings.TrimSpace(v)
 	}
-	list := func(key string) []string {
-		switch v := fm[key].(type) {
-		case string:
-			if s := strings.TrimSpace(v); s != "" {
-				return []string{s}
-			}
-		case []any:
-			var out []string
-			for _, item := range v {
-				if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
-					out = append(out, strings.TrimSpace(s))
-				}
-			}
-			return out
+	return ""
+}
+
+func fmList(fm map[string]any, key string) []string {
+	switch v := fm[key].(type) {
+	case string:
+		if s := strings.TrimSpace(v); s != "" {
+			return []string{s}
 		}
+	case []any:
+		var out []string
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				out = append(out, strings.TrimSpace(s))
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// ExtractPin parses the effect-contract pin state of a document into
+// PinFields — the ONE pin parser (checks-side parsePin consumes it, killing
+// the pre-B2c duplicated-parser drift the pin-parity test guarded). It carries
+// none of the malformed/present policy — that stays with the checks.
+// nil ⇔ neither pin marker (no frontmatter commit, no inputs key).
+//
+// Field sourcing by shape:
+//   - legacy / transitional: repo/branch/commit/location/checksum from
+//     frontmatter, exactly the v1 mechanics (transitional keeps the legacy
+//     field source — the still-present frontmatter pin stays verified).
+//   - receipt: repo/location from frontmatter; commit/checksum from the
+//     fenced ^receipt body block, adopted ONLY when the frontmatter `receipt:`
+//     key is a non-null ref (`receipt: null` is the D1 born-invalid state —
+//     block values without a pointing ref are not an attestation). Branch is
+//     a catalog-page fact and stays "".
+//
+// Pure per-doc (frontmatter + the doc's own body block) — safe for the
+// phase-1 fact cache; no bytes are retained (commit/checksum are derived
+// scalars).
+func ExtractPin(doc *Document) *PinFields {
+	fm := doc.Frontmatter
+	commit := fmStr(fm, "commit")
+	_, hasInputs := fm["inputs"]
+
+	if commit == "" && !hasInputs {
 		return nil
 	}
 
-	commit := str("commit")
-	if commit == "" {
-		return nil
+	p := &PinFields{
+		Repo:        fmStr(fm, "repo"),
+		Branch:      fmStr(fm, "branch"),
+		Commit:      commit,
+		Locations:   fmList(fm, "location"),
+		Checksums:   fmList(fm, "checksum"),
+		HasFMCommit: commit != "",
+		HasInputs:   hasInputs,
 	}
-	return &PinFields{
-		Repo:      str("repo"),
-		Branch:    str("branch"),
-		Commit:    commit,
-		Locations: list("location"),
-		Checksums: list("checksum"),
+
+	if rv, ok := fm["receipt"]; ok {
+		p.HasReceiptKey = true
+		if rv == nil {
+			p.ReceiptNull = true
+		} else if s, isStr := rv.(string); isStr && strings.TrimSpace(s) != "" {
+			p.ReceiptRef = strings.TrimSpace(s)
+		}
 	}
+
+	// Receipt shape: the ^receipt block is the field source for the verifiable
+	// values. Adopted only under a non-null receipt ref.
+	if p.Shape() == PinShapeReceipt && p.ReceiptRef != "" {
+		if blk, err := run.FindBlock(string(doc.RawContent), "receipt"); err == nil && blk.Fence {
+			var m map[string]any
+			if yaml.Unmarshal([]byte(blk.Code), &m) == nil && m != nil {
+				p.ReceiptBlock = true
+				p.Commit = fmStr(m, "commit")
+				p.Checksums = fmList(m, "checksum")
+			}
+		}
+	}
+	return p
 }

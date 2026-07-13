@@ -212,8 +212,9 @@ func TestExtractFacts_PinPresent(t *testing.T) {
 	}
 	want := &PinFields{
 		Repo: "cc-continuity", Branch: "main", Commit: "abc123",
-		Locations: []string{"skills/x", "skills/y"},
-		Checksums: []string{"sha1", "sha2"},
+		Locations:   []string{"skills/x", "skills/y"},
+		Checksums:   []string{"sha1", "sha2"},
+		HasFMCommit: true,
 	}
 	if !reflect.DeepEqual(f.Pin, want) {
 		t.Fatalf("pin = %+v, want %+v", f.Pin, want)
