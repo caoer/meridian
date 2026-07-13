@@ -120,26 +120,30 @@ func TestExtractFacts_LineNumbersUseBodyOffset(t *testing.T) {
 }
 
 func TestExtractFacts_Embeds(t *testing.T) {
-	f := ExtractFacts(&Document{Body: "before ![[SOURCES.base#Buckets]] after", BodyOffset: 1})
-	// The embed's inner [[...]] is still a Link (broken_wikilink parity).
+	// RawContent is the slice-fact input (frontmatter-free here, so BodyOffset 0);
+	// the embed's inner [[...]] is still a Link (broken_wikilink parity).
+	body := "before ![[SOURCES.base#Buckets]] after"
+	f := ExtractFacts(&Document{RawContent: []byte(body), Body: body, BodyOffset: 0})
 	if len(f.Links) != 1 || f.Links[0].Target != "SOURCES.base" {
 		t.Fatalf("links = %+v, want one SOURCES.base", linkTLs(f.Links))
 	}
-	if len(f.Embeds) != 1 {
-		t.Fatalf("want 1 embed, got %d", len(f.Embeds))
+	// The whole-body anchor "" holds every embed edge, in document order.
+	edges := f.Embeds[""]
+	if len(edges) != 1 {
+		t.Fatalf("want 1 embed edge under whole-body anchor, got %+v", f.Embeds)
 	}
-	e := f.Embeds[0]
-	if e.Original != "![[SOURCES.base#Buckets]]" || e.Target != "SOURCES.base" {
-		t.Errorf("embed = %+v, want Original=![[SOURCES.base#Buckets]] Target=SOURCES.base", e)
+	e := edges[0]
+	if e.Target != "SOURCES.base" || e.Anchor != "Buckets" {
+		t.Errorf("embed edge = %+v, want Target=SOURCES.base Anchor=Buckets", e)
 	}
-	// "before " is 7 bytes → '!' at byte 8 (1-indexed).
-	if e.Col != 8 {
-		t.Errorf("embed Col = %d, want 8", e.Col)
+	if e.Line != 1 {
+		t.Errorf("embed edge Line = %d, want 1", e.Line)
 	}
 }
 
 func TestExtractFacts_NonEmbedNotEmbed(t *testing.T) {
-	f := ExtractFacts(&Document{Body: "plain [[link]] here", BodyOffset: 1})
+	body := "plain [[link]] here"
+	f := ExtractFacts(&Document{RawContent: []byte(body), Body: body, BodyOffset: 0})
 	if len(f.Embeds) != 0 {
 		t.Fatalf("plain wikilink must not be an embed, got %+v", f.Embeds)
 	}

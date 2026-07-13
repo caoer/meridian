@@ -199,6 +199,23 @@ func (s *Store) CachedFindings(path string) (findings []types.Finding, ok bool) 
 	return e.Findings, true
 }
 
+// CachedFacts returns the opaque facts value persisted for a path, ignoring the
+// validity (stat/hash) checks Lookup applies — the raw entry read the honesty
+// gate (MD_CACHE_VERIFY) uses to compare cached facts against a fresh extraction.
+// It never increments the hit/miss counters. ok is false when no entry exists.
+func (s *Store) CachedFacts(path string) (any, bool) {
+	i := shardIndex(path)
+	sh := &s.shards[i]
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	s.ensureLoaded(sh, i)
+	e, ok := sh.entries[path]
+	if !ok {
+		return nil, false
+	}
+	return e.Facts, true
+}
+
 // Prune drops every entry whose path is not in keep — the vanished documents. The
 // caller must pass the FULL scanned path universe (only valid after a complete
 // scan); a scoped run must not call Prune or it would evict live entries. Pruned
