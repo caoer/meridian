@@ -213,6 +213,9 @@ func main() {
 	router.Handle("status", statusHandler(cfgPath, cfgErr))
 	router.Handle("run", runHandler())
 	router.Handle("read", readHandler())
+	// resolve is config-gated: hashing resolves wikilinks against the corpus
+	// index built from the scan root, exactly as check does.
+	router.Handle("resolve", resolveHandler(cfg, cfgErr))
 	// encode is deliberately NOT config-gated: the encoder is pure grammar.
 	router.Handle("encode", encodeHandler())
 	router.Handle("schema", schemaHandler(cfg, cfgErr))
