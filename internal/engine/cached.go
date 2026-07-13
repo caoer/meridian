@@ -54,6 +54,7 @@ func (e *Engine) RunCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store
 // never leaks into output.
 func (e *Engine) runCached(fsys fs.FS, ruleList []rules.Rule, store *cache.Store, workers int) []types.Finding {
 	e.warnings = nil
+	e.fatalErr = nil
 	// Cleared until a full CollectPaths succeeds below, so any early return
 	// (scan error, no active rules) leaves ScannedPaths nil and the cache-wiring
 	// caller skips Prune rather than evicting a still-valid cache.
@@ -460,6 +461,17 @@ func (e *Engine) prepareActiveRules(ruleList []rules.Rule) []activeRule {
 		}
 		checkFn, ok := e.checks[rule.Check]
 		if !ok {
+			// A `required:true` rule whose check is unregistered is a tool failure,
+			// not a skip: this is the stale-binary trap (the pack enforces a check
+			// the running binary predates). Promote CHECK_NOT_REGISTERED from a
+			// warning to a fatal error the CLI surfaces as exit 2. First one wins —
+			// the message names the offending rule and check.
+			if rule.Required {
+				if e.fatalErr == nil {
+					e.fatalErr = fmt.Errorf("CHECK_NOT_REGISTERED: rule '%s' requires check '%s', which this binary does not register — rebuild/upgrade md (a required rule must never be silently skipped)", rule.ID, rule.Check)
+				}
+				continue
+			}
 			e.warnings = append(e.warnings, types.Warning{
 				Code:    "CHECK_NOT_REGISTERED",
 				Message: fmt.Sprintf("Rule '%s': check '%s' not registered, skipping", rule.ID, rule.Check),
