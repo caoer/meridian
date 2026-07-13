@@ -52,7 +52,7 @@ func (r mapResolver) Resolve(t string) (string, bool) {
 	}
 	return "", false
 }
-func (r mapResolver) IsAmbiguous(t string) bool  { return len(r[t]) > 1 }
+func (r mapResolver) IsAmbiguous(t string) bool    { return len(r[t]) > 1 }
 func (r mapResolver) Candidates(t string) []string { return r[t] }
 
 // sh renders content as a leaf slice hash, matching FactSource's "sha256:<hex>".

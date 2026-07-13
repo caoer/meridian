@@ -11,16 +11,34 @@ import (
 	"github.com/caoer/meridian/internal/version"
 )
 
+// FactSchemaSalt versions the on-disk fact/finding layout independently of the
+// build version — so it changes even when two builds share a vcs revision (dev
+// builds all report the same version.Info()). Bump it whenever:
+//   - engine.Facts changes shape (new/removed/renamed fields),
+//   - the norm-v1 slice-normalization policy changes, or
+//   - the normative formatter identity changes (D2/E3: slice hashes are defined
+//     over formatter-canonical bytes — the installed ccc-mdformat @ cffcfbc — so a
+//     formatter change silently changes what "canonical" means; salting on it
+//     forces a clean cold recompute rather than serving hashes over the old norm).
+//
+// It rides the version PATH SEGMENT (never hashed into keys, the Ruff lesson): an
+// old-schema shard lives in a different directory and is never decoded into the
+// new struct — which gob would otherwise silently zero-fill (the false-clean
+// "decode-into-zero-facts" class). facts2 = SliceHashes + anchored Embeds +
+// RepoName/IsRepoPage added (U-B1b); fmtcffcfbc = the normative formatter commit.
+const FactSchemaSalt = "facts2-norm1-fmtcffcfbc"
+
 // CacheDirForRoot returns the persistent cache directory for a scan root:
 //
-//	<UserCacheDir>/meridian/<sha256(abs scan root)[:16]>/<version>
+//	<UserCacheDir>/meridian/<sha256(abs scan root)[:16]>/<version>-<FactSchemaSalt>
 //
 // The root-hash segment isolates unrelated wikis (and keeps the cache OUT of the
-// wiki's own git tree — Omnisearch #92's sync-corruption scar). The version is a
-// path segment, never hashed into keys (Ruff's lesson): a binary upgrade becomes
-// a clean cold start and old version dirs accumulate harmlessly (Decision 10,
-// pruned by `md cache clean`). It errors only when the user cache dir cannot be
-// resolved (e.g. no HOME); callers fall back to an in-memory store.
+// wiki's own git tree — Omnisearch #92's sync-corruption scar). The version+salt
+// is a path segment, never hashed into keys (Ruff's lesson): a binary upgrade OR
+// a fact-schema/formatter change becomes a clean cold start and old dirs
+// accumulate harmlessly (Decision 10, pruned by `md cache clean`). It errors only
+// when the user cache dir cannot be resolved (e.g. no HOME); callers fall back to
+// an in-memory store.
 func CacheDirForRoot(scanRoot string) (string, error) {
 	base, err := os.UserCacheDir()
 	if err != nil {
@@ -32,7 +50,8 @@ func CacheDirForRoot(scanRoot string) (string, error) {
 	}
 	sum := sha256.Sum256([]byte(abs))
 	root := hex.EncodeToString(sum[:])[:16]
-	return filepath.Join(base, "meridian", root, sanitizeVersion(version.Info())), nil
+	seg := sanitizeVersion(version.Info()) + "-" + FactSchemaSalt
+	return filepath.Join(base, "meridian", root, seg), nil
 }
 
 // sanitizeVersion keeps a version string usable as a single path segment.
