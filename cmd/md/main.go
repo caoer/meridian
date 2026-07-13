@@ -216,6 +216,10 @@ func main() {
 	// resolve is config-gated: hashing resolves wikilinks against the corpus
 	// index built from the scan root, exactly as check does.
 	router.Handle("resolve", resolveHandler(cfg, cfgErr))
+	// attest is config-gated like resolve: the receipt writer hashes inputs
+	// against the corpus index built from the scan root. Strict sole writer —
+	// working-tree bytes only, never git add/commit/push.
+	router.Handle("attest", attestHandler(cfg, cfgErr))
 	// encode is deliberately NOT config-gated: the encoder is pure grammar.
 	router.Handle("encode", encodeHandler())
 	router.Handle("schema", schemaHandler(cfg, cfgErr))
