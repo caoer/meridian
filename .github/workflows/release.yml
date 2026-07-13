@@ -1,0 +1,131 @@
+name: release
+
+# Version-tag release + rolling `latest` + niks3 cache push.
+#
+# Fires on a `v*` tag push (and workflow_dispatch for a cache-only rebuild).
+# Three outcomes, split across two jobs:
+#
+#   1. release job (single ubuntu runner) — `make release` cross-builds all
+#      four darwin,linux × arm64,amd64 Go binaries into dist/*.tar.gz. Go with
+#      CGO disabled cross-compiles cleanly, so one runner covers every platform:
+#      a build matrix here would be 4x the runners for zero benefit. Artifacts
+#      are published to the tag's GitHub Release, and a rolling `latest` release
+#      is re-pointed at this build.
+#   2. cache job (native runner matrix) — a nix closure is per-system and cannot
+#      be cross-built, so `nix build .#packages.<system>.default` must run on a
+#      native runner (mirrors cnixvim's build-and-cache.yml). Each closure is
+#      pushed to the fleet niks3 cache (public read at cache.0xtau.com) with
+#      `niks3 push --pin` so downstream substitutes instead of rebuilding.
+#
+# Release/latest publishing uses `gh release` scripting rather than a
+# marketplace action: no third-party supply chain, and full control over the
+# rolling-tag repoint (delete + recreate the `latest` tag at this commit).
+# Prerelease is inferred from the tag (a hyphen => semver prerelease, e.g.
+# v1.2.3-rc1 or the v0.0.0-ciN CI test tags).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: false
+
+permissions:
+  contents: "read"
+
+jobs:
+  release:
+    # Tag-triggered only: workflow_dispatch runs on a branch with no tag to
+    # release against, so it exercises the cache job alone.
+    if: "github.ref_type == 'tag'"
+    runs-on: "ubuntu-latest"
+    permissions:
+      contents: "write"
+    steps:
+      - uses: "actions/checkout@v6"
+        with:
+          # Full history + tags so `git describe` in the Makefile resolves.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: "actions/setup-go@v6"
+        with:
+          go-version-file: "go.mod"
+
+      - name: "Build release artifacts"
+        run: "make release VERSION=${{ github.ref_name }}"
+
+      - name: "Publish tag release + re-point latest"
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          TAG: "${{ github.ref_name }}"
+          SHA: "${{ github.sha }}"
+        run: |
+          set -euo pipefail
+
+          # Semver prerelease convention: a hyphen in the tag => prerelease.
+          prerelease=""
+          case "$TAG" in
+            *-*) prerelease="--prerelease" ;;
+          esac
+
+          # 1. Version-tag release — create, or replace if a run is re-triggered.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --yes
+          fi
+          gh release create "$TAG" dist/*.tar.gz \
+            --title "$TAG" \
+            --generate-notes \
+            --target "$SHA" \
+            $prerelease
+
+          # 2. Rolling `latest` — re-point the `latest` tag + release at this
+          #    build. --latest=false keeps it from stealing GitHub's "Latest"
+          #    badge from real semver releases; it is a moving dev pointer.
+          gh release delete latest --cleanup-tag --yes 2>/dev/null || true
+          gh release create latest dist/*.tar.gz \
+            --title "latest (rolling)" \
+            --notes "Rolling latest build — tracks $TAG ($SHA)." \
+            --target "$SHA" \
+            --latest=false \
+            --prerelease
+
+  cache:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: "x86_64-linux"
+            runner: "ubuntu-latest"
+          - system: "aarch64-linux"
+            runner: "ubuntu-24.04-arm"
+          - system: "aarch64-darwin"
+            runner: "macos-latest"
+    runs-on: "${{ matrix.runner }}"
+    steps:
+      - uses: "actions/checkout@v6"
+        with:
+          persist-credentials: false
+      - uses: "DeterminateSystems/determinate-nix-action@v3"
+        with:
+          extra-conf: |
+            accept-flake-config = true
+      - name: "Build"
+        run: "nix build .#packages.${{ matrix.system }}.default -L"
+      - name: "Push closure to niks3 cache"
+        env:
+          NIKS3_TOKEN: "${{ secrets.NIKS3_TOKEN }}"
+        run: |
+          umask 077
+          printf '%s' "$NIKS3_TOKEN" > "$RUNNER_TEMP/niks3-token"
+          export NIKS3_AUTH_TOKEN_FILE="$RUNNER_TEMP/niks3-token"
+          export NIKS3_SERVER_URL="https://niks3.0xtau.com"
+          # Pinned to the same rev osfiles locks (nixpkgs' niks3 lags — 1.6.1
+          # lacks --pin). Bump alongside the osfiles niks3 flake input.
+          nix profile install github:Mic92/niks3/780939adecefc2f84be700a6f9ae1cc9385ad240#niks3
+          # --pin takes exactly one store path; pins are upserts that shield the
+          # latest closure from the server's 30-day GC even when this repo idles.
+          niks3 push --pin "meridian-${{ matrix.system }}" ./result
