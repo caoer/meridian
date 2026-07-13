@@ -31,8 +31,11 @@ import (
 // a fixed binary); facts4 = tri-state pin facts (B2c: PinFields gains the
 // receipt-era shape markers, and Pin is non-nil for `inputs:`-marked pages —
 // facts3 shards would restore Pin=nil for receipt-shape pages and starve the
-// phase-2 __all_pins batch); fmtcffcfbc = the normative formatter commit.
-const FactSchemaSalt = "facts4-norm1-fmtcffcfbc"
+// phase-2 __all_pins batch); facts5 = Chain/ChainHashAlgo/ReceiptProcedureHash
+// added (U-B2b — a facts4 shard would gob-decode with a nil Chain and
+// chain-fresh would silently see every cached page as chainless); fmtcffcfbc =
+// the normative formatter commit.
+const FactSchemaSalt = "facts5-norm1-fmtcffcfbc"
 
 // CacheDirForRoot returns the persistent cache directory for a scan root:
 //

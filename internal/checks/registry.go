@@ -30,6 +30,8 @@ var All = map[string]engine.CheckFunc{
 	"effect-unpinned":            effectUnpinnedCheck,
 	"effect-rootless":            effectRootlessCheck,
 	"body-value-echo":            bodyValueEchoCheck,
+	"repo-cataloged":             repoCatalogedCheck,
+	"chain-fresh":                chainFreshCheck,
 	"probe":                      probeCheck,
 	"stale-run-record":           staleRunRecordCheck,
 	"wikilink-canonicalize":      wikilinkCanonicalizeCheck,
@@ -57,6 +59,11 @@ var All = map[string]engine.CheckFunc{
 //     effect-pin-stale: resolve pins against external git refs under
 //     $CCC_LLM_WIKI_REPOS_ROOT (origin sha, ancestry, checksum), recomputed every
 //     run over a per-run snapshot (plan §2).
+//   - repo-cataloged / chain-fresh (U-B2b): verdicts depend on OTHER pages'
+//     facts — the repo catalog, chain-dependency slice hashes, the effect-graph
+//     edge set, ancestor blurb procedure blocks. Creating/editing/deleting a
+//     dependency flips the verdict with this doc unchanged, so findings are
+//     recomputed every run over the __all_facts corpus table and never cached.
 //
 // Doc-local checks are deliberately absent: table-wikilink-pipe (unescaped
 // pipes in a row — no cross-file input) and wiki-navlink / backticked-wikilink
@@ -74,4 +81,6 @@ var Phase2 = []string{
 	"effect-pin-on-origin",
 	"effect-checksum-reproduces",
 	"effect-pin-stale",
+	"repo-cataloged",
+	"chain-fresh",
 }
