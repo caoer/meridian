@@ -28,8 +28,11 @@ import (
 // RepoName/IsRepoPage added (U-B1b); facts3 = line-convention fix (fact Line
 // values become true file lines and embed edges re-bucket — same struct shape,
 // different SEMANTICS, so facts2 shards would serve wrongly-bucketed embeds to
-// a fixed binary); fmtcffcfbc = the normative formatter commit.
-const FactSchemaSalt = "facts3-norm1-fmtcffcfbc"
+// a fixed binary); facts4 = Chain/ChainHashAlgo/ReceiptProcedureHash added
+// (U-B2b — a facts3 shard would gob-decode with a nil Chain and chain-fresh
+// would silently see every cached page as chainless); fmtcffcfbc = the
+// normative formatter commit.
+const FactSchemaSalt = "facts4-norm1-fmtcffcfbc"
 
 // CacheDirForRoot returns the persistent cache directory for a scan root:
 //

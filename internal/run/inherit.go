@@ -144,13 +144,28 @@ func blurbCandidates(mdPath, top string) []string {
 	if err != nil {
 		return nil
 	}
+	rels := BlurbCandidatesRel(pageRel)
+	out := make([]string, len(rels))
+	for i, rel := range rels {
+		out[i] = filepath.Join(top, filepath.FromSlash(rel))
+	}
+	return out
+}
+
+// BlurbCandidatesRel is the pure, path-only form of the blurb walk: given a
+// root-relative slash page path, it returns the blurb pages an inherited
+// resolution probes, nearest ancestor first — each ancestor directory's
+// UPPER-cased-basename blurb, then the toplevel LLM_WIKI.md. It is the ONE
+// probe-order definition, shared by `md run inherit:true` (absolute paths, real
+// FS) and the chain-fresh cond-4 procedure resolution (fact-table lookups) so
+// the two walks can never disagree.
+func BlurbCandidatesRel(pageRel string) []string {
 	var out []string
 	for dir := path.Dir(pageRel); ; dir = path.Dir(dir) {
 		if dir == "." || dir == "/" || dir == "" {
-			return append(out, filepath.Join(top, "LLM_WIKI.md"))
+			return append(out, "LLM_WIKI.md")
 		}
-		base := path.Base(dir)
-		out = append(out, filepath.Join(top, filepath.FromSlash(dir), strings.ToUpper(base)+".md"))
+		out = append(out, path.Join(dir, strings.ToUpper(path.Base(dir))+".md"))
 	}
 }
 

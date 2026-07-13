@@ -36,6 +36,8 @@ func TestPhase2_MembershipInvariant(t *testing.T) {
 		"effect-pin-on-origin",
 		"effect-checksum-reproduces",
 		"effect-pin-stale",
+		"repo-cataloged",
+		"chain-fresh",
 	}
 
 	got := append([]string(nil), Phase2...)

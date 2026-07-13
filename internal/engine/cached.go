@@ -240,13 +240,24 @@ func (e *Engine) runPhase2(fsys fs.FS, docs []*Document, phase2Active []activeRu
 		}
 	}
 
+	// The corpus fact table, cache-served: every doc's phase-1 facts were
+	// extracted (or cache-restored) by the phase-1 loop, so the table is free to
+	// assemble here. Corpus checks (repo-cataloged's catalog, chain-fresh's
+	// Merkle composition + effect-graph DFS) consume facts about OTHER docs
+	// through it — never other docs' bytes (the governing two-phase invariant).
+	allFacts := make(map[string]Facts, len(docs))
+	for _, doc := range docs {
+		allFacts[doc.Path] = doc.Facts
+	}
+
 	// Batch-infra warning sink (Decision 8). The single-flight snapshot build and
 	// the parallel consumer pool can both surface a failure from different
 	// goroutines — guard the slice.
 	var warnMu sync.Mutex
 	var phase2Warnings []string
 	extra := map[string]any{
-		"__all_pins": allPins,
+		"__all_pins":  allPins,
+		"__all_facts": allFacts,
 		"__warn": func(msg string) {
 			warnMu.Lock()
 			phase2Warnings = append(phase2Warnings, msg)
