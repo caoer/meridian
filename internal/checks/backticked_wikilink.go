@@ -123,7 +123,7 @@ func backtickWikilinkCheck(doc *engine.Document, params map[string]any) []engine
 		for _, loc := range wikilinkRe.FindAllStringIndex(line, -1) {
 			if insideAnySpan(spans, loc[0], loc[1]) {
 				out = append(out, engine.RawFinding{
-					Line: doc.BodyOffset + i + 1,
+					Line: doc.BodyOffset + i,
 					TemplateData: map[string]string{
 						"Match": line[loc[0]:loc[1]],
 						"Line":  line,

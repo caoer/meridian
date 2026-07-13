@@ -62,7 +62,8 @@ func TestBodyValueEcho(t *testing.T) {
 }
 
 // TestBodyValueEcho_LineNumber pins the body-relative line mapping: an echo on
-// the second body line reports file line BodyOffset+2.
+// the second body line reports file line BodyOffset+1 (BodyOffset IS the first
+// body line).
 func TestBodyValueEcho_LineNumber(t *testing.T) {
 	doc := echoDoc(map[string]any{"commit": fullSha},
 		"first line clean\ncommit "+fullSha+" here")
@@ -70,7 +71,7 @@ func TestBodyValueEcho_LineNumber(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("got %d findings, want 1", len(got))
 	}
-	if want := doc.BodyOffset + 1 + 1; got[0].Line != want {
+	if want := doc.BodyOffset + 1; got[0].Line != want {
 		t.Errorf("Line = %d, want %d (BodyOffset %d + 2nd body line)", got[0].Line, want, doc.BodyOffset)
 	}
 }

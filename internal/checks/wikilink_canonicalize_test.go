@@ -246,9 +246,9 @@ func TestCanonCheck_LineNumber(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("expected 1 finding, got %d", len(got))
 	}
-	// Line 3 of body + offset 5 = line 8
-	if got[0].Line != 8 {
-		t.Errorf("Line = %d, want 8", got[0].Line)
+	// Body index 2 + BodyOffset 5 (the first body line) = file line 7.
+	if got[0].Line != 7 {
+		t.Errorf("Line = %d, want 7", got[0].Line)
 	}
 }
 

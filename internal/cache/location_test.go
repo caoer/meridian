@@ -16,8 +16,9 @@ func TestCacheDirForRoot_Layout(t *testing.T) {
 	if !strings.Contains(dir, filepath.Join("meridian")) {
 		t.Fatalf("path missing meridian segment: %s", dir)
 	}
-	if !strings.HasSuffix(dir, sanitizeVersion(version.Info())) {
-		t.Fatalf("path must end in the version segment %q: %s", version.Info(), dir)
+	wantSeg := sanitizeVersion(version.Info()) + "-" + FactSchemaSalt
+	if !strings.HasSuffix(dir, wantSeg) {
+		t.Fatalf("path must end in the version+salt segment %q: %s", wantSeg, dir)
 	}
 	// The root-hash segment is 16 hex chars.
 	segs := strings.Split(filepath.ToSlash(dir), "/")

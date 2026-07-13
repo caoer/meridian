@@ -213,6 +213,9 @@ func main() {
 	router.Handle("status", statusHandler(cfgPath, cfgErr))
 	router.Handle("run", runHandler())
 	router.Handle("read", readHandler())
+	// resolve is config-gated: hashing resolves wikilinks against the corpus
+	// index built from the scan root, exactly as check does.
+	router.Handle("resolve", resolveHandler(cfg, cfgErr))
 	// encode is deliberately NOT config-gated: the encoder is pure grammar.
 	router.Handle("encode", encodeHandler())
 	router.Handle("schema", schemaHandler(cfg, cfgErr))
@@ -705,6 +708,20 @@ func runCacheVerify(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Co
 	fresh := eng.RunCached(fsys, loadedRules, nil)
 
 	divergences := diffFindings(cached, fresh)
+
+	// Facts-level coverage: the finding diff above sees only phase-2 consumers of
+	// facts. The persistent cache also carries phase-1 fact fields with no consumer
+	// yet (SliceHashes, anchored Embeds, repo scalars); recompute them fresh and
+	// compare so a stale slice hash can't ride the cache silently until U-B2b wires
+	// chain-fresh/repo-cataloged. Reported as facts_diverge divergences so the same
+	// verified==true CI gate catches them.
+	for _, p := range eng.VerifyFactsAgainstStore(fsys, store) {
+		divergences = append(divergences, cli.CacheDivergence{
+			FilePath: p,
+			Kind:     "facts_diverge",
+			Message:  "cached facts differ from a fresh extraction (SliceHashes/Embeds/repo scalars)",
+		})
+	}
 
 	cliWarnings := make([]cli.Warning, 0, len(warnings))
 	for _, w := range warnings {

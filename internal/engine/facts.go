@@ -1,9 +1,13 @@
 package engine
 
 import (
+	"crypto/sha256"
 	"encoding/gob"
+	"encoding/hex"
 	"regexp"
 	"strings"
+
+	"github.com/caoer/meridian/internal/run"
 )
 
 func init() {
@@ -21,15 +25,45 @@ func init() {
 //
 // By type design Facts carries NO raw document bytes (ESLint #13507 scar: a
 // mutation leaked full source text into every cache entry → 26× silent bloat).
-// Link tokens are the only source text retained, and only the token itself.
-// This shape is what U7 persists.
+// Link tokens and per-anchor slice HASHES are the only derived source-text
+// retained — never the slice bytes themselves. This shape is what U7 persists.
 type Facts struct {
 	Links    []LinkFact    // [[...]] wikilinks in body, fenced/inline-code excluded
-	Embeds   []LinkFact    // ![[...]] transclusion embeds in body, same exclusion
 	Tags     []string      // frontmatter tags (Document.Tags)
 	Title    string        // frontmatter "title" (string), trimmed; "" when absent
 	Headings []HeadingFact // ATX headings in body, fenced-code excluded
 	Pin      *PinFields    // effect-contract pin frontmatter; nil ⇔ no commit pin
+
+	// SliceHashes is the leaf fact behind the attestation chain (meridian-impl
+	// §1.4): anchor → sha256 hex of norm-v1(own slice bytes), for every anchor of
+	// the doc — "" (whole body), each heading text (section), "^id" (block). Pure
+	// per-doc, bytes-free. The resolver's Merkle composition consumes these via
+	// the FactSource adapter; the hex is stored BARE (the "sha256:" prefix is
+	// added at the interface seam, B1c) to keep entries lean. First occurrence
+	// wins on duplicate heading text (Section's exact-first rule).
+	SliceHashes map[string]string
+	// Embeds is the anchored transclusion-edge store (supersedes the old flat
+	// []LinkFact — which had zero consumers): anchor → the ![[...]] embeds within
+	// that slice, in document order. The whole-body key "" holds every embed;
+	// section/block keys hold their subset. It is the embed-child list the Merkle
+	// composition recurses over per node; plain [[...]] references are NOT edges
+	// here (they are content, not transclusion).
+	Embeds map[string][]EmbedEdge
+	// RepoName / IsRepoPage are the scalar facts effect-repo-cataloged consumes
+	// (meridian-impl §2.2): IsRepoPage marks a `type: repo` (or tag `type/repo`)
+	// source page, RepoName is its frontmatter `name`. Facts stay byte-free.
+	RepoName   string
+	IsRepoPage bool
+}
+
+// EmbedEdge is one ![[target#frag]] transclusion occurrence, recorded as an edge
+// for chain composition. Target is the normalized resolution target (byte-identical
+// to LinkFact.Target); Anchor is the embed's own fragment ("Heading" or "^id", ""
+// for a whole-page embed); Line is the 1-indexed file line (for ordering/reporting).
+type EmbedEdge struct {
+	Target string
+	Anchor string
+	Line   int
 }
 
 // LinkFact is one wikilink (or embed) occurrence in a document body, found
@@ -98,16 +132,62 @@ func ExtractFacts(doc *Document) Facts {
 	f.Tags = doc.Tags
 	f.Title = extractTitle(doc.Frontmatter)
 	f.Pin = extractPin(doc.Frontmatter)
+	f.RepoName, f.IsRepoPage = extractRepo(doc.Frontmatter, doc.Tags)
+
+	var embeds []EmbedEdge
 	if doc.Body != "" {
-		extractBodyFacts(doc, &f)
+		extractBodyFacts(doc, &f, &embeds)
 	}
+	// Leaf slice facts: one AnchoredSlices pass over the doc's OWN bytes, hash
+	// each slice under norm-v1, and bucket the document-order embeds into the
+	// slice that contains them. Pure per-doc — no other document's bytes are read
+	// (the governing two-phase invariant); this is the phase-1 half the resolver's
+	// Merkle composition consumes.
+	extractSliceFacts(doc, &f, embeds)
 	return f
+}
+
+// extractSliceFacts computes SliceHashes (anchor → sha256 hex of norm-v1(slice))
+// and Embeds (anchor → contained embed edges, document order) from
+// run.AnchoredSlices — the single slice-boundary implementation shared with the
+// resolve library, so a hashed slice and a read slice can never disagree. Embeds
+// are line-bucketed into their containing slice by the half-open [Start, End)
+// range AnchoredSlices reports; embed line numbers and slice ranges are both
+// original-content (BodyOffset-adjusted / scanLines num), so they align exactly.
+func extractSliceFacts(doc *Document, f *Facts, embeds []EmbedEdge) {
+	slices := run.AnchoredSlices(string(doc.RawContent))
+	if len(slices) == 0 {
+		return
+	}
+	f.SliceHashes = make(map[string]string, len(slices))
+	for _, s := range slices {
+		if _, dup := f.SliceHashes[s.Anchor]; dup {
+			continue // first occurrence wins (matches AnchoredSlices' section dedup)
+		}
+		sum := sha256.Sum256([]byte(normV1(s.Text)))
+		f.SliceHashes[s.Anchor] = hex.EncodeToString(sum[:])
+		if len(embeds) == 0 {
+			continue
+		}
+		var edges []EmbedEdge
+		for _, e := range embeds {
+			if e.Line >= s.Start && e.Line < s.End {
+				edges = append(edges, e)
+			}
+		}
+		if len(edges) > 0 {
+			if f.Embeds == nil {
+				f.Embeds = make(map[string][]EmbedEdge, 1)
+			}
+			f.Embeds[s.Anchor] = edges
+		}
+	}
 }
 
 // extractBodyFacts walks the body once, tracking fenced-code state, and
 // collects links, embeds, and headings. One pass, one line split, one fence
 // state machine — shared by all three so a fence toggles them together.
-func extractBodyFacts(doc *Document, f *Facts) {
+func extractBodyFacts(doc *Document, f *Facts, embeds *[]EmbedEdge) {
 	lines := strings.Split(doc.Body, "\n")
 	inFence := false
 	var fenceMarker string
@@ -134,7 +214,12 @@ func extractBodyFacts(doc *Document, f *Facts) {
 			continue
 		}
 
-		lineNum := doc.BodyOffset + i + 1
+		// BodyOffset IS the 1-indexed file line of the first body line
+		// (frontmatter/parse.go), so body index i maps to file line
+		// BodyOffset+i exactly — matching scanLines' absolute numbering, which
+		// extractSliceFacts' embed bucketing compares against. A +1 here pushed
+		// every edge on a slice's last line into the following slice.
+		lineNum := doc.BodyOffset + i
 
 		// Headings: a heading line may still carry links (e.g. "## See [[x]]"),
 		// so fall through to the link scan rather than continue.
@@ -156,7 +241,7 @@ func extractBodyFacts(doc *Document, f *Facts) {
 			// Fast path: no inline code, so broken_wikilink's strip is a no-op and
 			// match offsets already index the original line. No allocation.
 			for _, m := range factWikilinkRe.FindAllStringSubmatchIndex(line, -1) {
-				appendLink(f, line, line[m[2]:m[3]], m[0], m[1], lineNum)
+				appendLink(f, embeds, line, line[m[2]:m[3]], m[0], m[1], lineNum)
 			}
 			continue
 		}
@@ -168,15 +253,16 @@ func extractBodyFacts(doc *Document, f *Facts) {
 		for _, m := range factWikilinkRe.FindAllStringSubmatchIndex(stripped, -1) {
 			origStart := orig[m[0]]
 			origEnd := orig[m[1]-1] + 1
-			appendLink(f, line, stripped[m[2]:m[3]], origStart, origEnd, lineNum)
+			appendLink(f, embeds, line, stripped[m[2]:m[3]], origStart, origEnd, lineNum)
 		}
 	}
 }
 
-// appendLink records one wikilink occurrence (and, when preceded by '!', its
-// embed view). rawTarget is the pre-pipe group as matched; [origStart,origEnd)
-// is the token's span in the original line.
-func appendLink(f *Facts, line, rawTarget string, origStart, origEnd, lineNum int) {
+// appendLink records one wikilink occurrence in f.Links and, when the token is
+// immediately preceded by '!', the embed edge into the document-order collector.
+// rawTarget is the pre-pipe group as matched; [origStart,origEnd) is the token's
+// span in the original line.
+func appendLink(f *Facts, embeds *[]EmbedEdge, line, rawTarget string, origStart, origEnd, lineNum int) {
 	target := normalizeLinkTarget(rawTarget)
 	f.Links = append(f.Links, LinkFact{
 		Original: line[origStart:origEnd],
@@ -185,16 +271,74 @@ func appendLink(f *Facts, line, rawTarget string, origStart, origEnd, lineNum in
 		Col:      origStart + 1,
 	})
 	// An embed is a wikilink immediately preceded by '!'. It stays in Links too
-	// (parity: broken_wikilink checks embed targets); Embeds is the additional
-	// transclusion view, keyed at the '!'.
+	// (parity: broken_wikilink checks embed targets); the anchored edge carries
+	// the embed's own fragment so the resolver can recurse into the embedded slice.
 	if origStart > 0 && line[origStart-1] == '!' {
-		f.Embeds = append(f.Embeds, LinkFact{
-			Original: line[origStart-1 : origEnd],
-			Target:   target,
-			Line:     lineNum,
-			Col:      origStart, // 1-indexed column of the '!'
+		*embeds = append(*embeds, EmbedEdge{
+			Target: target,
+			Anchor: linkFragment(rawTarget),
+			Line:   lineNum,
 		})
 	}
+}
+
+// linkFragment returns the #fragment of a raw wikilink inner (pre-pipe group):
+// the text after the first '#', trimmed ("Heading" or "^id"), or "" when the
+// link has no fragment. It complements normalizeLinkTarget (which drops it).
+func linkFragment(raw string) string {
+	t := strings.TrimSpace(raw)
+	if i := strings.IndexByte(t, '#'); i != -1 {
+		return strings.TrimSpace(t[i+1:])
+	}
+	return ""
+}
+
+// normV1 is the norm-v1 slice-normalization policy (meridian-impl §1.4), applied
+// to every slice before hashing: CRLF/CR → LF, strip trailing whitespace per
+// line, collapse ≥2 consecutive blank lines to one, and end in exactly one
+// newline. The policy is a named constant baked into the fact-cache salt, so a
+// policy change forces a clean cold start. It is idempotent — norm-v1(norm-v1(s))
+// == norm-v1(s) — which the salt relies on for stable warm hashes.
+func normV1(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	prevBlank := false
+	for _, ln := range lines {
+		ln = strings.TrimRight(ln, " \t")
+		if ln == "" {
+			if prevBlank {
+				continue
+			}
+			prevBlank = true
+		} else {
+			prevBlank = false
+		}
+		out = append(out, ln)
+	}
+	return strings.TrimRight(strings.Join(out, "\n"), "\n") + "\n"
+}
+
+// extractRepo reads the scalar repo facts effect-repo-cataloged consumes
+// (meridian-impl §2.2): a page is a repo page when frontmatter `type` == "repo"
+// or it carries the `type/repo` tag; RepoName is its frontmatter `name`, trimmed.
+func extractRepo(fm map[string]any, tags []string) (name string, isRepo bool) {
+	if t, ok := fm["type"].(string); ok && strings.TrimSpace(t) == "repo" {
+		isRepo = true
+	}
+	if !isRepo {
+		for _, tag := range tags {
+			if tag == "type/repo" {
+				isRepo = true
+				break
+			}
+		}
+	}
+	if n, ok := fm["name"].(string); ok {
+		name = strings.TrimSpace(n)
+	}
+	return
 }
 
 // stripInlineCode removes the given inline-code spans from line (reproducing

@@ -13,17 +13,17 @@ import "testing"
 func TestPrefilterGate_Directive_MidLineHTML(t *testing.T) {
 	body := "some prose <!-- md:ignore rule-a --> trailing text"
 	suppress, _ := parseInlineSuppress(body, 3)
-	// Inline (non-standalone) on body idx 0 → same line 3+0+1=4.
-	if suppress == nil || !suppress[4]["rule-a"] {
-		t.Errorf("mid-line HTML directive must still suppress line 4, got %v", suppress)
+	// Inline (non-standalone) on body idx 0 → same line 3+0=3.
+	if suppress == nil || !suppress[3]["rule-a"] {
+		t.Errorf("mid-line HTML directive must still suppress line 3, got %v", suppress)
 	}
 }
 
 func TestPrefilterGate_Directive_MidLineObsidian(t *testing.T) {
 	body := "prose %% md:ignore rule-b %% more prose"
 	suppress, _ := parseInlineSuppress(body, 3)
-	if suppress == nil || !suppress[4]["rule-b"] {
-		t.Errorf("mid-line Obsidian directive must still suppress line 4, got %v", suppress)
+	if suppress == nil || !suppress[3]["rule-b"] {
+		t.Errorf("mid-line Obsidian directive must still suppress line 3, got %v", suppress)
 	}
 }
 
@@ -32,9 +32,9 @@ func TestPrefilterGate_Directive_MidLineObsidian(t *testing.T) {
 func TestPrefilterGate_SkippedProseKeepsLineIndex(t *testing.T) {
 	body := "plain prose one\nplain prose two\n%% md:ignore rule-c %%\ntarget"
 	suppress, _ := parseInlineSuppress(body, 1)
-	// Standalone directive at body idx 2 → next line 1+2+2=5.
-	if suppress == nil || !suppress[5]["rule-c"] {
-		t.Errorf("directive after 2 gate-skipped prose lines must target line 5, got %v", suppress)
+	// Standalone directive at body idx 2 (file line 1+2=3) → next line 4.
+	if suppress == nil || !suppress[4]["rule-c"] {
+		t.Errorf("directive after 2 gate-skipped prose lines must target line 4, got %v", suppress)
 	}
 }
 

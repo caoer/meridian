@@ -152,9 +152,9 @@ func TestTableWikilinkPipe_LineNumber(t *testing.T) {
 	if len(findings) != 1 {
 		t.Fatalf("want 1 finding, got %d", len(findings))
 	}
-	// Body line index 4, BodyOffset 10 → line 15
-	if findings[0].Line != 15 {
-		t.Errorf("Line = %d, want 15", findings[0].Line)
+	// Body line index 4, BodyOffset 10 (first body line) → line 14.
+	if findings[0].Line != 14 {
+		t.Errorf("Line = %d, want 14", findings[0].Line)
 	}
 }
 
