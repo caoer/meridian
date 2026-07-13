@@ -25,8 +25,11 @@ import (
 // old-schema shard lives in a different directory and is never decoded into the
 // new struct — which gob would otherwise silently zero-fill (the false-clean
 // "decode-into-zero-facts" class). facts2 = SliceHashes + anchored Embeds +
-// RepoName/IsRepoPage added (U-B1b); fmtcffcfbc = the normative formatter commit.
-const FactSchemaSalt = "facts2-norm1-fmtcffcfbc"
+// RepoName/IsRepoPage added (U-B1b); facts3 = line-convention fix (fact Line
+// values become true file lines and embed edges re-bucket — same struct shape,
+// different SEMANTICS, so facts2 shards would serve wrongly-bucketed embeds to
+// a fixed binary); fmtcffcfbc = the normative formatter commit.
+const FactSchemaSalt = "facts3-norm1-fmtcffcfbc"
 
 // CacheDirForRoot returns the persistent cache directory for a scan root:
 //
