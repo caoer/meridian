@@ -197,23 +197,30 @@ func TestEffectPinOnOrigin_PushedPasses_LocalOnlyFails(t *testing.T) {
 	}
 }
 
-func TestEffectPinOnOrigin_SelfPin_AncestorOfHEADPasses_SideBranchFails(t *testing.T) {
+// TestEffectPinOnOrigin_OwnedPin_StatCheckReplacesAncestry: the ancestry
+// carve-out is DELETED (U-B2c refounding) — an owned pin (pinned repo IS the
+// scanned repo, mechanically detected; or `owned-repo` param match) gets the
+// owned-location stat check instead of any origin/ancestry question: content
+// at HEAD is the attestation, so an unpushed owned commit is fine while a
+// missing owned location is the finding.
+func TestEffectPinOnOrigin_OwnedPin_StatCheckReplacesAncestry(t *testing.T) {
 	fx := newPinFixture(t)
 	t.Setenv(envReposRoot, fx.reposRoot)
 	repo := filepath.Join(fx.reposRoot, "pinned")
 	params := map[string]any{"__scan_root": repo}
 
-	// localOnly is HEAD (unpushed): fails as a pointed pin, passes as a self-pin
+	// localOnly is HEAD (unpushed): fails as a pointed pin; passes as an owned
+	// pin (mechanical detection via scan root) — locations exist in the tree.
 	fm := fullPin(fx, fx.treeSha1)
 	fm["commit"] = fx.localOnly
 	if got := effectPinOnOriginCheck(pinDoc(fm), nil); len(got) != 1 {
 		t.Fatalf("local-only commit without scan root should fail, got %v", got)
 	}
 	if got := effectPinOnOriginCheck(pinDoc(fm), params); len(got) != 0 {
-		t.Fatalf("self-pin ancestor-of-HEAD should pass, got %v", got)
+		t.Fatalf("owned pin with existing locations should pass the stat check, got %v", got)
 	}
 
-	// a scan root in a different repo is not a self-pin — strict predicate holds
+	// a scan root in a different repo is not owned — strict predicate holds
 	other := filepath.Join(t.TempDir(), "other")
 	if err := os.MkdirAll(other, 0o755); err != nil {
 		t.Fatal(err)
@@ -223,19 +230,32 @@ func TestEffectPinOnOrigin_SelfPin_AncestorOfHEADPasses_SideBranchFails(t *testi
 		t.Fatalf("foreign scan root must keep strict on-origin, got %v", got)
 	}
 
-	// side-branch commit: resolves locally, not on origin, not an ancestor of HEAD
-	gitT(t, repo, "checkout", "-b", "side", fx.commit1)
-	if err := os.WriteFile(filepath.Join(repo, "pack", "side.md"), []byte("s\n"), 0o644); err != nil {
-		t.Fatal(err)
+	// The `owned-repo` param is authoritative in both directions: a match makes
+	// the pin owned with no git dir comparison; a non-match keeps a pin pointed
+	// even when the scan root IS the pinned repo.
+	if got := effectPinOnOriginCheck(pinDoc(fm), map[string]any{"owned-repo": "pinned"}); len(got) != 0 {
+		t.Fatalf("owned-repo param match should pass the stat check, got %v", got)
 	}
-	gitT(t, repo, "add", ".")
-	gitT(t, repo, "commit", "-m", "side")
-	sideSha := gitT(t, repo, "rev-parse", "HEAD")
-	gitT(t, repo, "checkout", "main")
-	fm["commit"] = sideSha
+	if got := effectPinOnOriginCheck(pinDoc(fm), map[string]any{"__scan_root": repo, "owned-repo": "elsewhere"}); len(got) != 1 {
+		t.Fatalf("owned-repo param non-match must keep strict on-origin despite scan root, got %v", got)
+	}
+
+	// Owned pin whose location is gone from the working tree: the stat check
+	// is the finding — a side-branch/dangling commit no longer matters, the
+	// missing colocated content does.
+	fm["location"] = []any{"pack/", "vanished/"}
+	fm["checksum"] = []any{fx.treeSha1, fx.blobSha1}
 	got := effectPinOnOriginCheck(pinDoc(fm), params)
-	if len(got) != 1 || !strings.Contains(got[0].TemplateData["Reason"], "side-branch or dangling") {
-		t.Fatalf("self-pin side-branch commit should fail, got %v", got)
+	if len(got) != 1 || !strings.Contains(got[0].TemplateData["Reason"], `owned location "vanished/" missing`) {
+		t.Fatalf("owned pin with missing location should emit the stat finding, got %v", got)
+	}
+
+	// A location that escapes the repo root is refused, never stat'ed.
+	fm["location"] = []any{"../escape"}
+	fm["checksum"] = []any{fx.treeSha1}
+	got = effectPinOnOriginCheck(pinDoc(fm), params)
+	if len(got) != 1 || !strings.Contains(got[0].TemplateData["Reason"], "escapes the repo root") {
+		t.Fatalf("escaping owned location should be refused, got %v", got)
 	}
 }
 
