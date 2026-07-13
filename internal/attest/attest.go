@@ -79,7 +79,7 @@ type Engine struct {
 	Branch    func(slug string) (string, bool) // source-page branch lookup (repo-level fact, §7 DRY)
 
 	RunCheck  func(absPage string) CheckResult                          // step 1 (default: md run check inherit:true)
-	ProcHash  func(absPage string) (string, error)                      // step 2 procedure term (default: run.ProcedureHash check+apply)
+	ProcHash  func(absPage string) (string, error)                      // step 2 procedure term (default: resolve.ProcedureHash over resolved ^check/^apply slices)
 	Now       func() time.Time                                          // applied_at source
 	ReadDisk  func(absPath string) ([]byte, error)                      // CAS re-read
 	WriteDisk func(absPath string, data []byte, mode fs.FileMode) error // atomic temp+rename; never called on dry-run
@@ -128,9 +128,7 @@ func (e *Engine) defaults() {
 		e.RunCheck = defaultRunCheck
 	}
 	if e.ProcHash == nil {
-		e.ProcHash = func(abs string) (string, error) {
-			return run.ProcedureHash(abs, []string{"check", "apply"})
-		}
+		e.ProcHash = e.resolvedProcedureHash
 	}
 	if e.Branch == nil {
 		e.Branch = func(string) (string, bool) { return "", false }
@@ -138,6 +136,36 @@ func (e *Engine) defaults() {
 	if e.MaxNodes <= 0 {
 		e.MaxNodes = resolve.DefaultMaxNodes
 	}
+}
+
+// resolvedProcedureHash is step 2's procedure term (cond-4, contract §4.1): the
+// versioned hash of the resolved ^check and ^apply slice hashes, post-
+// inheritance. It routes through resolve.ProcedureHash — the ONE derivation the
+// chain-fresh verifier (cond-4) also uses — so the receipt this writer records
+// reproduces under the verifier by construction (no fork, no version-tag
+// mismatch). For each verb, the defining page is the leaf when it carries the
+// ^<verb> block, else the nearest ancestor blurb that does (run.BlurbCandidatesRel,
+// the same walk `md run inherit:true` uses); an unresolvable verb contributes an
+// empty segment, so adding, removing, or editing either verb all move the hash.
+func (e *Engine) resolvedProcedureHash(absPage string) (string, error) {
+	rel, err := filepath.Rel(e.Root, absPage)
+	if err != nil {
+		return "", err
+	}
+	rel = filepath.ToSlash(rel)
+	verbSlice := func(verb string) resolve.Hash {
+		anchor := "^" + verb
+		if h, ok := e.Source.SliceHash(resolve.Node{Path: rel, Anchor: anchor}); ok {
+			return h
+		}
+		for _, blurb := range run.BlurbCandidatesRel(rel) {
+			if h, ok := e.Source.SliceHash(resolve.Node{Path: blurb, Anchor: anchor}); ok {
+				return h
+			}
+		}
+		return ""
+	}
+	return string(resolve.ProcedureHash(verbSlice("check"), verbSlice("apply"))), nil
 }
 
 // defaultRunCheck executes the page's ^check with inheritance (§3.3 step 1 /
