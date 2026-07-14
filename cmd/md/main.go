@@ -220,6 +220,9 @@ func main() {
 	// against the corpus index built from the scan root. Strict sole writer —
 	// working-tree bytes only, never git add/commit/push.
 	router.Handle("attest", attestHandler(cfg, cfgErr))
+	// chain promote is the migration scaffold verb (§6.2): draws-from → inputs.
+	// Two-token verb (the `rules ls` precedent); config-gated like attest.
+	router.Handle("chain promote", chainPromoteHandler(cfg, cfgErr))
 	// encode is deliberately NOT config-gated: the encoder is pure grammar.
 	router.Handle("encode", encodeHandler())
 	router.Handle("schema", schemaHandler(cfg, cfgErr))
