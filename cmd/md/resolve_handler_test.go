@@ -544,3 +544,69 @@ func TestResolveSectionAnchorAndBlobSha(t *testing.T) {
 		t.Errorf("blob_sha = %q, want git blob OID %q", got, want)
 	}
 }
+
+// --- shared-basename: canonical path-qualified links must resolve ---
+
+// Two pages share the basename "learnings" (a real live-wiki collision). The
+// bare [[learnings]] is genuinely ambiguous, but the canonical path-qualified
+// [[ccc-compound/learnings]] resolves to exactly one page via suffix
+// disambiguation — and md resolve must resolve it, not reject it. On the unfixed
+// tree resolveRef consults the basename-only IsAmbiguous before Resolve.
+func TestResolvePathQualifiedSharedBasenameResolves(t *testing.T) {
+	fsys := fstest.MapFS{
+		"domains/agents/ccc-compound/learnings.md": page("ccc learnings\n"),
+		"health/tags/type/learnings.md":            page("tag page\n"),
+	}
+	r, out := newResolveRouter(fsys, "")
+	if code := r.Run([]string{"resolve", `{"links":["[[ccc-compound/learnings]]"],"format":"json"}`}, nil); code != 0 {
+		t.Fatalf("canonical path-qualified link must resolve (exit 0), got %d: %s", code, out.String())
+	}
+	_, data := decodeResolve(t, out.Bytes())
+	n := data.Nodes[0]
+	if n.Error != nil {
+		t.Fatalf("node carries error %q, want a clean resolve", *n.Error)
+	}
+	if n.Path != "domains/agents/ccc-compound/learnings.md" {
+		t.Fatalf("resolved to %q, want domains/agents/ccc-compound/learnings.md", n.Path)
+	}
+	if n.Hash == "" {
+		t.Fatalf("resolved node produced no hash: %+v", n)
+	}
+
+	// Negative guard: the bare [[learnings]] must STAY ambiguous (exit 1) — the
+	// fix must not swallow genuine bare-basename ambiguity.
+	r2, out2 := newResolveRouter(fsys, "")
+	if code := r2.Run([]string{"resolve", `{"links":["[[learnings]]"],"format":"json"}`}, nil); code != 1 {
+		t.Fatalf("bare ambiguous ref must exit 1, got %d: %s", code, out2.String())
+	}
+	_, data2 := decodeResolve(t, out2.Bytes())
+	if n2 := data2.Nodes[0]; n2.Error == nil || *n2.Error != "ambiguous" || len(n2.Candidates) != 2 {
+		t.Fatalf("bare [[learnings]] = %+v, want error=ambiguous with 2 candidates", n2)
+	}
+}
+
+// Read-mode content inlining resolves the same path-qualified shared-basename
+// embed: on the unfixed tree expandEmbedTokens' basename-only guard leaves the
+// token literal instead of inlining the target's body.
+func TestResolveReadModeInlinesPathQualifiedSharedBasename(t *testing.T) {
+	fsys := fstest.MapFS{
+		"home.md": page("head\n![[ccc-compound/learnings]]\ntail\n"),
+		"domains/agents/ccc-compound/learnings.md": page("INLINED LEARNINGS\n"),
+		"health/tags/type/learnings.md":            page("other\n"),
+	}
+	r, out := newResolveRouter(fsys, "")
+	if code := r.Run([]string{"resolve", `{"links":["[[home]]"],"mode":"read","format":"json"}`}, nil); code != 0 {
+		t.Fatalf("exit = %d: %s", code, out.String())
+	}
+	_, data := decodeResolve(t, out.Bytes())
+	c := data.Nodes[0].Content
+	if c == nil {
+		t.Fatalf("read-mode node carries no content")
+	}
+	if !strings.Contains(*c, "INLINED LEARNINGS") {
+		t.Fatalf("path-qualified embed not inlined into read content: %q", *c)
+	}
+	if strings.Contains(*c, "![[ccc-compound/learnings]]") {
+		t.Fatalf("path-qualified embed left literal (unfixed expandEmbedTokens): %q", *c)
+	}
+}

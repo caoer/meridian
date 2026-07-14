@@ -373,14 +373,16 @@ func (w *resolveWalk) resolveRef(ref, base string, pl parsedLink) pending {
 		}
 		return pending{ref: ref, node: resolve.Node{Path: base, Anchor: pl.anchor}}
 	}
+	// Resolve-first: a path-qualified ref to a shared-basename page resolves
+	// uniquely via suffix disambiguation; only a failed Resolve can be genuinely
+	// ambiguous (same guard order as resolve.resolveTarget).
+	if path, ok := w.idx.Resolve(pl.target); ok {
+		return pending{ref: ref, node: resolve.Node{Path: path, Anchor: pl.anchor}}
+	}
 	if w.idx.IsAmbiguous(pl.target) {
 		return pending{ref: ref, resolveErr: "ambiguous", candidates: w.idx.Candidates(pl.target)}
 	}
-	path, ok := w.idx.Resolve(pl.target)
-	if !ok {
-		return pending{ref: ref, resolveErr: "unresolved"}
-	}
-	return pending{ref: ref, node: resolve.Node{Path: path, Anchor: pl.anchor}}
+	return pending{ref: ref, resolveErr: "unresolved"}
 }
 
 // emit resolves, hashes, and appends one node; it returns the node's index and
@@ -488,9 +490,11 @@ func (w *resolveWalk) expandEmbedTokens(n resolve.Node, text string, onPath map[
 		}
 		child := resolve.Node{Path: n.Path, Anchor: pl.anchor}
 		if pl.target != "" {
-			if w.idx.IsAmbiguous(pl.target) {
-				return m
-			}
+			// Resolve-first (same guard order as resolve.resolveTarget): a
+			// path-qualified embed to a shared-basename page resolves uniquely via
+			// suffix disambiguation. A target Resolve cannot narrow — unresolved or
+			// genuinely ambiguous — leaves the token literal (read mode never errors
+			// on graph shape, §1.5).
 			path, ok := w.idx.Resolve(pl.target)
 			if !ok {
 				return m
