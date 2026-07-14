@@ -106,8 +106,20 @@ func (idx *Index) Resolve(target string) (string, bool) {
 	return "", false
 }
 
-// IsAmbiguous reports whether a wikilink target resolves to multiple pages.
+// IsAmbiguous reports whether a wikilink target resolves to more than one page.
+// It honours the full resolution procedure: a target Resolve narrows to exactly
+// one page — an exact path, a unique basename, or a path-qualified suffix that
+// disambiguates a shared basename — is NOT ambiguous. Only a target that fails to
+// resolve while its basename is non-unique is genuinely ambiguous (there is more
+// than one candidate and nothing to choose between them). Consulting the basename
+// alone would wrongly flag canonical path-qualified refs to shared-basename pages
+// (e.g. [[ccc-compound/learnings]]) as ambiguous even though their suffix picks
+// one page — so every consumer that guards Resolve behind IsAmbiguous stays
+// correct without a per-site reorder.
 func (idx *Index) IsAmbiguous(target string) bool {
+	if _, ok := idx.Resolve(target); ok {
+		return false
+	}
 	t := strings.TrimRight(strings.TrimRight(target, "/"), "\\")
 	stem := filepath.Base(strings.ToLower(t))
 	return len(idx.basenames[stem]) > 1

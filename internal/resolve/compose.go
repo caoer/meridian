@@ -76,20 +76,14 @@ func resolveTarget(target string, res Resolver) (string, error) {
 	if target == "" {
 		return "", nil // same-file ref; caller supplies the page path via the root
 	}
-	// Resolve runs the full path-aware procedure (exact path → unique basename →
-	// suffix disambiguation), so a path-qualified target to a shared-basename
-	// page resolves to its one match. Ambiguity is only possible once that
-	// procedure fails: a non-unique basename with no path prefix to narrow it.
-	// Consulting the basename-only IsAmbiguous *before* Resolve would reject
-	// canonical, lint-clean path-qualified refs (e.g. [[ccc-compound/learnings]])
-	// that Resolve narrows uniquely — resolve-first keeps the guard honest.
-	if path, ok := res.Resolve(target); ok {
-		return path, nil
-	}
 	if res.IsAmbiguous(target) {
 		return "", &AmbiguousError{Target: target, Candidates: res.Candidates(target)}
 	}
-	return "", fmt.Errorf("%w: %q", ErrUnresolved, target)
+	path, ok := res.Resolve(target)
+	if !ok {
+		return "", fmt.Errorf("%w: %q", ErrUnresolved, target)
+	}
+	return path, nil
 }
 
 // walker carries the per-composition state: the injected sources, the node cap,
