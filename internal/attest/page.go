@@ -74,10 +74,7 @@ type fencedBlock struct {
 	open, close int
 }
 
-var (
-	fenceDelimRe = regexp.MustCompile("^(`{3,}|~{3,})(.*)$")
-	seqEntryRe   = regexp.MustCompile(`^\s+- `)
-)
+var fenceDelimRe = regexp.MustCompile("^(`{3,}|~{3,})(.*)$")
 
 // parsePage builds the pageState. A non-empty problem is a page-level finding
 // (fail closed, no write); skip distinguishes shape-screen exclusions (legacy
@@ -303,22 +300,73 @@ func (p *pageState) parseReceipt() string {
 	p.rec.Verdict = anyStr(parsed[keyVerdict])
 	p.rec.ProcedureHash = anyStr(parsed[keyProcedureHash])
 
-	for _, key := range managedReceiptKeys {
-		re := regexp.MustCompile(`^` + regexp.QuoteMeta(key) + `:(\s|$)`)
-		for i := p.receipt.open + 1; i < p.receipt.close; i++ {
-			if !re.MatchString(p.lines[i]) {
-				continue
-			}
-			p.rec.keyLine[key] = i
-			end := i + 1
-			for end < p.receipt.close && seqEntryRe.MatchString(p.lines[end]) {
-				end++ // a block-sequence value (multi-line checksum list)
-			}
-			p.rec.keyEnd[key] = end
-			break
+	return p.bindReceiptKeyLines(content)
+}
+
+// bindReceiptKeyLines maps each managed receipt key to the file lines its entry
+// occupies — STRUCTURALLY, from the parsed YAML node's line/column, never a
+// raw-line regex (the dep #9 / chainblock discipline). A managed-key-shaped line
+// (`commit:` / `checksum:` / …) inside a block scalar or any multi-line value is
+// that value's bytes, not a mapping key; the node model attributes it to its key,
+// where the first-regex-match line-walk both mis-bound such a line and — because
+// `^\s+- ` only recognizes block-sequence continuations — mis-derived the EXTENT
+// of a block-scalar value, so a rewrite spliced across it and orphaned the body.
+//
+// Each mapping entry owns the lines from its key up to the next key (or the block
+// close), trailing blank separators excluded — a span the node model gives for a
+// scalar, a block sequence, and a block scalar alike. The writer is STRICTER than
+// the tolerant reader: the belt fails closed when the node's line/column and the
+// raw bytes disagree, rather than splicing a rewrite onto an unconfirmed line.
+// (A duplicate managed key is already rejected above by the map decode.)
+func (p *pageState) bindReceiptKeyLines(content string) string {
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(content), &root); err != nil {
+		return "receipt block is not a YAML mapping: " + err.Error()
+	}
+	if len(root.Content) == 0 {
+		return "" // empty block — no managed keys to bind
+	}
+	m := root.Content[0]
+	if m.Kind != yaml.MappingNode {
+		return "receipt block is not a YAML mapping"
+	}
+	// content line n (1-indexed) is file line p.receipt.open+n (content is
+	// p.lines[open+1:close]); a node line IS a content line, no further offset.
+	base := p.receipt.open
+	nkeys := len(m.Content) / 2
+	for i := 0; i < nkeys; i++ {
+		key := m.Content[2*i]
+		if !isManagedReceiptKey(key.Value) {
+			continue
 		}
+		keyLine := base + key.Line
+		col := key.Column - 1 // yaml columns are 1-indexed
+		if keyLine < 0 || keyLine >= len(p.lines) || col < 0 || col > len(p.lines[keyLine]) ||
+			!strings.HasPrefix(p.lines[keyLine][col:], key.Value+":") {
+			return fmt.Sprintf("receipt key %q does not resolve to its line — refusing to write", key.Value)
+		}
+		end := p.receipt.close
+		if i+1 < nkeys {
+			end = base + m.Content[2*(i+1)].Line
+		}
+		// Exclude trailing blank separator lines so a rewrite of this key never
+		// swallows the blank line that precedes the next entry (byte-exactness).
+		for end-1 > keyLine && strings.TrimSpace(p.lines[end-1]) == "" {
+			end--
+		}
+		p.rec.keyLine[key.Value] = keyLine
+		p.rec.keyEnd[key.Value] = end
 	}
 	return ""
+}
+
+func isManagedReceiptKey(key string) bool {
+	for _, k := range managedReceiptKeys {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }
 
 // --- small extractors ---
