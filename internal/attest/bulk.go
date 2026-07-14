@@ -56,6 +56,10 @@ func (e *Engine) reattestPage(rel string, opts Options, rep *Report) PageResult 
 			changed = append(changed, i)
 		}
 	}
+	// No input drift → unchanged, deliberately BEFORE step 0: a procedure-only
+	// move with byte-identical inputs is owned by the corpus cond-4 check
+	// (chain_fresh) + workflow filter, not by bulk — meridian-impl §6.1 scopes
+	// bulk to drifted-input pages, and bulk never writes receipts either way.
 	if len(changed) == 0 {
 		return PageResult{Page: rel, Status: StatusUnchanged}
 	}
