@@ -9,6 +9,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/caoer/meridian/internal/chainblock"
 	"github.com/caoer/meridian/internal/run"
 )
 
@@ -266,13 +267,12 @@ func extractSliceFacts(f *Facts, slices []run.AnchoredSlice, embeds []EmbedEdge)
 
 // extractChainFacts parses the receipt-era machine blocks (SCHEMA "Effect pages
 // — the receipt schema") out of the already-computed anchored slices: the
-// `^inputs` chain block into Chain/ChainHashAlgo and the `^receipt` block's
-// `procedure-hash` scalar. The blocks are fenced YAML, but the ^inputs shape is
-// a top-level sequence FOLLOWED by top-level scalars (`hash-algo: v1`) — not one
-// well-formed YAML document — so parsing is a tolerant line-walker (strict
-// writer, tolerant reader): `- ref:` opens an entry, indented `hash:`/`claim:`
-// attach to it, column-0 `key: value` lines are block scalars. Line numbers are
-// true file lines (slice Start + offset).
+// `^inputs` chain block into Chain/ChainHashAlgo (via the shared, structural
+// chainblock parser) and the `^receipt` block's `procedure-hash` scalar. The
+// blocks are fenced YAML; the ^receipt block is a flat mapping (a column-0 key
+// walk suffices), while the ^inputs block is a sequence optionally followed by a
+// `hash-algo` scalar and MAY carry `claim: |` block scalars — parsed by
+// chainblock.Parse so a dash-bulleted claim line is never miscounted as an edge.
 func extractChainFacts(f *Facts, slices []run.AnchoredSlice) {
 	for _, s := range slices {
 		switch s.Anchor {
@@ -294,61 +294,60 @@ type chainScalar struct {
 	line       int
 }
 
-// parseChainBlock walks the ^inputs slice: sequence entries become ChainEdges,
-// trailing top-level scalars are block metadata (hash-algo). A `hash` of "null"
-// or "~" reads as the born-null "" (D1: stated, never omitted).
+// parseChainBlock parses the ^inputs slice through the shared chainblock parser
+// (structural: block-scalar content can never masquerade as a sequence entry)
+// and maps each edge item to a ChainEdge. A refless entry is not an edge (the
+// writer fails it closed; the read path skips it). Wiki-semantic normalization
+// (Target/Anchor) and the born-null hash convention stay here — chainblock is
+// wiki-agnostic YAML. Line is the true file line of the entry's `ref:` key.
 func parseChainBlock(f *Facts, s run.AnchoredSlice) {
-	lines := strings.Split(s.Text, "\n")
-	var cur *ChainEdge
-	flush := func() {
-		if cur != nil {
-			f.Chain = append(f.Chain, *cur)
-			cur = nil
+	content, base := blockInner(s)
+	// Read path: tolerant — use whatever parsed; a fail-closed problem is the
+	// writer's (attest) and effect-rootless's concern, never a phantom edge here.
+	res, _ := chainblock.Parse(content)
+	f.ChainHashAlgo = res.HashAlgo
+	for _, it := range res.Items {
+		if it.Ref == "" {
+			continue
 		}
+		inner := stripBrackets(it.Ref)
+		f.Chain = append(f.Chain, ChainEdge{
+			Ref:    it.Ref,
+			Target: normalizeLinkTarget(inner),
+			Anchor: linkFragment(inner),
+			Hash:   it.Hash,
+			Line:   base + it.RefLine - 1,
+		})
 	}
+}
+
+// blockInner returns a fenced block slice's inner YAML — the lines strictly
+// between its opening and closing fence — and the file line of the first inner
+// line. s.Text is the raw block slice (opening fence, YAML body, closing fence;
+// AnchoredSlices/blockSpan shape); base maps content line 1 to its file line so
+// chainblock's content-relative node lines resolve to true file lines.
+func blockInner(s run.AnchoredSlice) (content string, base int) {
+	lines := strings.Split(strings.TrimRight(s.Text, "\n"), "\n")
+	open, closed := -1, -1
 	for i, ln := range lines {
-		fileLine := s.Start + i
-		trimmed := strings.TrimSpace(ln)
-		if trimmed == "" || isFenceOrMarker(trimmed) || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		indented := ln != strings.TrimLeft(ln, " \t")
-		if strings.HasPrefix(trimmed, "- ") {
-			flush()
-			cur = &ChainEdge{Line: fileLine}
-			trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
-			if trimmed == "" {
-				continue
+		if isFenceLine(ln) {
+			if open == -1 {
+				open = i
+			} else {
+				closed = i
 			}
-			// fall through: "- ref: ..." carries the first key on the dash line
-		} else if !indented && cur != nil {
-			// A column-0 non-dash line ends the sequence: block scalars follow.
-			flush()
-		}
-		key, value, ok := splitScalar(trimmed)
-		if !ok {
-			continue
-		}
-		if cur != nil {
-			switch key {
-			case "ref":
-				cur.Ref = value
-				cur.Target = normalizeLinkTarget(stripBrackets(value))
-				cur.Anchor = linkFragment(stripBrackets(value))
-				cur.Line = fileLine
-			case "hash":
-				if value == "null" || value == "~" {
-					value = ""
-				}
-				cur.Hash = value
-			}
-			continue
-		}
-		if key == "hash-algo" {
-			f.ChainHashAlgo = value
 		}
 	}
-	flush()
+	if open == -1 || closed <= open {
+		return "", 0
+	}
+	return strings.Join(lines[open+1:closed], "\n"), s.Start + open + 1
+}
+
+// isFenceLine reports a fenced-code delimiter (``` or ~~~), ignoring indentation.
+func isFenceLine(ln string) bool {
+	t := strings.TrimSpace(ln)
+	return strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~")
 }
 
 // blockScalars returns the column-0 `key: value` lines of a block slice.
