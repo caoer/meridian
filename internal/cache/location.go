@@ -33,9 +33,13 @@ import (
 // facts3 shards would restore Pin=nil for receipt-shape pages and starve the
 // phase-2 __all_pins batch); facts5 = Chain/ChainHashAlgo/ReceiptProcedureHash
 // added (U-B2b — a facts4 shard would gob-decode with a nil Chain and
-// chain-fresh would silently see every cached page as chainless); fmtcffcfbc =
-// the normative formatter commit.
-const FactSchemaSalt = "facts5-norm1-fmtcffcfbc"
+// chain-fresh would silently see every cached page as chainless); facts6 =
+// structural ^inputs parse (U-chain-overcount — a `- ` line inside a `claim: |`
+// block scalar no longer counts as a chain edge; same struct shape, different
+// SEMANTICS, so a facts5 shard would keep serving the phantom edges — and their
+// chain-fresh false-stale warns — to a fixed binary); fmtcffcfbc = the normative
+// formatter commit.
+const FactSchemaSalt = "facts6-norm1-fmtcffcfbc"
 
 // CacheDirForRoot returns the persistent cache directory for a scan root:
 //
