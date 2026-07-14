@@ -83,9 +83,16 @@ func (e *Engine) reattestPage(rel string, opts Options, rep *Report) PageResult 
 		if src == "" {
 			src = p.rel // self-rooted input attributes to the page's own history
 		}
+		// Defense in depth (safety.go doctrine): the resolved source path is the
+		// one attacker-influenceable value reaching a git argv here — gate it
+		// before it does, even though the `--` separator already neutralizes
+		// option injection.
+		if s := checkSafeField("input source", src); s != "" {
+			return fail("attribution: " + s)
+		}
 		explained, gitErr := e.attributable(src, opts.BulkReattest.Commits)
 		if gitErr != nil {
-			reason := fmt.Sprintf("attribution: git rev-list failed for %s: %v — page unverifiable this run", src, gitErr)
+			reason := fmt.Sprintf("attribution: git query failed for %s: %v — page unverifiable this run", src, gitErr)
 			if rep.ToolFailure == "" {
 				rep.ToolFailure = reason
 			}
@@ -122,20 +129,35 @@ func (e *Engine) reattestPage(rel string, opts Options, rep *Report) PageResult 
 	return res
 }
 
-// attributable reports whether every post-receipt commit that touched the input
-// source file is reachable through the declared commit set (§6.1 step 1: the
-// file's blame-new commits ⊆ declared set). It asks read-side git only:
+// attributable reports whether the input source file's drift is fully explained
+// by the declared commit set (§6.1 step 1). It asks read-side git only, in two
+// fail-closed steps:
 //
-//	git rev-list HEAD --not <declared…> -- <src>
+//  1. `git status --porcelain -- <src>` — the engine hashes WORKING-TREE bytes,
+//     but attribution can only inspect committed history. A dirty or untracked
+//     source carries drift that is in NO commit at all (let alone the declared
+//     set), so it can never be proven cosmetic: non-empty status ⇒ not
+//     attributable. (Without this, `rev-list --not` returns empty for an
+//     uncommitted change and would fail OPEN — bless drift no commit explains.)
+//  2. `git rev-list HEAD --not <declared…> -- <src>` — commits touching src
+//     reachable from HEAD but NOT from any declared commit: the committed drift
+//     the declared set does not explain. Empty ⇒ explained.
 //
-// which lists commits touching src that are reachable from HEAD but NOT from any
-// declared commit — the drift the declared set does not explain. Empty output ⇒
-// fully explained ⇒ attributable. A non-nil error is an infra failure the caller
-// escalates to a tool failure (exit 2), never a false verdict.
+// attributable ⇔ clean working tree AND empty rev-list. A non-nil error is an
+// infra failure the caller escalates to a tool failure (exit 2), never a false
+// verdict.
 func (e *Engine) attributable(src string, commits []string) (bool, error) {
+	rel := filepath.FromSlash(src)
+	status, err := e.Git.Run(e.Root, nil, "status", "--porcelain", "--", rel)
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(string(status)) != "" {
+		return false, nil // uncommitted or untracked drift — attributable to no commit
+	}
 	args := []string{"rev-list", "HEAD", "--not"}
 	args = append(args, commits...)
-	args = append(args, "--", filepath.FromSlash(src))
+	args = append(args, "--", rel)
 	out, err := e.Git.Run(e.Root, nil, args...)
 	if err != nil {
 		return false, err

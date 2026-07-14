@@ -75,6 +75,13 @@ func (e *Engine) promotePage(rel string, opts PromoteOptions) PromotePage {
 		res.Skipped = "unparseable frontmatter"
 		return res
 	}
+	// Effect pages only (§6.2) — page-mode selection is existence-only, so the
+	// gate scope-mode applies must be enforced here too, or a non-effect page
+	// carrying a draws-from field would get an effect-shaped chain scaffolded.
+	if !hasTag(extractTags(doc.Meta), "type/effect") {
+		res.Skipped = "not a type/effect page — chain promote scaffolds effect chains only"
+		return res
+	}
 	draws := fmList(doc.Meta, "draws-from")
 	if len(draws) == 0 {
 		res.Skipped = "no draws-from entries"
@@ -146,7 +153,14 @@ func (e *Engine) existingChain(rel string, doc *frontmatter.Doc) string {
 		return "inputs already declared in frontmatter — chain promote never merges into an existing chain"
 	}
 	lines := strings.Split(string(e.Raw[rel]), "\n")
-	if _, found, err := locateFencedBlock(lines, 0, "inputs"); err == nil && found {
+	_, found, err := locateFencedBlock(lines, 0, "inputs")
+	if err != nil {
+		// A malformed/unanchored ^inputs marker is still a chain-shaped construct:
+		// refuse rather than append a SECOND ^inputs block (which would make the
+		// page fail to parse — two markers). Never-merge means never-double.
+		return "a malformed ^inputs marker is present (" + err.Error() + ") — refusing to scaffold a second chain"
+	}
+	if found {
 		return "a ^inputs block already exists — chain promote never merges into an existing chain"
 	}
 	return ""

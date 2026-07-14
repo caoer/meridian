@@ -20,10 +20,11 @@ import (
 // (case-2a/2b golden files, boundary wiring through main.go) is U-B3c's.
 
 // fakeAttestGit mirrors the engine test fake at the handler seam: cat-file
-// batches plus rev-list attribution (revlist: source path → stdout).
+// batches, rev-list attribution (revlist), and working-tree status (dirty).
 type fakeAttestGit struct {
 	objs    map[string]string
 	revlist map[string]string
+	dirty   map[string]string
 	fail    bool
 }
 
@@ -46,6 +47,8 @@ func (g *fakeAttestGit) Run(dir string, stdin []byte, args ...string) ([]byte, e
 		return nil, errors.New("not an ancestor")
 	case "rev-list":
 		return []byte(g.revlist[args[len(args)-1]]), nil
+	case "status":
+		return []byte(g.dirty[args[len(args)-1]]), nil
 	}
 	return nil, errors.New("unexpected git call")
 }

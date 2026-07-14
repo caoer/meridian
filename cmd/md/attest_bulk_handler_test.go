@@ -51,7 +51,11 @@ func newBulkFixture(t *testing.T, revlist map[string]string) (cli.Handler, strin
 		}
 	}
 	h := attestHandlerWith(os.DirFS(root), root, engine.ScanOptions{}, func(e *attest.Engine) {
-		e.Git = &fakeAttestGit{revlist: revlist}
+		e.Git = &fakeAttestGit{
+			// declared-commit existence check resolves attestTip to a commit.
+			objs:    map[string]string{attestTip: attestTip + " commit 100"},
+			revlist: revlist,
+		}
 		e.ProcHash = func(string) (string, error) { return "procedure-v1:" + strings.Repeat("1", 64), nil }
 		e.Now = func() time.Time { return time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC) }
 	})

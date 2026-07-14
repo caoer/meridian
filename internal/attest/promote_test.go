@@ -159,6 +159,47 @@ func TestChainPromoteDeadDrawsFrom(t *testing.T) {
 	}
 }
 
+// Page-mode is gated on type/effect too: a non-effect page carrying a draws-from
+// field is skipped, never scaffolded (parity with scope-mode's filter).
+func TestChainPromoteNonEffectSkipped(t *testing.T) {
+	rel := "wiki/notanffect.md"
+	before := "---\nname: x\ndraws-from:\n  - '[[dep#Sec]]'\ntags: [type/note]\n---\n\n# X\n"
+	f := newFixture(t, map[string]string{rel: before})
+
+	rep, err := f.eng.ChainPromote(PromoteOptions{Page: rel, Write: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pp := rep.Pages[0]
+	if pp.Wrote || !strings.Contains(pp.Skipped, "not a type/effect") {
+		t.Fatalf("non-effect page must be skipped, got %+v", pp)
+	}
+	if diskContent(t, f, rel) != before {
+		t.Error("a non-effect page was scaffolded")
+	}
+}
+
+// A pre-existing malformed/unanchored ^inputs marker blocks the write — never
+// append a SECOND marker (which would make the page fail to parse).
+func TestChainPromoteMalformedMarkerRefused(t *testing.T) {
+	rel := "effects/skills/malformed.md"
+	before := "---\nname: x\nrepo: cc-continuity\nlocation: skills/x/\n" +
+		"draws-from:\n  - '[[dep#Sec]]'\ntags: [type/effect]\n---\n\n# X\n\nprose\n\n^inputs\n"
+	f := newFixture(t, map[string]string{rel: before})
+
+	rep, err := f.eng.ChainPromote(PromoteOptions{Scope: "effects/", Write: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pp := rep.Pages[0]
+	if pp.Wrote || !strings.Contains(pp.Skipped, "malformed") {
+		t.Fatalf("malformed ^inputs marker must block the write, got %+v", pp)
+	}
+	if diskContent(t, f, rel) != before {
+		t.Error("a second ^inputs block was appended to a malformed page")
+	}
+}
+
 // A page with no draws-from is skipped (nothing to promote).
 func TestChainPromoteNoDrawsFrom(t *testing.T) {
 	rel := "effects/skills/skillx.md"

@@ -188,6 +188,71 @@ func TestBulkOwnedRehash(t *testing.T) {
 	}
 }
 
+// Fail-closed on uncommitted drift: a drifted input whose source has UNCOMMITTED
+// changes is excluded even when rev-list would report the committed history as
+// fully explained — the drift is in no commit at all, so it cannot be blessed.
+func TestBulkUncommittedSourceExcluded(t *testing.T) {
+	rel := "effects/skills/skillx.md"
+	before := pointedPage("'[[#^receipt]]'", staleInput, receiptYAML(tipSha, sumSha, procV1))
+	f := newFixture(t, map[string]string{rel: before})
+	f.git.revlist = map[string]string{"wiki/dep.md": ""}             // committed history "explained"
+	f.git.dirty = map[string]string{"wiki/dep.md": " M wiki/dep.md"} // but the working tree is dirty
+
+	rep, err := f.eng.Attest(Options{Scope: "effects/", BulkReattest: bulk(tipSha)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := onePage(t, rep)
+	if pr.Status != StatusNeedsRealise {
+		t.Fatalf("uncommitted drift must fail closed to needs_realise, got %+v", pr)
+	}
+	if diskContent(t, f, rel) != before {
+		t.Error("an uncommitted-drift page was written")
+	}
+}
+
+// A well-formed but NONEXISTENT declared sha is a param error (fix your commit
+// list), rejected up front — never a downstream rev-list "bad object" death.
+func TestBulkNonexistentDeclaredCommit(t *testing.T) {
+	rel := "effects/skills/skillx.md"
+	f := newFixture(t, map[string]string{rel: pointedPage("'[[#^receipt]]'", staleInput, receiptYAML(tipSha, sumSha, procV1))})
+	ghostSha := strings.Repeat("f", 40) // valid hex, not in the fixture object table
+	_, err := f.eng.Attest(Options{Scope: "effects/", BulkReattest: bulk(ghostSha)})
+	if err == nil {
+		t.Fatal("a nonexistent declared commit must be an invocation error")
+	}
+	if !strings.Contains(err.Error(), "does not resolve to a commit") {
+		t.Errorf("error must name the missing commit, got %q", err.Error())
+	}
+	if *f.wrote {
+		t.Error("a rejected bulk invocation wrote bytes")
+	}
+}
+
+// Defense in depth: a resolved input source path that would carry option-
+// injection into a git argv fails the page before any git call.
+func TestBulkUnsafeSourcePathFails(t *testing.T) {
+	rel := "effects/skills/skillx.md"
+	f := newFixture(t, map[string]string{rel: pointedPage("'[[#^receipt]]'", staleInput, receiptYAML(tipSha, sumSha, procV1))})
+	// The input resolves to a path with a leading '-' (git option-shaped).
+	f.eng.Res = fakeRes{m: map[string]string{"dep": "-evil.md"}}
+	f.eng.Source = fakeFacts{slices: map[resolve.Node]resolve.Hash{
+		{Path: "-evil.md", Anchor: "Sec"}: hexHash("evil-v1"),
+	}}
+
+	rep, err := f.eng.Attest(Options{Scope: "effects/", BulkReattest: bulk(tipSha)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := onePage(t, rep)
+	if pr.Status != StatusFailed || !strings.Contains(pr.Reason, "leading '-'") {
+		t.Fatalf("want failed on an option-shaped source path, got %+v", pr)
+	}
+	if *f.wrote {
+		t.Error("an unsafe-path page wrote bytes")
+	}
+}
+
 // Dry-run bulk mode writes nothing and reports would_write.
 func TestBulkDryRunWritesNothing(t *testing.T) {
 	rel := "effects/skills/skillx.md"

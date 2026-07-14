@@ -224,6 +224,21 @@ func (e *Engine) Attest(opts Options) (*Report, error) {
 				return nil, errors.New("bulk_reattest " + problem)
 			}
 		}
+		// A well-formed but NONEXISTENT declared sha is a param error (fix your
+		// commit list), never a downstream `rev-list: bad object` death misread
+		// as an infra failure. Existence-check once, up front, via cat-file
+		// batch-check (which reports a missing object rather than erroring), so
+		// the only thing that reads as a tool failure later is a genuine infra
+		// death.
+		objs, err := batchCheck(e.Git, e.Root, opts.BulkReattest.Commits)
+		if err != nil {
+			return nil, fmt.Errorf("bulk_reattest: cannot verify declared commits in the working tree: %w", err)
+		}
+		for _, c := range opts.BulkReattest.Commits {
+			if o := objs[c]; !o.exists || o.typ != "commit" {
+				return nil, fmt.Errorf("bulk_reattest commit %s does not resolve to a commit object in the working tree — check the declared commit list", c)
+			}
+		}
 	}
 	if opts.Verdict != "" {
 		if opts.Page == "" {
