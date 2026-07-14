@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/caoer/meridian/internal/vfs"
@@ -226,5 +227,62 @@ No machine blocks here.
 	f := ExtractFacts(doc)
 	if f.Chain != nil || f.ChainHashAlgo != "" || f.ReceiptProcedureHash != "" {
 		t.Errorf("legacy page grew chain facts: %+v / %q / %q", f.Chain, f.ChainHashAlgo, f.ReceiptProcedureHash)
+	}
+}
+
+// TestExtractFacts_ChainBlock_TabIndentZeroEdges pins a DECIDED divergence, not
+// an accident: a ^inputs block indented with tabs is invalid YAML (YAML forbids
+// tab indentation), so the structural parse fails and the tolerant read path
+// yields ZERO edges — never a partial recovery that would half-count the chain.
+func TestExtractFacts_ChainBlock_TabIndentZeroEdges(t *testing.T) {
+	page := "---\ntags: [type/effect]\ninputs: '[[#^inputs]]'\n---\n\n# tabs\n\n" +
+		"```yaml\n- ref: '[[dep#Sec]]'\n\thash: abc123\n```\n\n^inputs\n"
+	doc := chainFixtureDoc(t, "effects/skills/tab.md", page)
+	f := ExtractFacts(doc)
+	if len(f.Chain) != 0 {
+		t.Fatalf("tab-indented ^inputs must yield zero edges (invalid YAML, decided read-path divergence): %+v", f.Chain)
+	}
+}
+
+// TestExtractFacts_ChainBlock_CRLF: a ^inputs block with CRLF line endings
+// extracts every edge with correct hashes AND true file lines — the file-line
+// math must not drift by a \r. hash-algo is still captured.
+func TestExtractFacts_ChainBlock_CRLF(t *testing.T) {
+	crlf := func(lines ...string) string { return strings.Join(lines, "\r\n") + "\r\n" }
+	page := crlf(
+		"---",
+		"tags: [type/effect]",
+		"inputs: '[[#^inputs]]'",
+		"---",
+		"",
+		"# crlf effect",
+		"",
+		"```yaml",
+		"- ref: '[[dep#Sec]]'", // file line 9
+		"  hash: abc123",
+		"- ref: '[[other#Bit]]'", // file line 11
+		"  hash: null",
+		"hash-algo: v1",
+		"```",
+		"",
+		"^inputs",
+	)
+	doc := chainFixtureDoc(t, "effects/skills/crlf.md", page)
+	f := ExtractFacts(doc)
+
+	if len(f.Chain) != 2 {
+		t.Fatalf("Chain = %+v, want 2 edges under CRLF", f.Chain)
+	}
+	if f.Chain[0].Ref != "[[dep#Sec]]" || f.Chain[0].Hash != "abc123" {
+		t.Errorf("edge0 = %+v, want ref [[dep#Sec]] hash abc123", f.Chain[0])
+	}
+	if f.Chain[1].Ref != "[[other#Bit]]" || f.Chain[1].Hash != "" {
+		t.Errorf("edge1 = %+v, want ref [[other#Bit]] born-null hash", f.Chain[1])
+	}
+	if f.Chain[0].Line != 9 || f.Chain[1].Line != 11 {
+		t.Errorf("edge lines = (%d, %d), want (9, 11) — CRLF must not shift file-line math", f.Chain[0].Line, f.Chain[1].Line)
+	}
+	if f.ChainHashAlgo != "v1" {
+		t.Errorf("ChainHashAlgo = %q, want v1 under CRLF", f.ChainHashAlgo)
 	}
 }

@@ -13,20 +13,16 @@ import (
 // SAME edge set from one `^inputs` block — so a `claim: |` block scalar's dash
 // lines can never be miscounted as entries by either.
 //
-// SCOPE — read before trusting this guard: the writer and the reader are two
-// INDEPENDENT parsers today (the reader adopted internal/chainblock; the writer
-// still bare-decodes the whole block). They agree only on shapes the writer
-// accepts. Two known divergences are NOT agreement failures but split POLICY /
-// a known writer gap, pinned explicitly below:
-//   - Malformed entries (bare `-`, a stray column-0 line, empty ref): the writer
-//     fails closed (a wrong hash is worse than an error); the reader is tolerant
-//     (recovers every genuine edge, invents no phantom). See the divergence tests.
-//   - The trailing `hash-algo: v1` scalar (the CANONICAL receipt shape): the
-//     reader parses it (chainblock splits sequence from metadata); the writer's
-//     whole-block yaml decode REJECTS it ("did not find expected '-' indicator").
-//     This is attest's LATENT bug, tracked for a post-B3d migration of
-//     parseInputs onto chainblock.Parse — do NOT add a hash-algo case to the
-//     agreement set until the writer can parse it (it would fail, correctly).
+// SCOPE — read before trusting this guard: since C0 dep #9 the writer and the
+// reader parse through the SAME structural parser (internal/chainblock.Parse) —
+// the writer's whole-block yaml decode is gone, so they agree on every shape
+// chainblock accepts, INCLUDING the canonical trailing `hash-algo: v1` scalar
+// (pinned in the agreement set below; the former known-gap exclusion is closed).
+// The one remaining divergence is not an agreement failure but a POLICY split,
+// pinned in the divergence test: over malformed entries (bare `-`, a stray
+// column-0 line, empty ref) the writer fails closed (a wrong hash is worse than
+// an error) while the reader is tolerant (recovers every genuine edge, invents no
+// phantom).
 
 type edge struct{ ref, hash string }
 
@@ -117,6 +113,12 @@ func TestCrossParser_Agreement(t *testing.T) {
 			"  hash: '4c01d9e2'\n" +
 			"- ref: '[[other#Bit]]'\n" +
 			"  hash: null\n"},
+		{"canonical trailing hash-algo scalar", "" +
+			"- ref: '[[dep#Sec]]'\n" +
+			"  hash: '4c01d9e2'\n" +
+			"- ref: '[[other#Bit]]'\n" +
+			"  hash: null\n" +
+			"hash-algo: v1\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
