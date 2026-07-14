@@ -45,6 +45,14 @@ type Item struct {
 type Result struct {
 	Items    []Item
 	HashAlgo string
+
+	// StrayMeta is every column-0 line that is neither a sequence entry, a
+	// comment, nor the recognized `hash-algo` scalar. The tolerant read path
+	// recovers edges ACROSS such lines (StrayMeta stays advisory); the attest
+	// writer fails closed on a non-empty StrayMeta — a surgical hash rewrite must
+	// not step around structure it does not model. Each element is the trimmed
+	// line content, in file order.
+	StrayMeta []string
 }
 
 // Parse decodes an `^inputs` block's inner content — the text strictly BETWEEN
@@ -87,6 +95,8 @@ func Parse(content string) (Result, string) {
 			if isColumn0(ln) && t != "" && !strings.HasPrefix(t, "#") && t != "-" && !strings.HasPrefix(t, "- ") {
 				if k, v, ok := splitScalar(t); ok && k == "hash-algo" {
 					res.HashAlgo = v
+				} else {
+					res.StrayMeta = append(res.StrayMeta, t) // unmodeled column-0 line: the writer's fail-closed signal
 				}
 				continue // metadata: leave seq[i] blank, preserving the line slot
 			}

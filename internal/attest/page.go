@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/caoer/meridian/internal/chainblock"
 	"github.com/caoer/meridian/internal/frontmatter"
 	yaml "go.yaml.in/yaml/v3"
 )
@@ -50,9 +51,9 @@ type inputItem struct {
 	Ref  string
 	Hash string // recorded hash; "" for null/absent (declared, never attested)
 
-	start, end int // file line range of the item [start, end)
-	hashLine   int // file line of its hash: entry; -1 when absent
-	hashIndent string
+	hashLine   int    // file line of its hash: entry; -1 when absent
+	hashIndent string // indent of the hash: key (existing key's indent, or the ref sibling indent for an append)
+	appendLine int    // file line to insert a hash when hashLine < 0 (just below the item's ref: line)
 }
 
 // receiptRec is the parsed ^receipt block plus per-key line coordinates.
@@ -215,74 +216,75 @@ func locateFencedBlock(lines []string, bodyStart int, id string) (fencedBlock, b
 	}
 }
 
-// parseInputs decodes the ^inputs block (ordered YAML sequence of
-// {ref, claim?, hash?}) and binds each item's machine `hash:` line
-// STRUCTURALLY — from the parsed YAML mapping-key node's own line/column, never
-// by a raw-line regex. A `hash:`-shaped line inside a `claim: |` block-scalar is
-// human prose, not the key: the parser distinguishes them, a first-match regex
-// cannot (CORR-1). Fail closed on anything it cannot map — a hash written to the
-// wrong item, or spliced into claim text, is worse than an error.
+// parseInputs decodes the ^inputs block through the shared, structural
+// chainblock.Parse (the ONE parser the fact extractor also uses, so writer and
+// reader can never disagree on the edge set) and binds each item's machine
+// `hash:` line STRUCTURALLY — from the parsed node's line/column, never by a
+// raw-line regex. A `hash:`-shaped line inside a `claim: |` block-scalar is human
+// prose, not the key; chainblock distinguishes them (CORR-1), and it parses the
+// canonical §5.1 shape (sequence + trailing `hash-algo: v1`) a whole-block yaml
+// decode rejects.
+//
+// The writer is STRICTER than the tolerant reader: it fails closed on any
+// chainblock problem, on a stray column-0 line (StrayMeta), and on a refless
+// item — the read path recovers across these, but a hash written to the wrong
+// item, spliced into claim text, or placed around unmodeled structure is worse
+// than an error.
 func (p *pageState) parseInputs() string {
-	content := blockContent(p.lines, p.inputs)
-	var root yaml.Node
-	if err := yaml.Unmarshal([]byte(content), &root); err != nil {
-		return "inputs block is not a YAML sequence: " + err.Error()
+	res, problem := chainblock.Parse(blockContent(p.lines, p.inputs))
+	if problem != "" {
+		return problem
 	}
-	if len(root.Content) == 0 {
-		return "" // empty block — the caller reports "inputs block is empty"
-	}
-	seq := root.Content[0]
-	if seq.Kind != yaml.SequenceNode {
-		return "inputs block is not a YAML sequence — refusing to write hashes"
+	if len(res.StrayMeta) > 0 {
+		return fmt.Sprintf("inputs block has a stray column-0 line %q — refusing to write", res.StrayMeta[0])
 	}
 
-	// yaml.Node lines are 1-indexed relative to the unmarshaled content, whose
-	// line 1 is the line just below the opening fence; file-absolute line =
-	// p.inputs.open + node.Line.
+	// chainblock line numbers are 1-indexed relative to the block content, whose
+	// line 1 is the line just below the opening fence; file-absolute = open + n.
 	base := p.inputs.open
-	for n, itemNode := range seq.Content {
-		if itemNode.Kind != yaml.MappingNode {
-			return fmt.Sprintf("inputs item %d is not a mapping — refusing to write hashes", n+1)
-		}
-		item := inputItem{start: base + itemNode.Line, end: p.inputs.close, hashLine: -1, hashIndent: "  "}
-		if n+1 < len(seq.Content) {
-			item.end = base + seq.Content[n+1].Line
-		}
-		var ref string
-		sawHash := false
-		for k := 0; k+1 < len(itemNode.Content); k += 2 {
-			key, val := itemNode.Content[k], itemNode.Content[k+1]
-			switch key.Value {
-			case "ref":
-				ref = strings.TrimSpace(val.Value)
-			case "hash":
-				if sawHash {
-					return fmt.Sprintf("inputs item %d declares hash twice — ambiguous, refusing to write", n+1)
-				}
-				sawHash = true
-				line := base + key.Line
-				col := key.Column - 1
-				// Belt: the located line must actually carry the mapping key at
-				// the node's column — fail closed when structure and bytes
-				// disagree rather than splice a hash into an unconfirmed line.
-				if line >= len(p.lines) || col < 0 || col > len(p.lines[line]) ||
-					!strings.HasPrefix(p.lines[line][col:], "hash:") {
-					return fmt.Sprintf("inputs item %d: hash key node does not resolve to its line — refusing to write", n+1)
-				}
-				item.hashLine = line
-				item.hashIndent = p.lines[line][:col]
-				if val.Tag != "!!null" && val.Value != "" {
-					item.Hash = strings.TrimSpace(val.Value)
-				}
-			}
-		}
-		if ref == "" {
+	for n, it := range res.Items {
+		if it.Ref == "" {
 			return fmt.Sprintf("inputs item %d has no ref", n+1)
 		}
-		item.Ref = ref
+		refLine := base + it.RefLine
+		item := inputItem{
+			Ref:        it.Ref,
+			Hash:       it.Hash,
+			hashLine:   -1,
+			hashIndent: refSiblingIndent(p.lines, refLine),
+			appendLine: refLine + 1, // a missing hash is inserted as a ref sibling, right below it
+		}
+		if it.HasHash {
+			line := base + it.HashLine
+			col := it.HashCol
+			// Belt: the located line must actually carry the mapping key at the
+			// node's column — fail closed when structure and bytes disagree
+			// rather than splice a hash into an unconfirmed line.
+			if line >= len(p.lines) || col < 0 || col > len(p.lines[line]) ||
+				!strings.HasPrefix(p.lines[line][col:], "hash:") {
+				return fmt.Sprintf("inputs item %d: hash key node does not resolve to its line — refusing to write", n+1)
+			}
+			item.hashLine = line
+			item.hashIndent = p.lines[line][:col]
+		}
 		p.items = append(p.items, item)
 	}
 	return ""
+}
+
+// refSiblingIndent is the indentation a `hash:` key must carry to be a mapping
+// sibling of the item's `ref:` key — the column at which `ref:` begins on its
+// file line. Appending a missing hash at this indent (never nested deeper) keeps
+// it a chain-item key, never claim prose. Defaults to two spaces (the canonical
+// `- ref:` shape) when the line cannot be read.
+func refSiblingIndent(lines []string, refLine int) string {
+	if refLine < 0 || refLine >= len(lines) {
+		return "  "
+	}
+	if i := strings.Index(lines[refLine], "ref:"); i >= 0 {
+		return strings.Repeat(" ", i)
+	}
+	return "  "
 }
 
 // parseReceipt decodes the ^receipt block and maps every managed key to its

@@ -79,18 +79,19 @@ func buildEdit(p *pageState, cls *classified, w written) ([]byte, map[string]any
 
 // chainHashEdits rewrites the machine `hash:` line of each named input item —
 // surgical, one line per item, so unrelated inputs and any claim prose survive
-// byte-for-byte. An item whose `hash:` line is absent gets one appended at the
-// item's tail (the pre-first-attest shape). Shared by the four-case write path
-// and the bulk cosmetic sweep.
+// byte-for-byte. An item whose `hash:` line is absent gets one inserted as a
+// `ref:` sibling directly below it (the pre-first-attest shape) — never at the
+// block tail, where the canonical trailing `hash-algo` scalar sits. Shared by the
+// four-case write path and the bulk cosmetic sweep.
 func chainHashEdits(p *pageState, writeInputs []int, hashes []string) []edit {
 	var edits []edit
 	for _, i := range writeInputs {
 		item := p.items[i]
-		val := "hash: " + yamlQuote(hashes[i])
+		val := item.hashIndent + "hash: " + yamlQuote(hashes[i])
 		if item.hashLine >= 0 {
-			edits = append(edits, edit{line: item.hashLine, del: 1, insert: []string{item.hashIndent + val}})
+			edits = append(edits, edit{line: item.hashLine, del: 1, insert: []string{val}})
 		} else {
-			edits = append(edits, edit{line: item.end, del: 0, insert: []string{"  " + val}})
+			edits = append(edits, edit{line: item.appendLine, del: 0, insert: []string{val}})
 		}
 	}
 	return edits

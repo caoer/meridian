@@ -187,10 +187,16 @@ func (e *Engine) writeScaffold(rel string, doc *frontmatter.Doc, entries []Promo
 	return ""
 }
 
+// scaffoldHashAlgo is the canonical contract-version scalar every scaffolded
+// ^inputs block carries (§5.2 / C6): without it, B3d would write chains that trip
+// nothing today but are non-canonical, and a hash-algo bump could not be detected.
+const scaffoldHashAlgo = "hash-algo: v1"
+
 // inputsScaffoldItems renders the ordered chain entries as YAML sequence lines,
-// `claim:` left empty for the migrating agent to fill.
+// `claim:` left empty for the migrating agent to fill, and closes with the
+// canonical trailing `hash-algo` scalar.
 func inputsScaffoldItems(entries []PromoteEntry) []string {
-	out := make([]string, 0, len(entries)*3)
+	out := make([]string, 0, len(entries)*3+1)
 	for _, en := range entries {
 		out = append(out,
 			"- ref: "+yamlQuote(en.Ref),
@@ -198,7 +204,7 @@ func inputsScaffoldItems(entries []PromoteEntry) []string {
 			"  hash: "+yamlQuote(en.Hash),
 		)
 	}
-	return out
+	return append(out, scaffoldHashAlgo)
 }
 
 // renderInputsScaffold is the paste-ready ^inputs YAML body for the report.

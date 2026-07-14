@@ -37,7 +37,7 @@ func TestChainPromoteReportOnly(t *testing.T) {
 	if pp.Wrote {
 		t.Error("report-only mode wrote a page")
 	}
-	for _, want := range []string{"- ref: '[[dep#Sec]]'", "claim:", "hash: '" + depHash(t, f) + "'"} {
+	for _, want := range []string{"- ref: '[[dep#Sec]]'", "claim:", "hash: '" + depHash(t, f) + "'", "hash-algo: v1"} {
 		if !strings.Contains(pp.Scaffold, want) {
 			t.Errorf("scaffold missing %q:\n%s", want, pp.Scaffold)
 		}
@@ -69,6 +69,7 @@ func TestChainPromoteWrite(t *testing.T) {
 		"inputs: '[[#^inputs]]'",
 		"- ref: '[[dep#Sec]]'",
 		"hash: '" + depHash(t, f) + "'",
+		"hash-algo: v1",
 		"^inputs",
 	} {
 		if !strings.Contains(got, want) {
