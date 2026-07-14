@@ -33,18 +33,29 @@ func (f fakeFacts) PointedReceiptChecksum(p string) (resolve.Hash, bool) {
 	return h, ok
 }
 
-type fakeRes struct{ m map[string]string }
+type fakeRes struct {
+	m     map[string]string
+	ambig map[string]bool
+	cands map[string][]string
+}
 
 func (r fakeRes) Resolve(t string) (string, bool) { p, ok := r.m[t]; return p, ok }
-func (r fakeRes) IsAmbiguous(string) bool         { return false }
-func (r fakeRes) Candidates(string) []string      { return nil }
+func (r fakeRes) IsAmbiguous(t string) bool       { return r.ambig[t] }
+func (r fakeRes) Candidates(t string) []string    { return r.cands[t] }
 
-// fakeGit scripts cat-file batches (objs: query → "sha type size" line) and
-// merge-base ancestry ("commit->ref" keys). failBatch simulates infra death.
+// fakeGit scripts cat-file batches (objs: query → "sha type size" line),
+// merge-base ancestry ("commit->ref" keys), rev-list attribution (revlist:
+// source path → stdout; non-empty = an unexplained commit touched the file), and
+// working-tree status (dirty: source path → porcelain output; non-empty =
+// uncommitted/untracked). failBatch simulates cat-file infra death; failRevList
+// a rev-list death.
 type fakeGit struct {
-	objs      map[string]string
-	ancestors map[string]bool
-	failBatch bool
+	objs        map[string]string
+	ancestors   map[string]bool
+	revlist     map[string]string
+	dirty       map[string]string
+	failBatch   bool
+	failRevList bool
 }
 
 func (g *fakeGit) Run(dir string, stdin []byte, args ...string) ([]byte, error) {
@@ -67,6 +78,17 @@ func (g *fakeGit) Run(dir string, stdin []byte, args ...string) ([]byte, error) 
 			return nil, nil
 		}
 		return nil, errors.New("not an ancestor")
+	case "rev-list":
+		if g.failRevList {
+			return nil, errors.New("simulated rev-list death")
+		}
+		// args tail is "-- <path>"; the path is the blame target.
+		path := args[len(args)-1]
+		return []byte(g.revlist[path]), nil
+	case "status":
+		// `status --porcelain -- <path>`; empty = clean & tracked.
+		path := args[len(args)-1]
+		return []byte(g.dirty[path]), nil
 	}
 	return nil, errors.New("unexpected git call: " + strings.Join(args, " "))
 }
@@ -178,6 +200,10 @@ func newFixture(t *testing.T, pages map[string]string) *fixture {
 		objs: map[string]string{
 			"origin/main":             tipSha + " commit 250",
 			tipSha + ":skills/skillx": sumSha + " tree 0",
+			// declared-commit existence: a bare-sha cat-file query resolves to a
+			// commit object (bulk_reattest's up-front check).
+			tipSha:   tipSha + " commit 100",
+			aheadSha: aheadSha + " commit 101",
 		},
 		ancestors: map[string]bool{oldSha + "->" + tipSha: true},
 	}

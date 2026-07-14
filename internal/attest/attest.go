@@ -33,12 +33,16 @@ import (
 
 // Page statuses (step 6). skipped = shape-screen exclusion (legacy pin pages);
 // refused = ancestry guard (R3) — write nothing, name the incumbent.
+// reattested / needs_realise are bulk-mode outcomes (§6.1): a cosmetic re-hash
+// landed, or the page was excluded because its drift was not fully explained.
 const (
-	StatusAttested  = "attested"
-	StatusUnchanged = "unchanged"
-	StatusSkipped   = "skipped"
-	StatusRefused   = "refused"
-	StatusFailed    = "failed"
+	StatusAttested     = "attested"
+	StatusUnchanged    = "unchanged"
+	StatusSkipped      = "skipped"
+	StatusRefused      = "refused"
+	StatusFailed       = "failed"
+	StatusReattested   = "reattested"
+	StatusNeedsRealise = "needs_realise"
 )
 
 // Idempotency cases (P19).
@@ -57,6 +61,19 @@ type Options struct {
 	DryRun  bool
 	Verdict string // validated <path>@<sha> (P7)
 	Commit  string // target-commit override (default: origin/<branch> tip)
+
+	// BulkReattest, when non-nil, selects the declared-cosmetic sweep mode
+	// (§6.1): re-hash the inputs of pages whose every drifted input is fully
+	// attributable to the declared commits, skipping ^check and tier-2.
+	// Mutually exclusive with Verdict/Commit — a bulk sweep records no verdict
+	// and moves no tree.
+	BulkReattest *BulkOptions
+}
+
+// BulkOptions carries the declared commit set for a bulk re-attest (§6.1) — the
+// authority list against which every input's drift must be explained.
+type BulkOptions struct {
+	Commits []string
 }
 
 // CheckResult is the outcome of the page's ^check task (step 1).
@@ -195,6 +212,34 @@ func (e *Engine) Attest(opts Options) (*Report, error) {
 	}
 	// All attest params are attacker-influenced — validate every one before
 	// anything reaches a git argv or a filesystem join (§3.3 step 3).
+	if opts.BulkReattest != nil {
+		if opts.Verdict != "" || opts.Commit != "" {
+			return nil, errors.New("bulk_reattest is a cosmetic input re-hash — it records no verdict and moves no tree, so it takes neither a verdict nor a commit override (both are realise-time, tier-2 territory)")
+		}
+		if len(opts.BulkReattest.Commits) == 0 {
+			return nil, errors.New("bulk_reattest requires a non-empty commit list — a sweep that explains nothing may bless nothing (mapping-zero-hits)")
+		}
+		for _, c := range opts.BulkReattest.Commits {
+			if problem := checkCommitOverride(c); problem != "" {
+				return nil, errors.New("bulk_reattest " + problem)
+			}
+		}
+		// A well-formed but NONEXISTENT declared sha is a param error (fix your
+		// commit list), never a downstream `rev-list: bad object` death misread
+		// as an infra failure. Existence-check once, up front, via cat-file
+		// batch-check (which reports a missing object rather than erroring), so
+		// the only thing that reads as a tool failure later is a genuine infra
+		// death.
+		objs, err := batchCheck(e.Git, e.Root, opts.BulkReattest.Commits)
+		if err != nil {
+			return nil, fmt.Errorf("bulk_reattest: cannot verify declared commits in the working tree: %w", err)
+		}
+		for _, c := range opts.BulkReattest.Commits {
+			if o := objs[c]; !o.exists || o.typ != "commit" {
+				return nil, fmt.Errorf("bulk_reattest commit %s does not resolve to a commit object in the working tree — check the declared commit list", c)
+			}
+		}
+	}
 	if opts.Verdict != "" {
 		if opts.Page == "" {
 			return nil, errors.New("verdict requires page — a verdict binds one attestation, never a sweep")
@@ -217,7 +262,11 @@ func (e *Engine) Attest(opts Options) (*Report, error) {
 	}
 	rep := &Report{DryRun: opts.DryRun}
 	for _, rel := range pages {
-		rep.Pages = append(rep.Pages, e.attestPage(rel, opts, rep))
+		if opts.BulkReattest != nil {
+			rep.Pages = append(rep.Pages, e.reattestPage(rel, opts, rep))
+		} else {
+			rep.Pages = append(rep.Pages, e.attestPage(rel, opts, rep))
+		}
 	}
 	return rep, nil
 }
@@ -312,7 +361,7 @@ func (e *Engine) attestPage(rel string, opts Options, rep *Report) PageResult {
 
 	// Step 2 — resolve + hash every inputs[] entry, and the resolved
 	// procedure blocks (post-inheritance, C8). Unhashable input → abort page.
-	hashes, problem := e.computeInputs(p)
+	hashes, _, problem := e.computeInputs(p)
 	if problem != "" {
 		return fail(problem)
 	}
@@ -389,13 +438,17 @@ func (e *Engine) attestPage(rel string, opts Options, rep *Report) PageResult {
 }
 
 // computeInputs resolves and hashes every chain entry (resolve library, hash
-// mode; two-ref-class per A3). Ambiguous/unresolved/dangling → abort page.
-func (e *Engine) computeInputs(p *pageState) ([]string, string) {
+// mode; two-ref-class per A3). It also returns each entry's resolved source
+// page path (the blame target the bulk attribution guard needs, §6.1 step 1) —
+// the page's own path for a self-rooted ref. Ambiguous/unresolved/dangling →
+// abort page.
+func (e *Engine) computeInputs(p *pageState) ([]string, []string, string) {
 	hashes := make([]string, len(p.items))
+	sources := make([]string, len(p.items))
 	for i, item := range p.items {
 		wl, err := run.ParseWikilink(item.Ref)
 		if err != nil {
-			return nil, fmt.Sprintf("inputs[%d] ref %s: %v", i+1, item.Ref, err)
+			return nil, nil, fmt.Sprintf("inputs[%d] ref %s: %v", i+1, item.Ref, err)
 		}
 		anchor := ""
 		if wl.BlockID != "" {
@@ -404,18 +457,21 @@ func (e *Engine) computeInputs(p *pageState) ([]string, string) {
 			anchor = wl.Heading
 		}
 		var h resolve.Hash
+		var node resolve.Node
 		if wl.Target == "" {
 			// Self-rooted ref (§5.3): the page's own slice is the input.
-			h, err = resolve.Compose(resolve.Node{Path: p.rel, Anchor: anchor}, e.Source, e.Res, e.MaxNodes)
+			node = resolve.Node{Path: p.rel, Anchor: anchor}
+			h, err = resolve.Compose(node, e.Source, e.Res, e.MaxNodes)
 		} else {
-			_, h, err = resolve.InputHash(resolve.Ref{Target: wl.Target, Anchor: anchor}, e.Source, e.Res, e.MaxNodes)
+			node, h, err = resolve.InputHash(resolve.Ref{Target: wl.Target, Anchor: anchor}, e.Source, e.Res, e.MaxNodes)
 		}
 		if err != nil {
-			return nil, fmt.Sprintf("inputs[%d] ref %s: unhashable: %v", i+1, item.Ref, err)
+			return nil, nil, fmt.Sprintf("inputs[%d] ref %s: unhashable: %v", i+1, item.Ref, err)
 		}
 		hashes[i] = string(h)
+		sources[i] = node.Path
 	}
-	return hashes, ""
+	return hashes, sources, ""
 }
 
 // pointedVerify is §3.3 step 3: every pin-derived field validated, the target

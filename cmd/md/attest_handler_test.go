@@ -19,10 +19,13 @@ import (
 // scan→engine wiring over a real directory. The full write-path fixture suite
 // (case-2a/2b golden files, boundary wiring through main.go) is U-B3c's.
 
-// fakeAttestGit mirrors the engine test fake at the handler seam.
+// fakeAttestGit mirrors the engine test fake at the handler seam: cat-file
+// batches, rev-list attribution (revlist), and working-tree status (dirty).
 type fakeAttestGit struct {
-	objs map[string]string
-	fail bool
+	objs    map[string]string
+	revlist map[string]string
+	dirty   map[string]string
+	fail    bool
 }
 
 func (g *fakeAttestGit) Run(dir string, stdin []byte, args ...string) ([]byte, error) {
@@ -42,6 +45,10 @@ func (g *fakeAttestGit) Run(dir string, stdin []byte, args ...string) ([]byte, e
 		return []byte(out.String()), nil
 	case "merge-base":
 		return nil, errors.New("not an ancestor")
+	case "rev-list":
+		return []byte(g.revlist[args[len(args)-1]]), nil
+	case "status":
+		return []byte(g.dirty[args[len(args)-1]]), nil
 	}
 	return nil, errors.New("unexpected git call")
 }

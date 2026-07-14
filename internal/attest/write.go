@@ -32,20 +32,11 @@ var fmReceiptRe = regexp.MustCompile(`^receipt:(\s|$)`)
 // fields survive byte-for-byte (the golden-file round-trip contract). It also
 // returns the old→new value maps for the step-6 report.
 func buildEdit(p *pageState, cls *classified, w written) ([]byte, map[string]any, map[string]any, error) {
-	var edits []edit
 	oldVals := map[string]any{}
 	newVals := map[string]any{}
 
 	// Chain hashes (all cases with changed inputs).
-	for _, i := range cls.writeInputs {
-		item := p.items[i]
-		val := "hash: " + yamlQuote(w.hashes[i])
-		if item.hashLine >= 0 {
-			edits = append(edits, edit{line: item.hashLine, del: 1, insert: []string{item.hashIndent + val}})
-		} else {
-			edits = append(edits, edit{line: item.end, del: 0, insert: []string{"  " + val}})
-		}
-	}
+	edits := chainHashEdits(p, cls.writeInputs, w.hashes)
 	if n := len(cls.writeInputs); n > 0 {
 		oldVals["inputs_rehashed"] = n
 		newVals["inputs_rehashed"] = n
@@ -84,6 +75,46 @@ func buildEdit(p *pageState, cls *classified, w written) ([]byte, map[string]any
 		}
 	}
 	return applyEdits(p, edits, nil), oldVals, newVals, nil
+}
+
+// chainHashEdits rewrites the machine `hash:` line of each named input item —
+// surgical, one line per item, so unrelated inputs and any claim prose survive
+// byte-for-byte. An item whose `hash:` line is absent gets one appended at the
+// item's tail (the pre-first-attest shape). Shared by the four-case write path
+// and the bulk cosmetic sweep.
+func chainHashEdits(p *pageState, writeInputs []int, hashes []string) []edit {
+	var edits []edit
+	for _, i := range writeInputs {
+		item := p.items[i]
+		val := "hash: " + yamlQuote(hashes[i])
+		if item.hashLine >= 0 {
+			edits = append(edits, edit{line: item.hashLine, del: 1, insert: []string{item.hashIndent + val}})
+		} else {
+			edits = append(edits, edit{line: item.end, del: 0, insert: []string{"  " + val}})
+		}
+	}
+	return edits
+}
+
+// buildBulkEdit constructs the bytes for a bulk re-attest (§6.1): the drifted
+// chain hashes are rewritten and — on a pointed page — applied_at is stamped
+// (owned pages write input hashes only, P20). No receipt field moves: a cosmetic
+// sweep records that the channel was re-checked, never that the tree or the
+// procedure did. Returns the old→new report maps.
+func buildBulkEdit(p *pageState, changed []int, hashes []string, appliedAt string) ([]byte, map[string]any, map[string]any) {
+	oldVals := map[string]any{"inputs_rehashed": len(changed)}
+	newVals := map[string]any{"inputs_rehashed": len(changed)}
+	edits := chainHashEdits(p, changed, hashes)
+	if p.pointed && p.receipt != nil {
+		if kl, ok := p.rec.keyLine[keyAppliedAt]; ok {
+			edits = append(edits, edit{line: kl, del: p.rec.keyEnd[keyAppliedAt] - kl, insert: []string{keyAppliedAt + ": " + appliedAt}})
+		} else {
+			edits = append(edits, edit{line: p.receipt.close, del: 0, insert: []string{keyAppliedAt + ": " + appliedAt}})
+		}
+		oldVals[keyAppliedAt] = p.rec.AppliedAt
+		newVals[keyAppliedAt] = appliedAt
+	}
+	return applyEdits(p, edits, nil), oldVals, newVals
 }
 
 // receiptSets decides which managed keys the case writes, formatting each
