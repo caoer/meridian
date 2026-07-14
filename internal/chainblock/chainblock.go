@@ -58,46 +58,45 @@ type Result struct {
 func Parse(content string) (Result, string) {
 	lines := strings.Split(content, "\n")
 
-	// Boundary: once a sequence entry has been seen, the first column-0 line that
-	// is neither blank, a comment, nor another entry begins the trailing top-level
-	// scalars. Everything a sequence item owns is either its `- ` line or indented
-	// under it, so a post-sequence column-0 non-dash key can only be block
-	// metadata (`hash-algo: v1`). A column-0 non-dash key BEFORE any entry means
-	// the block is not a sequence at all — leave the whole content for the decode
-	// to fail closed on (attest-consistent), never a silent empty parse.
-	seqEnd := len(lines)
-	sawEntry := false
-	for i, ln := range lines {
-		if !isColumn0(ln) {
-			continue
+	// A `^inputs` block is a YAML sequence with column-0 metadata scalars
+	// (`hash-algo: v1`) trailing (or, degenerately, interleaved). Everything a
+	// sequence item owns is either its `- ` line or indented under it, so ANY
+	// column-0 non-dash, non-comment line is block metadata, never edge content.
+	// Blank each such line OUT of the sequence text — capturing hash-algo — while
+	// keeping its line slot, so yaml.Node line numbers stay aligned with the block
+	// content and every edge keeps its true file line. This recovers all genuine
+	// edges even when a stray column-0 line sits between them (never a silent
+	// truncation), while a block-scalar's indented dash lines stay prose (the
+	// class this parser closes). A block with NO sequence entry is left whole for
+	// the decoder to fail closed on — a mapping is not a sequence, never a silent
+	// empty parse.
+	hasEntry := false
+	for _, ln := range lines {
+		if t := strings.TrimSpace(ln); isColumn0(ln) && (t == "-" || strings.HasPrefix(t, "- ")) {
+			hasEntry = true
+			break
 		}
-		t := strings.TrimSpace(ln)
-		if t == "" || strings.HasPrefix(t, "#") {
-			continue
-		}
-		if t == "-" || strings.HasPrefix(t, "- ") {
-			sawEntry = true
-			continue
-		}
-		if sawEntry {
-			seqEnd = i
-		}
-		break
 	}
 
 	var res Result
-	for _, ln := range lines[seqEnd:] {
-		if !isColumn0(ln) {
-			continue
+	seqText := content
+	if hasEntry {
+		seq := make([]string, len(lines))
+		for i, ln := range lines {
+			t := strings.TrimSpace(ln)
+			if isColumn0(ln) && t != "" && !strings.HasPrefix(t, "#") && t != "-" && !strings.HasPrefix(t, "- ") {
+				if k, v, ok := splitScalar(t); ok && k == "hash-algo" {
+					res.HashAlgo = v
+				}
+				continue // metadata: leave seq[i] blank, preserving the line slot
+			}
+			seq[i] = ln
 		}
-		if k, v, ok := splitScalar(strings.TrimSpace(ln)); ok && k == "hash-algo" {
-			res.HashAlgo = v
-		}
+		seqText = strings.Join(seq, "\n")
 	}
 
-	seqText := strings.Join(lines[:seqEnd], "\n")
 	if strings.TrimSpace(seqText) == "" {
-		return res, "" // empty sequence — the caller reports "inputs is empty"
+		return res, "" // empty block — the caller reports "inputs is empty"
 	}
 	var root yaml.Node
 	if err := yaml.Unmarshal([]byte(seqText), &root); err != nil {

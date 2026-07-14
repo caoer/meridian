@@ -7,18 +7,26 @@ import (
 	"github.com/caoer/meridian/internal/vfs"
 )
 
-// The guard that keeps the line-regex-vs-structural class closed: the attest
-// writer (parseInputs → p.items) and the fact table's chain extraction
-// (engine.ExtractFacts → Facts.Chain) must derive the SAME edge set from one
-// `^inputs` block. Both are structural (YAML-node based) today; this test fails
-// the instant either drifts back to a line scan that miscounts a `claim: |`
-// block scalar's dash lines as entries.
+// The guard that keeps the line-regex-vs-structural class closed: over shapes
+// BOTH parsers accept, the attest writer (parseInputs → p.items) and the fact
+// table's chain extraction (engine.ExtractFacts → Facts.Chain) must derive the
+// SAME edge set from one `^inputs` block — so a `claim: |` block scalar's dash
+// lines can never be miscounted as entries by either.
 //
-// Writer and reader share a PARSE but not a POLICY: the writer fails closed on
-// any malformed entry (a wrong hash is worse than an error); the reader is
-// tolerant (it uses the well-formed edges and never invents a phantom). The
-// agreement asserted here is over shapes both accept; the bare-`-` case pins the
-// intended policy divergence (writer refuses, reader still emits no phantom).
+// SCOPE — read before trusting this guard: the writer and the reader are two
+// INDEPENDENT parsers today (the reader adopted internal/chainblock; the writer
+// still bare-decodes the whole block). They agree only on shapes the writer
+// accepts. Two known divergences are NOT agreement failures but split POLICY /
+// a known writer gap, pinned explicitly below:
+//   - Malformed entries (bare `-`, a stray column-0 line, empty ref): the writer
+//     fails closed (a wrong hash is worse than an error); the reader is tolerant
+//     (recovers every genuine edge, invents no phantom). See the divergence tests.
+//   - The trailing `hash-algo: v1` scalar (the CANONICAL receipt shape): the
+//     reader parses it (chainblock splits sequence from metadata); the writer's
+//     whole-block yaml decode REJECTS it ("did not find expected '-' indicator").
+//     This is attest's LATENT bug, tracked for a post-B3d migration of
+//     parseInputs onto chainblock.Parse — do NOT add a hash-algo case to the
+//     agreement set until the writer can parse it (it would fail, correctly).
 
 type edge struct{ ref, hash string }
 
@@ -125,23 +133,51 @@ func TestCrossParser_Agreement(t *testing.T) {
 	}
 }
 
-// TestCrossParser_BareDashPolicyDivergence: a top-level bare `-` is a non-mapping
-// entry. The writer fails closed (never a partial receipt); the reader emits only
-// the genuine edge and NO phantom (never an empty-ref edge). Shared parse, split
-// policy — the exact contract the guard protects.
-func TestCrossParser_BareDashPolicyDivergence(t *testing.T) {
-	page := crossEffectPage("" +
-		"- ref: '[[dep#Sec]]'\n" +
-		"  hash: '4c01d9e2'\n" +
-		"-\n")
-
-	if _, problem := attestEdges(t, page); problem == "" {
-		t.Error("writer must fail closed on a bare `-` entry")
+// TestCrossParser_PolicyDivergence pins the writer-strict / reader-tolerant
+// split over malformed shapes: the writer fails closed (never a partial receipt);
+// the reader recovers every genuine edge and NEVER invents a phantom (empty-ref)
+// edge. Each case is a shape the writer rejects — the reader's recovery is the
+// contract the guard protects against a regression toward truncation or phantoms.
+func TestCrossParser_PolicyDivergence(t *testing.T) {
+	cases := []struct {
+		name       string
+		inputsBody string
+		want       []edge // the reader's genuine edges (no phantom)
+	}{
+		{"trailing bare dash", "" +
+			"- ref: '[[dep#Sec]]'\n" +
+			"  hash: '4c01d9e2'\n" +
+			"-\n",
+			[]edge{{ref: "[[dep#Sec]]", hash: "4c01d9e2"}}},
+		{"empty ref", "" +
+			"- ref: ''\n" +
+			"  hash: '4c01d9e2'\n" +
+			"- ref: '[[dep#Sec]]'\n" +
+			"  hash: null\n",
+			[]edge{{ref: "[[dep#Sec]]", hash: ""}}}, // the empty-ref item is dropped, not a phantom
+		{"stray column-0 line between edges", "" +
+			"- ref: '[[a]]'\n" +
+			"  hash: h1\n" +
+			"note: stray\n" +
+			"- ref: '[[b]]'\n" +
+			"  hash: h2\n",
+			[]edge{{ref: "[[a]]", hash: "h1"}, {ref: "[[b]]", hash: "h2"}}}, // reader recovers both
 	}
-
-	rd := factEdges(t, page)
-	want := []edge{{ref: "[[dep#Sec]]", hash: "4c01d9e2"}}
-	if !eqEdges(rd, want) {
-		t.Errorf("reader = %+v, want the one genuine edge and no phantom", rd)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			page := crossEffectPage(c.inputsBody)
+			if _, problem := attestEdges(t, page); problem == "" {
+				t.Error("writer must fail closed on a malformed entry")
+			}
+			rd := factEdges(t, page)
+			if !eqEdges(rd, c.want) {
+				t.Errorf("reader = %+v, want %+v (recover genuine edges, no phantom)", rd, c.want)
+			}
+			for _, e := range rd {
+				if e.ref == "" {
+					t.Errorf("reader emitted a phantom (empty-ref) edge: %+v", rd)
+				}
+			}
+		})
 	}
 }

@@ -103,6 +103,43 @@ func TestParse_BareDashFailsClosed(t *testing.T) {
 	}
 }
 
+// TestParse_EdgeAfterStrayColumn0Line: a column-0 line that is NOT a trailing
+// scalar (a stray/unknown key) but has genuine `- ref:` entries after it must
+// NOT truncate the edge set — every real edge is recovered, and hash-algo is
+// still captured wherever it sits. The line-number slot is preserved so RefLine
+// stays the true content line.
+func TestParse_EdgeAfterStrayColumn0Line(t *testing.T) {
+	content := "- ref: '[[a]]'\n" +
+		"  hash: h1\n" +
+		"note: a stray column-0 key\n" +
+		"- ref: '[[b]]'\n" +
+		"  hash: h2\n" +
+		"hash-algo: v1\n"
+	res, problem := Parse(content)
+	if problem != "" {
+		t.Fatalf("unexpected problem: %s", problem)
+	}
+	want := [][2]string{{"[[a]]", "h1"}, {"[[b]]", "h2"}}
+	if got := refs(res); !eq(got, want) {
+		t.Errorf("refs = %v, want %v (a stray column-0 line must not truncate later edges)", got, want)
+	}
+	if res.HashAlgo != "v1" {
+		t.Errorf("HashAlgo = %q, want v1", res.HashAlgo)
+	}
+	// Line slots preserved: [[b]]'s ref is on content line 4.
+	if res.Items[1].RefLine != 4 {
+		t.Errorf("Items[1].RefLine = %d, want 4 (blanked metadata keeps line slots)", res.Items[1].RefLine)
+	}
+}
+
+// TestParse_MappingBlockFailsClosed: a block with NO sequence entry (a bare
+// mapping) is not a sequence — fail closed, never a silent empty parse.
+func TestParse_MappingBlockFailsClosed(t *testing.T) {
+	if _, problem := Parse("ref: '[[a]]'\nhash: h1\n"); problem == "" {
+		t.Fatal("a mapping block (no `- ` entry) must fail closed")
+	}
+}
+
 // TestParse_HashTwiceFailsClosed: a duplicate hash key is ambiguous — refuse.
 func TestParse_HashTwiceFailsClosed(t *testing.T) {
 	_, problem := Parse("- ref: '[[dep#Sec]]'\n  hash: abc\n  hash: def\n")
