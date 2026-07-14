@@ -168,13 +168,18 @@ jobs:
           if cur="$(gh api "repos/$REPO/releases/tags/latest" -q .target_commitish 2>/dev/null)"; then
             :
           else
-            code="$(gh api "repos/$REPO/releases/tags/latest" -i 2>/dev/null | awk 'toupper($1) ~ /^HTTP/ {print $2; exit}')"
-            if [ "$code" = "404" ]; then
-              cur=""
-            else
-              echo "::notice::could not read current latest release (status=${code:-unknown}); leaving it untouched."
-              exit 0
-            fi
+            # Genuinely absent (404) => create fresh; any other error => fail
+            # closed. Classify by matching the captured error TEXT with a shell
+            # `case` — deliberately NOT `... | awk '{exit}'`/`| head`, whose
+            # early pipe close trips SIGPIPE (exit 141) under `set -o pipefail`.
+            err="$(gh api "repos/$REPO/releases/tags/latest" 2>&1 >/dev/null || true)"
+            case "$err" in
+              *"HTTP 404"*)
+                cur="" ;;
+              *)
+                echo "::notice::could not read current latest release; leaving it untouched. ($err)"
+                exit 0 ;;
+            esac
           fi
 
           if [ -n "$cur" ] && [ "$cur" != "null" ]; then
