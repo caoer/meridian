@@ -10,14 +10,20 @@ import (
 // document's post-write file_rev; SecRev is the target section's fresh hash — the
 // CAS anchor for the caller's next edit. Changed lists every section the write
 // touched (usually just the target).
+//
+// A BATCH invocation (edits[] and/or properties) fills the plural fields instead
+// (see AppendData); single-edit JSON stays byte-identical to the pre-batch verb.
 type EditSectionData struct {
-	Path     string   `json:"path"`
-	Section  string   `json:"section"`
-	Op       string   `json:"op"`
-	FileRev  string   `json:"file_rev,omitempty"`
-	SecRev   string   `json:"sec_rev,omitempty"`
-	Changed  []string `json:"changed,omitempty"`
-	Warnings []string `json:"warnings,omitempty"`
+	Path       string            `json:"path"`
+	Section    string            `json:"section,omitempty"`
+	Op         string            `json:"op"`
+	FileRev    string            `json:"file_rev,omitempty"`
+	SecRev     string            `json:"sec_rev,omitempty"`
+	Sections   []string          `json:"sections,omitempty"`
+	SecRevs    map[string]string `json:"sec_revs,omitempty"`
+	Properties []string          `json:"properties,omitempty"`
+	Changed    []string          `json:"changed,omitempty"`
+	Warnings   []string          `json:"warnings,omitempty"`
 }
 
 // EditConflictData is the CAS-conflict teaching payload carried alongside the
@@ -38,6 +44,10 @@ type EditConflictData struct {
 // -circuits on Error), with the machine-actionable current content in Data for a
 // JSON caller.
 func (d EditSectionData) renderText(w io.Writer) {
+	if len(d.Sections) > 0 || len(d.Properties) > 0 {
+		renderBatch(w, "edited", d.Path, d.Sections, d.Properties, d.FileRev, d.SecRevs)
+		return
+	}
 	fmt.Fprintf(w, "edited: %s#%s\n", d.Path, d.Section)
 	if d.FileRev != "" {
 		fmt.Fprintf(w, "file_rev: %s\n", d.FileRev)

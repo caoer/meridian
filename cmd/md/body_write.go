@@ -2,9 +2,11 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/caoer/meridian/internal/cli"
@@ -81,6 +83,85 @@ func resolveWriteFile(fsys fs.FS, base, target string) (diskPath, frag string, e
 	return filepath.Join(base, result.Matches[0].Path), frag, nil
 }
 
+// resolveWriteFileBare resolves a write target that MAY be a bare file (no
+// #fragment): the batch and property planes address the file once and name
+// sections per edit (or none at all — a property write belongs to the file), so —
+// unlike resolveWriteFile — a missing fragment is legal here and yields frag "".
+// Same expect-unique resolver, same error rendering.
+func resolveWriteFileBare(fsys fs.FS, base, target string) (diskPath, frag string, errResp *cli.Response) {
+	t := strings.TrimSpace(target)
+	fileRef := t
+	if strings.HasPrefix(t, "[[") {
+		link, perr := run.ParseWikilink(t)
+		if perr != nil {
+			return "", "", cli.ErrorResponse(cli.ErrInvalidParams, perr.Error())
+		}
+		if link.Target == "" {
+			return "", "", cli.ErrorResponse(cli.ErrInvalidParams,
+				fmt.Sprintf("write target %q needs a file context", target))
+		}
+		switch {
+		case link.BlockID != "":
+			frag = "^" + link.BlockID
+		case link.Heading != "":
+			frag = link.Heading
+		}
+		fileRef = "[[" + link.Target + "]]"
+	} else if i := strings.Index(t, "#"); i >= 0 {
+		fileRef, frag = t[:i], t[i+1:]
+		if fileRef == "" || frag == "" {
+			return "", "", cli.ErrorResponse(cli.ErrInvalidParams,
+				fmt.Sprintf("write target %q must be file or file#section", target))
+		}
+	}
+	result, err := run.Read(fsys, base, fileRef, true)
+	if err != nil {
+		return "", "", readResolveError(err)
+	}
+	if len(result.Matches) != 1 {
+		return "", "", cli.ErrorResponse(cli.ErrAmbiguousTarget,
+			target+" did not resolve to exactly one file")
+	}
+	return filepath.Join(base, result.Matches[0].Path), frag, nil
+}
+
+// propertyEdits renders a properties map as set_property edits in sorted-key
+// order (a deterministic batch identity for the journal), placed FIRST in a
+// combined batch — properties then body, per the one-put atomicity row of the
+// plan (one flock, one rev bump).
+func propertyEdits(properties map[string]string) []body.Edit {
+	keys := sortedKeys(properties)
+	edits := make([]body.Edit, 0, len(keys))
+	for _, k := range keys {
+		edits = append(edits, body.Edit{Op: body.OpSetProperty, Target: k, New: properties[k]})
+	}
+	return edits
+}
+
+// sortedKeys is a map's keys, sorted; nil for an empty map (so omitempty JSON
+// fields stay absent).
+func sortedKeys(m map[string]string) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// appendDistinct appends s to list if absent, preserving first-seen order.
+func appendDistinct(list []string, s string) []string {
+	for _, v := range list {
+		if v == s {
+			return list
+		}
+	}
+	return append(list, s)
+}
+
 // spliceError renders a body.Splice failure into the CLI error envelope, carrying
 // the engine's structured error through verbatim: its stable Code (EPERM / ECAS /
 // E_NO_MATCH / E_AMBIGUOUS / E_WOULD_CORRUPT / E_FAIL_LOUD / …) as the error code,
@@ -93,6 +174,26 @@ func spliceError(err error) *cli.Response {
 		return cli.ErrorResponseWithHint(be.Code, be.Message, be.Remedy)
 	}
 	return cli.ErrorResponse(cli.ErrInvalidInput, err.Error())
+}
+
+// freshSecRevs re-reads path after a committed batch write and returns each named
+// section's current hash — the CAS anchors for chained edits. Best-effort like
+// freshSecRev; sections that fail to read back are simply absent.
+func freshSecRevs(path string, frags []string) map[string]string {
+	doc, err := body.Load(path)
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(frags))
+	for _, f := range frags {
+		if sec, rerr := doc.Read(f); rerr == nil {
+			out[f] = sec.Rev
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // freshSecRev re-reads path after a committed write and returns the target

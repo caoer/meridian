@@ -39,6 +39,10 @@ var (
 	// CRLF '\r' are shed from the span — symmetric with reHeading/reBlockID, and the
 	// span-law "value bytes only" holds on CRLF files too.
 	reFMKey = regexp.MustCompile(`^([A-Za-z0-9_-]+):\s*(.*?)\s*$`)
+	// reFMKeyName is the legal shape of a frontmatter KEY on the write path
+	// (set_property) — exactly the key charset reFMKey recognizes on the read path,
+	// anchored whole-string so a hostile "key" cannot carry a colon or line break.
+	reFMKeyName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 )
 
 // scanLine is one physical body line as a half-open byte span [start,end) into

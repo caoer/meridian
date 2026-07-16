@@ -24,10 +24,14 @@ func registerBodyVerbs(router *cli.Router) {
 	router.Handle("toc", tocHandler())
 	// The write verbs funnel through the ONE write path (body.Splice): append is
 	// the anchor-free/rev-free rung, edit-section is the CAS-guarded anchored
-	// replace. Both bind the actor to the invoking session (never a flag), so I3
-	// authorization, the rev ladder, and the reparse gate apply for free.
+	// replace, set-prop is the frontmatter property plane (U16 GO condition 2).
+	// All bind the actor to the invoking session (never a flag), so I3
+	// authorization, the rev ladder, and the reparse gate apply for free. append
+	// and edit-section also take edits[] + properties for a batched, single-splice
+	// multi-edit write (U16 GO condition 1).
 	router.Handle("append", appendHandler())
 	router.Handle("edit-section", editSectionHandler())
+	router.Handle("set-prop", setPropHandler())
 	// `md toc <path>` — positional sugar for {"target": "<path>"}. A bare plain
 	// path must exist (fail loud on a typo); a wikilink passes through for the
 	// handler to resolve.

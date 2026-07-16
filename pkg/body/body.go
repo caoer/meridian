@@ -50,6 +50,7 @@ const (
 	OpBlank          = ibody.OpBlank
 	OpReplaceSection = ibody.OpReplaceSection
 	OpCreateSection  = ibody.OpCreateSection
+	OpSetProperty    = ibody.OpSetProperty
 )
 
 // DeltaKind values, re-exported.
