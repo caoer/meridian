@@ -12,15 +12,22 @@ import (
 	"github.com/caoer/meridian/pkg/body"
 )
 
-// registerBodyVerbs wires the config-free body-engine read surface (md read, md
-// toc) onto the router. main() and the boundary-wiring test both call it, so the
-// test exercises the real entry registration — including the toc positional
-// adapter — rather than a drifting copy.
+// registerBodyVerbs wires the config-free body-engine surface — the read verbs
+// (md read, md toc) and the write verbs (md append, md edit-section) — onto the
+// router. main() and the boundary-wiring test both call it, so the test exercises
+// the real entry registration — including the toc positional adapter and the
+// session-derived write actor — rather than a drifting copy.
 func registerBodyVerbs(router *cli.Router) {
 	router.Handle("read", readHandler())
 	// toc is config-free like read: the body engine is pure — it maps one
 	// document's shape (heading table + sec_rev) with no corpus index.
 	router.Handle("toc", tocHandler())
+	// The write verbs funnel through the ONE write path (body.Splice): append is
+	// the anchor-free/rev-free rung, edit-section is the CAS-guarded anchored
+	// replace. Both bind the actor to the invoking session (never a flag), so I3
+	// authorization, the rev ladder, and the reparse gate apply for free.
+	router.Handle("append", appendHandler())
+	router.Handle("edit-section", editSectionHandler())
 	// `md toc <path>` — positional sugar for {"target": "<path>"}. A bare plain
 	// path must exist (fail loud on a typo); a wikilink passes through for the
 	// handler to resolve.
