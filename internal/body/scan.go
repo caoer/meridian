@@ -109,6 +109,44 @@ func scanBody(src []byte, bodyStart int) []scanLine {
 
 var nl = []byte{'\n'}
 
+// fenceOpenAtEOF reports whether a code fence is still OPEN when Source ends — an
+// unterminated fence that swallows every following line (headings included) into
+// its content. It re-runs the same fence state machine as scanBody but keeps only
+// the terminal state. The reparse gate uses it to catch the one corruption a
+// tolerant round-trip parser hides: an edit that opens a fence the rest of the file
+// falls into, silently erasing sections from the map without changing a visible byte.
+func fenceOpenAtEOF(src []byte) bool {
+	bodyStart, _, _, _, _ := detectFrontmatter(src)
+	if bodyStart < 0 || bodyStart > len(src) {
+		bodyStart = 0
+	}
+	var fenceCh byte
+	fenceLen := 0
+	for off := bodyStart; off <= len(src); {
+		lineStart := off
+		lineEnd := lineStart
+		for lineEnd < len(src) && src[lineEnd] != '\n' {
+			lineEnd++
+		}
+		text := trimTrailWS(src[lineStart:lineEnd])
+		if fenceCh != 0 {
+			if ch, runLen, rest, ok := fenceDelim(text); ok &&
+				ch == fenceCh && runLen >= fenceLen && len(trimTrailWS(rest)) == 0 {
+				fenceCh, fenceLen = 0, 0
+			}
+		} else if ch, runLen, rest, ok := fenceDelim(text); ok {
+			if ch != '`' || !bytes.ContainsRune(rest, '`') {
+				fenceCh, fenceLen = ch, runLen
+			}
+		}
+		if lineEnd >= len(src) {
+			break
+		}
+		off = lineEnd + 1
+	}
+	return fenceCh != 0
+}
+
 // trimTrailWS sheds trailing spaces, tabs, and a CRLF carriage return. It is used
 // only to normalize a line for delimiter/heading MATCHING; the spans it feeds are
 // always taken against the untrimmed Source, so the '\r' survives round-trip as an

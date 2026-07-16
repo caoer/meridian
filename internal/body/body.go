@@ -240,6 +240,10 @@ type Result struct {
 	// Journaled reports whether a metadata-only journal entry was appended
 	// (path/rev/actor/op — never content spans).
 	Journaled bool
+	// Warnings carries non-fatal advisories the write proceeded despite — notably
+	// "foreign_changes" when an anchored edit was applied with an omitted rev (the
+	// rev ladder's relaxation for an exact-and-unique anchor).
+	Warnings []string
 }
 
 // Error is the single structured error type emitted across every body-engine
@@ -373,18 +377,5 @@ func (d *Document) Bytes() []byte {
 	return d.Source
 }
 
-// Splice is THE one write path (tooling-FUSED: MCP put, md CLI verbs, pipe handler,
-// and daemon sync writers all call this). It acquires the sidecar "<target>.md.lock"
-// flock, re-reads and re-maps target under the lock, resolves each Edit's fragment,
-// then applies the guard ladder in order — I3 authorization (EPERM-first; actor is
-// daemon-derived, never flag-asserted) → I1/I2 anchor checks → the rev ladder → I4
-// conformance — before splicing high-to-low, re-parsing the result (refuse if it
-// would corrupt the section table), writing tmp+fsync+rename preserving perms, and
-// appending a METADATA-ONLY journal entry. All-or-nothing.
-//
-// Stub: returns ErrNotImpl until U3 lands. (U3 also ports the ccc-mdfs
-// internal/policy shape for the I3 authorization layer.)
-func Splice(target string, edits []Edit, rev, actor string) (Result, error) {
-	return Result{}, ErrNotImpl
-}
+// Splice (the one write path) is implemented in splice.go.
 
