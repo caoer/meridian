@@ -296,6 +296,9 @@ func formatData(w io.Writer, data any) {
 	case EditSectionData:
 		d.renderText(w)
 
+	case SetPropData:
+		d.renderText(w)
+
 	case ReadData:
 		// stdout carries pure content (automation reads it); base/match
 		// metadata goes to stderr from the handler. Separators only on

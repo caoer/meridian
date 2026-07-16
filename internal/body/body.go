@@ -95,6 +95,8 @@ type Document struct {
 	// Unexported parsed representation (U2). Built once by parse and never mutated;
 	// all mutation goes through Splice, which re-reads and re-maps a fresh Document.
 	fm       []fmKey      // frontmatter value spans, in document order
+	hasFM    bool         // whether a frontmatter block was recognized
+	fmEnd    int          // byte offset of the closing "---" line (new-key insertion point)
 	sections []Section    // section table, document order, derived fields enriched
 	blocks   []blockEntry // addressable "^id" blocks
 }
@@ -173,6 +175,11 @@ const (
 	OpReplaceSection EditOp = "replace_section"
 	// OpCreateSection creates a new section (heading + body).
 	OpCreateSection EditOp = "create_section"
+	// OpSetProperty sets one frontmatter property: Target is the key, New is the
+	// single-line value. An existing key's value span is spliced in place; an absent
+	// key is inserted as a new "key: value" line before the closing "---". Rev-free
+	// (last-writer-wins per key under the sidecar lock, like append).
+	OpSetProperty EditOp = "set_property"
 )
 
 // Edit is one guarded change to a section, applied by [Splice]. Edits in a batch
@@ -183,6 +190,7 @@ type Edit struct {
 	Op EditOp
 	// Target is the fragment within the file: a heading path ("Notes/Lab-state"),
 	// a block id ("^cct-2"), or the section scope an exact Find is resolved within.
+	// For OpSetProperty it is the frontmatter key being set.
 	Target string
 	// Find is the exact anchor text to locate within the target section (I1 anchored
 	// write, I2 uniqueness-in-scope). Byte-exact — no normalization.
@@ -320,6 +328,8 @@ func parse(src []byte) (*Document, *Error) {
 	}
 	if hasFM {
 		doc.fm = parseFrontmatterKeys(buf, fmStart, fmEnd)
+		doc.hasFM = true
+		doc.fmEnd = fmEnd
 	}
 
 	lines := scanBody(buf, bodyStart)

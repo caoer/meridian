@@ -37,8 +37,11 @@ type journalEntry struct {
 	Path    string `json:"path"`
 	Section string `json:"section,omitempty"`
 	Op      string `json:"op"`
-	Rev     string `json:"rev"`
-	Actor   string `json:"actor"`
+	// Key is the frontmatter key(s) a set_property wrote (comma-joined for a batch);
+	// empty for body-plane writes.
+	Key   string `json:"key,omitempty"`
+	Rev   string `json:"rev"`
+	Actor string `json:"actor"`
 	// Hash is the xxhash8 of the write payload — dedupe key only, never the payload.
 	Hash string `json:"hash,omitempty"`
 }
@@ -94,13 +97,21 @@ func appendJournal(target string, e journalEntry) bool {
 }
 
 // recentAppendHashes returns the set of payload hashes appended to (path, section)
-// BY actor with op "append" within the dedupe window, newest-relevant only. The
-// actor scoping is load-bearing: dedupe must absorb only the SAME actor's
-// at-least-once retry, never a DIFFERENT actor's byte-identical (but distinct)
-// write, which would vanish with no audit line (MED-4). It reads the journal
-// best-effort (a missing/garbled journal yields an empty set — dedupe is an
-// optimization, never a correctness gate).
+// BY actor with op "append" within the dedupe window — the single-append dedupe
+// lookup, unchanged in shape since U3.
 func recentAppendHashes(target, section, actor string) map[string]bool {
+	return recentHashes(target, section, "", "append", actor)
+}
+
+// recentHashes returns the set of payload hashes journaled for the exact
+// (path, section, key, op) address BY actor within the dedupe window. The actor
+// scoping is load-bearing: dedupe must absorb only the SAME actor's at-least-once
+// retry, never a DIFFERENT actor's byte-identical (but distinct) write, which
+// would vanish with no audit line (MED-4). The (section, key, op) triple is a
+// batch's coalesced identity, so a retried batch matches only an identical batch.
+// It reads the journal best-effort (a missing/garbled journal yields an empty
+// set — dedupe is an optimization, never a correctness gate).
+func recentHashes(target, section, key, op, actor string) map[string]bool {
 	out := map[string]bool{}
 	f, err := os.Open(journalPath(target))
 	if err != nil {
@@ -116,7 +127,7 @@ func recentAppendHashes(target, section, actor string) map[string]bool {
 		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
 			continue
 		}
-		if e.Op != "append" || e.Section != section || e.Hash == "" || e.Actor != actor {
+		if e.Op != op || e.Section != section || e.Key != key || e.Hash == "" || e.Actor != actor {
 			continue
 		}
 		if !sameTarget(e.Path, target, abs) {

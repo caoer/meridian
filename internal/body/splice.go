@@ -63,11 +63,66 @@ type spliceOp struct {
 }
 
 // journalPlan is the metadata a committed edit contributes to the journal (never
-// content — hash is a dedupe digest only).
+// content — hash is a dedupe digest only). A batch's plans are COALESCED into one
+// journal entry per Splice (see coalesceJournal): one invocation, one atomic
+// write, one audit line.
 type journalPlan struct {
 	section string
 	op      string
 	hash    string
+	key     string // frontmatter key, set_property only
+}
+
+// coalesceJournal folds a batch's per-edit plans into the ONE entry a Splice
+// journals (U16 GO condition 1: one flock, one rev bump, one journal entry). A
+// single-edit plan passes through verbatim — byte-identical journal lines for
+// every existing caller. A multi-edit batch joins its distinct sections and
+// property keys in plan order; a uniform op keeps its name, a mixed batch is
+// "batch". The hash is combined (rev8 over the concatenated per-edit hashes) only
+// when EVERY plan carries one — it is the batch's dedupe identity, and a partial
+// identity would false-positive against a different batch.
+func coalesceJournal(plans []journalPlan) journalPlan {
+	if len(plans) == 1 {
+		return plans[0]
+	}
+	var sections, keys, ops []string
+	allHashed := true
+	var hashes strings.Builder
+	for _, p := range plans {
+		if p.section != "" {
+			sections = appendDistinct(sections, p.section)
+		}
+		if p.key != "" {
+			keys = appendDistinct(keys, p.key)
+		}
+		ops = appendDistinct(ops, p.op)
+		if p.hash == "" {
+			allHashed = false
+		}
+		hashes.WriteString(p.hash)
+	}
+	out := journalPlan{
+		section: strings.Join(sections, ","),
+		op:      "batch",
+		key:     strings.Join(keys, ","),
+	}
+	if len(ops) == 1 {
+		out.op = ops[0]
+	}
+	if allHashed {
+		out.hash = rev8([]byte(hashes.String()))
+	}
+	return out
+}
+
+// appendDistinct appends s to list if not already present, preserving order.
+func appendDistinct(list []string, s string) []string {
+	for _, v := range list {
+		if v == s {
+			return list
+		}
+	}
+	return append(list, s)
 }
 
 // Splice applies edits to target under the sidecar lock, guarded I3→I1/I2→rev→I4.
@@ -115,13 +170,17 @@ func Splice(target string, edits []Edit, rev, actor string) (Result, error) {
 	}
 
 	// (3) Validate every edit (resolve → I3 → I1/I2 → rev → build splices) as a
-	// group; nothing is written until all pass.
+	// group; nothing is written until all pass. pendingNL tracks insertion offsets
+	// an earlier edit in THIS batch already newline-terminates, so a second append
+	// to the same section does not add a redundant "\n" prefix (which would land as
+	// a blank line between the two payloads).
 	var ops []spliceOp
 	var journal []journalPlan
 	var warnings []string
+	pendingNL := map[int]bool{}
 	for i := range edits {
 		e := edits[i]
-		res, verr := planEdit(doc, e, rev, actor, target)
+		res, verr := planEdit(doc, e, rev, actor, target, pendingNL)
 		if verr != nil {
 			return Result{}, verr
 		}
@@ -129,6 +188,11 @@ func Splice(target string, edits []Edit, rev, actor string) (Result, error) {
 			continue // idempotent double-submit: this append already landed
 		}
 		ops = append(ops, res.ops...)
+		for _, op := range res.ops {
+			if op.start == op.end && len(op.replacement) > 0 && op.replacement[len(op.replacement)-1] == '\n' {
+				pendingNL[op.start] = true
+			}
+		}
 		if res.journal.op != "" {
 			journal = append(journal, res.journal)
 		}
@@ -138,6 +202,22 @@ func Splice(target string, edits []Edit, rev, actor string) (Result, error) {
 	// All edits were dedupe no-ops → ack without touching the file.
 	if len(ops) == 0 {
 		return Result{OK: true, NewRev: doc.fileRev(), Warnings: dedupWarnings(warnings)}, nil
+	}
+
+	// Batch-level dedupe: a multi-edit batch journals ONE coalesced entry (step 8),
+	// so an at-least-once retry of the whole batch is recognized by that entry's
+	// combined identity, not by per-edit hashes (which are never journaled for a
+	// batch). Only fully-hashed batches (append/set_property) have an identity;
+	// anchored ops in the batch fail loud on retry anyway (the anchor moved).
+	batchEntry := coalesceJournal(journal)
+	if len(journal) > 1 && batchEntry.hash != "" {
+		if recentHashes(target, batchEntry.section, batchEntry.key, batchEntry.op, actor)[batchEntry.hash] {
+			return Result{
+				OK:       true,
+				NewRev:   doc.fileRev(),
+				Warnings: dedupWarnings(append(warnings, "batch_deduped:"+batchEntry.section)),
+			}, nil
+		}
 	}
 
 	if verr := assertDisjoint(ops); verr != nil {
@@ -185,24 +265,22 @@ func Splice(target string, edits []Edit, rev, actor string) (Result, error) {
 
 	// (8) Journal AFTER the rename — a crash before rename leaves an orphan tmp and
 	// NO journal entry (the write never happened); metadata only, never content.
-	// Journaled reflects COMPLETE journaling of the batch (LOW-6): it is true only
-	// when every planned entry landed. A partial batch (some entries failed) reports
-	// false rather than OR-ing to true, so an incomplete audit trail is never
-	// advertised as complete.
+	// The whole batch journals as ONE coalesced entry (one invocation, one atomic
+	// write, one audit line — U16 GO condition 1); a single edit's entry is
+	// byte-identical to the pre-batch format.
 	newRev := newDoc.fileRev()
-	journaled := len(journal) > 0
-	for _, jp := range journal {
-		if !appendJournal(target, journalEntry{
+	journaled := false
+	if len(journal) > 0 {
+		journaled = appendJournal(target, journalEntry{
 			TS:      time.Now().Format(time.RFC3339Nano),
 			Path:    target,
-			Section: jp.section,
-			Op:      jp.op,
+			Section: batchEntry.section,
+			Op:      batchEntry.op,
+			Key:     batchEntry.key,
 			Rev:     newRev,
 			Actor:   actor,
-			Hash:    jp.hash,
-		}) {
-			journaled = false
-		}
+			Hash:    batchEntry.hash,
+		})
 	}
 
 	return Result{
@@ -225,7 +303,9 @@ type editResult struct {
 
 // planEdit runs the full guard ladder for one edit and returns its byte plan. It
 // NEVER mutates the document; the caller applies the collected ops all-or-nothing.
-func planEdit(doc *Document, e Edit, topRev, actor, target string) (editResult, *Error) {
+// pendingNL carries the insertion offsets earlier edits in the batch already
+// newline-terminate (see Splice step 3).
+func planEdit(doc *Document, e Edit, topRev, actor, target string, pendingNL map[int]bool) (editResult, *Error) {
 	// Resolve the fragment first so the section name is known for I3, but authorize
 	// BEFORE using any of its content (EPERM-first: refuse without leaking work).
 	sec, section, resolveErr := doc.resolveEditTarget(e)
@@ -259,20 +339,22 @@ func planEdit(doc *Document, e Edit, topRev, actor, target string) (editResult, 
 
 	switch e.Op {
 	case OpAppend:
-		return planAppend(doc, e, sec, section, actor, target)
+		return planAppend(doc, e, sec, section, actor, target, pendingNL)
 	case OpPrepend:
 		return planPrepend(doc, e, sec, section)
 	case OpReplaceSection:
 		return planReplaceSection(doc, e, sec, section, topRev)
 	case OpCreateSection:
 		return planCreateSection(doc, e, section)
+	case OpSetProperty:
+		return planSetProperty(doc, e)
 	case OpReplace, OpInsertAfter, OpDelete, OpBlank:
 		return planAnchored(doc, e, sec, section, topRev)
 	default:
 		return editResult{}, &Error{
 			Code:    "E_FAIL_LOUD",
 			Message: "unknown edit op " + strconv.Quote(string(e.Op)),
-			Remedy:  "use one of: replace, append, prepend, insert_after, delete, blank, replace_section, create_section",
+			Remedy:  "use one of: replace, append, prepend, insert_after, delete, blank, replace_section, create_section, set_property",
 		}
 	}
 }
@@ -284,7 +366,7 @@ func planEdit(doc *Document, e Edit, topRev, actor, target string) (editResult, 
 // A block (^id) target is REFUSED (MED-3): a block's End sits mid-line, BEFORE its
 // " ^id" marker, so appending there would orphan the marker and split the line. The
 // reparse gate does not catch that corruption. Append targets a section, not a block.
-func planAppend(doc *Document, e Edit, sec Section, section, actor, target string) (editResult, *Error) {
+func planAppend(doc *Document, e Edit, sec Section, section, actor, target string, pendingNL map[int]bool) (editResult, *Error) {
 	if _, ok := blockRef(e.Target); ok {
 		return editResult{}, blockAddErr(e.Op, e.Target, section)
 	}
@@ -298,7 +380,7 @@ func planAppend(doc *Document, e Edit, sec Section, section, actor, target strin
 	}
 	at := sec.End
 	payload := ensureTrailingNL(e.New)
-	if at > 0 && doc.Source[at-1] != '\n' {
+	if at > 0 && doc.Source[at-1] != '\n' && !pendingNL[at] {
 		payload = append([]byte{'\n'}, payload...)
 	}
 	return editResult{
@@ -388,6 +470,65 @@ func planCreateSection(doc *Document, e Edit, section string) (editResult, *Erro
 	}, nil
 }
 
+// planSetProperty sets one frontmatter property (the P2 property-plane rung):
+// an existing key's VALUE SPAN is spliced in place (the "key: " prefix and the
+// newline stay outside the span, per the span law), an absent key is inserted as a
+// new "key: value" line immediately before the closing "---". Def-unaware in v1 —
+// value legality against a def kind's declared shape is U6/U7's conformance hook;
+// the guards here are the structural injection walls: key and value are single-line
+// by construction, so a property write can never smuggle an extra frontmatter line,
+// close the block early, or spill into the body. Rev-free like append (the value
+// splice is per-key, so concurrent writers of different keys never collide; the
+// same key is last-writer-wins under the sidecar lock). A duplicate key sets the
+// FIRST occurrence, matching the fm-set shim it retires.
+func planSetProperty(doc *Document, e Edit) (editResult, *Error) {
+	key, val := e.Target, e.New
+	if !reFMKeyName.MatchString(key) {
+		return editResult{}, &Error{
+			Code:    "E_FAIL_LOUD",
+			Message: "invalid frontmatter key " + strconv.Quote(key),
+			Remedy:  "a property key is [A-Za-z0-9_-]+ (single line, no spaces or ':')",
+			Context: map[string]string{"key": key},
+		}
+	}
+	if strings.ContainsAny(val, "\n\r") {
+		return editResult{}, &Error{
+			Code:    "E_FAIL_LOUD",
+			Message: "property value for " + strconv.Quote(key) + " contains a newline",
+			Remedy:  "frontmatter values are single-line in v1; put multi-line content in a body section",
+			Context: map[string]string{"key": key},
+		}
+	}
+	if !doc.hasFM {
+		return editResult{}, &Error{
+			Code:    "E_NO_MATCH",
+			Message: "the document has no frontmatter block to set " + strconv.Quote(key) + " in",
+			Remedy:  "add a frontmatter block (--- ... ---) at the top of the file, then retry",
+			Context: map[string]string{"key": key},
+		}
+	}
+	// hash is the dedupe/audit digest of the (key, value) pair — it makes a
+	// property edit a full participant in the batch identity (coalesceJournal).
+	plan := journalPlan{op: string(OpSetProperty), key: key, hash: rev8([]byte(key + ":" + val))}
+	for _, k := range doc.fm {
+		if k.key == key {
+			return editResult{
+				ops:     []spliceOp{{start: k.start, end: k.end, replacement: []byte(val)}},
+				journal: plan,
+			}, nil
+		}
+	}
+	line := key + ": " + val + "\n"
+	if val == "" {
+		line = key + ":\n"
+	}
+	at := doc.fmEnd
+	return editResult{
+		ops:     []spliceOp{{start: at, end: at, replacement: []byte(line)}},
+		journal: plan,
+	}, nil
+}
+
 // planAnchored handles the anchored ops (replace / insert_after / delete / blank):
 // I1 requires an exact byte anchor, I2 requires it be unique-in-scope unless All.
 // The rev ladder: fresh rev → proceed; stale → conflict; omitted → proceed IFF the
@@ -460,13 +601,18 @@ func planAnchored(doc *Document, e Edit, sec Section, section, topRev string) (e
 
 // resolveEditTarget resolves an edit's fragment to a section (or block) view and its
 // HOME policy section name (for journaling and error text). A create names its new
-// section directly; a block target resolves to the innermost section that contains
-// it (the section the block lives in), NOT "" — an empty name would let a block-ref
-// dodge every section rule (CRITICAL-1). A resolve failure is returned so the caller
-// can authorize BEFORE surfacing it (EPERM must not be preceded by a resolver oracle).
+// section directly; a set_property addresses the frontmatter plane (section "", the
+// policy address for a frontmatter/whole-file write); a block target resolves to the
+// innermost section that contains it (the section the block lives in), NOT "" — an
+// empty name would let a block-ref dodge every section rule (CRITICAL-1). A resolve
+// failure is returned so the caller can authorize BEFORE surfacing it (EPERM must
+// not be preceded by a resolver oracle).
 func (d *Document) resolveEditTarget(e Edit) (Section, string, *Error) {
 	if e.Op == OpCreateSection {
 		return Section{}, e.Target, nil
+	}
+	if e.Op == OpSetProperty {
+		return Section{}, "", nil
 	}
 	if id, ok := blockRef(e.Target); ok {
 		sec, err := d.resolveBlock(id)
@@ -493,6 +639,11 @@ func (d *Document) resolveEditTarget(e Edit) (Section, string, *Error) {
 // for an unresolvable block) so EPERM still precedes any resolver oracle.
 func (d *Document) governingSections(e Edit, sec Section, section string, resolveErr *Error) []string {
 	if resolveErr != nil {
+		return []string{section}
+	}
+	// A set_property targets a KEY, never a block — without this exclusion a hostile
+	// "^x" key name would divert authorization to the block-governance path.
+	if e.Op == OpSetProperty {
 		return []string{section}
 	}
 	if _, ok := blockRef(e.Target); ok && e.Op != OpCreateSection {
@@ -642,10 +793,13 @@ func assertDisjoint(ops []spliceOp) *Error {
 
 // applySplices replaces every op's [start,end) over src, applying HIGH→LOW so each
 // op's original-coordinate offsets stay valid (an earlier/lower splice never shifts
-// a later/higher one because they are disjoint and processed top-down).
+// a later/higher one because they are disjoint and processed top-down). The sort is
+// STABLE: two insertions at the same offset (a batch appending twice to one
+// section, or two new frontmatter keys) keep their edit order — the op listed
+// first lands first.
 func applySplices(src []byte, ops []spliceOp) []byte {
 	sorted := append([]spliceOp(nil), ops...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].start < sorted[j].start })
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].start < sorted[j].start })
 	out := src
 	for i := len(sorted) - 1; i >= 0; i-- {
 		out = replaceSpan(out, sorted[i].start, sorted[i].end, sorted[i].replacement)
