@@ -67,7 +67,11 @@
 // hashing; this skeleton only declares the fields and the contract.
 package body
 
-import "errors"
+import (
+	"errors"
+	"os"
+	"strings"
+)
 
 // ErrNotImpl is returned by every U1 skeleton stub whose real body lands in a
 // downstream unit (U2 scanner/map/toc, U3 splice engine). Callers and tests use
@@ -87,6 +91,12 @@ type Document struct {
 	Path string
 	// Source is the immutable original bytes. Every Section span indexes into it.
 	Source []byte
+
+	// Unexported parsed representation (U2). Built once by parse and never mutated;
+	// all mutation goes through Splice, which re-reads and re-maps a fresh Document.
+	fm       []fmKey      // frontmatter value spans, in document order
+	sections []Section    // section table, document order, derived fields enriched
+	blocks   []blockEntry // addressable "^id" blocks
 }
 
 // Section is one addressable region of a document — a heading section, or (via
@@ -261,38 +271,95 @@ func (e *Error) Error() string {
 
 // Load reads the file at path and returns its immutable Document (I0). It fails
 // LOUD on malformed structure — in particular, any content before the opening
-// frontmatter "---" is an error, never a silent body-only fallback.
-//
-// Stub: returns ErrNotImpl until U2 lands the scanner.
+// frontmatter "---" is an error, never a silent body-only fallback. The parsed
+// section table is served from (and stored in) the out-of-tree fact cache when a
+// content-hash hit is available; the returned Source is always the freshly read
+// bytes, so the round-trip stays byte-identical regardless of the cache.
 func Load(path string) (*Document, error) {
-	return nil, ErrNotImpl
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	doc, perr := parse(src)
+	if perr != nil {
+		return nil, perr
+	}
+	doc.Path = path
+	loadFromCache(doc) // fill/refresh the out-of-tree section-table cache (best effort)
+	return doc, nil
 }
 
 // Parse builds a Document from in-memory bytes, applying the same rules and the
 // same fail-loud contract as Load (the file cases go through Load; the inline
 // corpus cases go through Parse). The returned Document holds src as its immutable
 // Source.
-//
-// Stub: returns ErrNotImpl until U2 lands the scanner.
 func Parse(src []byte) (*Document, error) {
-	return nil, ErrNotImpl
+	doc, perr := parse(src)
+	if perr != nil {
+		return nil, perr
+	}
+	return doc, nil
 }
 
-// Toc returns the document's shape: the heading tree with per-section words,
-// marks, revs, and line numbers, and no content bytes.
-//
-// Stub: returns a zero Toc until U2 lands.
-func (d *Document) Toc() Toc {
-	return Toc{}
+// parse is the shared scanner+mapper. It never re-serializes: it locates byte
+// spans over an immutable copy of src and enriches the section table with derived
+// state (words, sec_rev). A fail-loud refusal returns a typed *Error (never the
+// ErrNotImpl sentinel), so callers can distinguish "malformed" from "not built".
+func parse(src []byte) (*Document, *Error) {
+	buf := make([]byte, len(src))
+	copy(buf, src) // own the bytes: Document.Source is immutable for its lifetime
+	doc := &Document{Source: buf}
+
+	bodyStart, fmStart, fmEnd, hasFM, ferr := detectFrontmatter(buf)
+	if ferr != nil {
+		return nil, ferr
+	}
+	if hasFM {
+		doc.fm = parseFrontmatterKeys(buf, fmStart, fmEnd)
+	}
+
+	lines := scanBody(buf, bodyStart)
+	doc.sections = buildSections(buf, lines)
+	for i := range doc.sections {
+		doc.sections[i] = doc.enrich(doc.sections[i])
+	}
+	doc.blocks = buildBlocks(buf, lines)
+	return doc, nil
 }
 
-// Read returns the Section at hpath with its Content populated. A "#^id" fragment
-// resolves a block instead of a heading section. An ambiguous hpath (duplicate
-// headings) returns an *Error with a candidate list rather than guessing.
-//
-// Stub: returns ErrNotImpl until U2 lands.
+// Read returns the Section at hpath with its Content populated. A leading "^"
+// (e.g. "^cct-2", or the "#^id" fragment form) resolves a block instead of a
+// heading section. An ambiguous hpath (duplicate headings) or block id returns an
+// *Error with a candidate list rather than guessing.
 func (d *Document) Read(hpath string) (Section, error) {
-	return Section{}, ErrNotImpl
+	if d == nil {
+		return Section{}, &Error{Code: "E_NO_MATCH", Message: "read on a nil document"}
+	}
+	var sec Section
+	var rerr *Error
+	if id, ok := blockRef(hpath); ok {
+		sec, rerr = d.resolveBlock(id)
+	} else {
+		sec, rerr = d.resolveSection(hpath)
+	}
+	if rerr != nil {
+		return Section{}, rerr
+	}
+	sec = d.enrich(sec)
+	sec.Content = d.spanBytes(sec.Start, sec.End)
+	return sec, nil
+}
+
+// blockRef reports whether hpath addresses a block, returning the bare id. Both the
+// "^id" and the "#^id" fragment forms are accepted.
+func blockRef(hpath string) (string, bool) {
+	if strings.HasPrefix(hpath, "#^") {
+		return hpath[2:], true
+	}
+	if strings.HasPrefix(hpath, "^") {
+		return hpath[1:], true
+	}
+	return "", false
 }
 
 // Bytes returns the document's canonical bytes. Because a Document never
@@ -321,12 +388,3 @@ func Splice(target string, edits []Edit, rev, actor string) (Result, error) {
 	return Result{}, ErrNotImpl
 }
 
-// DiffSections reports how sections changed between two revisions of the same
-// document (a before/after pair). It powers the watch loop's typed edge events by
-// diffing against the cached section table. Sections are matched by HPath; a rev
-// change is a DeltaModified, a presence change is DeltaAdded / DeltaRemoved.
-//
-// Stub: returns nil until U2 lands.
-func DiffSections(a, b *Document) []SectionDelta {
-	return nil
-}
