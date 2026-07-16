@@ -366,6 +366,22 @@ func blockRef(hpath string) (string, bool) {
 	return "", false
 }
 
+// Frontmatter returns the raw bytes of the frontmatter key/value region — the
+// lines between the opening "---" and the closing "---", exclusive of both
+// delimiter lines — or nil when the document has no frontmatter. The fabric
+// projection (internal/pipe) serves these bytes verbatim as
+// agents/<id>/.properties.yml; they are already YAML by construction.
+func (d *Document) Frontmatter() []byte {
+	if d == nil {
+		return nil
+	}
+	_, fmStart, fmEnd, hasFM, _ := detectFrontmatter(d.Source)
+	if !hasFM {
+		return nil
+	}
+	return d.Source[fmStart:fmEnd]
+}
+
 // Bytes returns the document's canonical bytes. Because a Document never
 // re-serializes (I0), this is exactly Source; it exists so callers and the
 // conformance harness can express the round-trip invariant (Load(f).Bytes() == f)
