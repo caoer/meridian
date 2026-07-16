@@ -287,10 +287,14 @@ func formatData(w io.Writer, data any) {
 			fmt.Fprintln(w, "no conflicts or overlaps detected")
 		}
 
+	case TocData:
+		d.renderText(w)
+
 	case ReadData:
 		// stdout carries pure content (automation reads it); base/match
 		// metadata goes to stderr from the handler. Separators only on
-		// multi-match.
+		// multi-match; a section read labels the separator with its hpath so
+		// two sections from the same file stay distinguishable.
 		if len(d.Matches) == 1 {
 			io.WriteString(w, d.Matches[0].Content)
 			return
@@ -299,7 +303,11 @@ func formatData(w io.Writer, data any) {
 			if i > 0 {
 				fmt.Fprintln(w)
 			}
-			fmt.Fprintf(w, "--- %s ---\n", m.Path)
+			label := m.Path
+			if m.HPath != "" {
+				label = m.Path + "#" + m.HPath
+			}
+			fmt.Fprintf(w, "--- %s ---\n", label)
 			io.WriteString(w, m.Content)
 		}
 

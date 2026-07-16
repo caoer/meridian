@@ -212,7 +212,7 @@ func main() {
 	router.Handle("watch", watchHandler(cfg, cfgErr, cfgPath))
 	router.Handle("status", statusHandler(cfgPath, cfgErr))
 	router.Handle("run", runHandler())
-	router.Handle("read", readHandler())
+	registerBodyVerbs(router)
 	// resolve is config-gated: hashing resolves wikilinks against the corpus
 	// index built from the scan root, exactly as check does.
 	router.Handle("resolve", resolveHandler(cfg, cfgErr))

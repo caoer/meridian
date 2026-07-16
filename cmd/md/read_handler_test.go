@@ -176,6 +176,189 @@ func TestReadHandlerEmbedsAndStripFrontmatter(t *testing.T) {
 	}
 }
 
+// secTestFS carries files with headings + an inline block for the sections-mode
+// and multi-target read extensions (U4).
+var secTestFS = fstest.MapFS{
+	"agent.md": {Data: []byte("---\ntype: agent\n---\n# Tasks\n- [ ] flash ^t1\nmore\n# Notes\nnote body\n")},
+	"dup.md":   {Data: []byte("# Tasks\nx\n")},
+}
+
+func newSecRouter() (*cli.Router, *bytes.Buffer, *bytes.Buffer) {
+	var out, meta bytes.Buffer
+	r := cli.NewRouter()
+	r.SetOutput(&out)
+	r.Handle("read", readHandlerWith(secTestFS, "/base", &meta))
+	return r, &out, &meta
+}
+
+func readJSON(t *testing.T, out *bytes.Buffer) cli.ReadData {
+	t.Helper()
+	var resp cli.Response
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v\n%s", err, out.String())
+	}
+	raw, _ := json.Marshal(resp.Data)
+	var data cli.ReadData
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestReadMultiTargetWholeFile(t *testing.T) {
+	r, out, _ := newSecRouter()
+	if code := r.Run([]string{"read", `{"targets":["agent.md","dup.md"],"format":"json"}`}, nil); code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	data := readJSON(t, out)
+	if len(data.Matches) != 2 {
+		t.Fatalf("want 2 matches, got %d: %+v", len(data.Matches), data.Matches)
+	}
+	if len(data.Targets) != 2 || data.Target != "agent.md" {
+		t.Errorf("multi-target metadata wrong: target=%q targets=%v", data.Target, data.Targets)
+	}
+	if data.Matches[0].Path != "agent.md" || data.Matches[1].Path != "dup.md" {
+		t.Errorf("match order/paths = %+v", data.Matches)
+	}
+}
+
+func TestReadSectionsSingle(t *testing.T) {
+	r, out, _ := newSecRouter()
+	if code := r.Run([]string{"read", `{"target":"agent.md#Tasks","mode":"sections","format":"json"}`}, nil); code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	data := readJSON(t, out)
+	if data.Mode != "sections" || len(data.Matches) != 1 {
+		t.Fatalf("data = %+v", data)
+	}
+	m := data.Matches[0]
+	if m.HPath != "Tasks" || m.SecRev == "" || m.Partial {
+		t.Errorf("section match = %+v", m)
+	}
+	if !strings.Contains(m.Content, "flash") {
+		t.Errorf("content missing section body: %q", m.Content)
+	}
+}
+
+func TestReadSectionsBlock(t *testing.T) {
+	// A ^block target reads the block's span-law content (the line WITHOUT its
+	// trailing " ^id" marker) through the body engine.
+	r, out, _ := newSecRouter()
+	if code := r.Run([]string{"read", `{"target":"agent.md#^t1","mode":"sections","format":"json"}`}, nil); code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	data := readJSON(t, out)
+	if len(data.Matches) != 1 {
+		t.Fatalf("want 1 block match, got %+v", data.Matches)
+	}
+	if got := data.Matches[0].Content; got != "- [ ] flash" {
+		t.Errorf("block content = %q, want %q (marker excluded)", got, "- [ ] flash")
+	}
+	if data.Matches[0].SecRev == "" {
+		t.Errorf("block read should carry a sec_rev: %+v", data.Matches[0])
+	}
+}
+
+func TestReadSectionsMulti(t *testing.T) {
+	r, out, _ := newSecRouter()
+	code := r.Run([]string{"read", `{"targets":["agent.md#Tasks","agent.md#Notes"],"mode":"sections","format":"json"}`}, nil)
+	if code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	data := readJSON(t, out)
+	if len(data.Matches) != 2 {
+		t.Fatalf("want 2 section matches, got %+v", data.Matches)
+	}
+	if data.Matches[0].HPath != "Tasks" || data.Matches[1].HPath != "Notes" {
+		t.Errorf("hpaths = %q,%q", data.Matches[0].HPath, data.Matches[1].HPath)
+	}
+	if data.Matches[0].SecRev == data.Matches[1].SecRev {
+		t.Errorf("distinct sections must have distinct sec_rev, both %q", data.Matches[0].SecRev)
+	}
+}
+
+func TestReadSectionsTruncateMintsNoRev(t *testing.T) {
+	// The core PARTIAL contract: an oversized section truncates and mints NO
+	// rev — a truncated read must never be mistakable for a CAS anchor.
+	r, out, _ := newSecRouter()
+	code := r.Run([]string{"read", `{"target":"agent.md#Tasks","mode":"sections","max-bytes":5,"format":"json"}`}, nil)
+	if code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	var resp cli.Response
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	data := readJSON(t, out)
+	m := data.Matches[0]
+	if !m.Partial {
+		t.Errorf("oversized read must be Partial: %+v", m)
+	}
+	if m.SecRev != "" {
+		t.Errorf("a truncated read must mint NO rev, got sec_rev=%q", m.SecRev)
+	}
+	if len(m.Content) != 5 {
+		t.Errorf("content not truncated to 5 bytes: %q", m.Content)
+	}
+	partialWarned := false
+	for _, w := range resp.Warnings {
+		if w.Code == "READ_PARTIAL" {
+			partialWarned = true
+		}
+	}
+	if !partialWarned {
+		t.Errorf("truncation must emit a READ_PARTIAL warning, got %+v", resp.Warnings)
+	}
+}
+
+func TestReadSectionsTextPureContent(t *testing.T) {
+	// stdout stays pure section content; sec_rev rides the meta channel.
+	r, out, meta := newSecRouter()
+	if code := r.Run([]string{"read", `{"target":"agent.md#Notes","mode":"sections"}`}, nil); code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	if out.String() != "note body\n" {
+		t.Errorf("stdout must be pure content, got %q", out.String())
+	}
+	if !bytes.Contains(meta.Bytes(), []byte("sec_rev:")) || !bytes.Contains(meta.Bytes(), []byte("agent.md#Notes")) {
+		t.Errorf("meta channel must carry sec_rev + address, got %q", meta.String())
+	}
+}
+
+func TestReadSectionsMissingFragment(t *testing.T) {
+	r, out, _ := newSecRouter()
+	code := r.Run([]string{"read", `{"target":"agent.md","mode":"sections","format":"json"}`}, nil)
+	if code == 0 {
+		t.Fatalf("sections mode without a #fragment must fail, out: %s", out.String())
+	}
+	var resp cli.Response
+	json.Unmarshal(out.Bytes(), &resp)
+	if resp.Error == nil || resp.Error.Code != cli.ErrInvalidParams {
+		t.Errorf("want %s, got %+v", cli.ErrInvalidParams, resp.Error)
+	}
+}
+
+func TestReadSectionsNoSuchSection(t *testing.T) {
+	r, out, _ := newSecRouter()
+	code := r.Run([]string{"read", `{"target":"agent.md#Nope","mode":"sections","format":"json"}`}, nil)
+	if code != 2 {
+		t.Fatalf("unresolved section must exit 2, got %d: %s", code, out.String())
+	}
+}
+
+func TestReadUnknownMode(t *testing.T) {
+	r, out, _ := newSecRouter()
+	code := r.Run([]string{"read", `{"target":"agent.md","mode":"bogus","format":"json"}`}, nil)
+	if code == 0 {
+		t.Fatalf("unknown mode must fail, out: %s", out.String())
+	}
+	var resp cli.Response
+	json.Unmarshal(out.Bytes(), &resp)
+	if resp.Error == nil || resp.Error.Code != cli.ErrInvalidParams {
+		t.Errorf("want %s, got %+v", cli.ErrInvalidParams, resp.Error)
+	}
+}
+
 func TestReadHandlerPartialWarningJSONEnvelope(t *testing.T) {
 	// JSON mode: READ_PARTIAL rides the envelope Warnings; the stderr meta
 	// channel stays silent (text-mode-only). Pins both halves of the split.
