@@ -94,6 +94,12 @@ func RenderText(w io.Writer, resp *Response) {
 		for _, w2 := range resp.Warnings {
 			fmt.Fprintf(w, "NOTE  [%s] %s\n", w2.Code, w2.Message)
 		}
+		// A command may pair findings with a data payload (md def check:
+		// verdict table + findings); render both rather than dropping the data.
+		if resp.Data != nil {
+			fmt.Fprintln(w)
+			formatData(w, resp.Data)
+		}
 		return
 	}
 
@@ -288,6 +294,9 @@ func formatData(w io.Writer, data any) {
 		}
 
 	case TocData:
+		d.renderText(w)
+
+	case DefCheckData:
 		d.renderText(w)
 
 	case AppendData:
