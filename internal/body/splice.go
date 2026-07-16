@@ -81,6 +81,15 @@ func Splice(target string, edits []Edit, rev, actor string) (Result, error) {
 		}
 	}
 
+	// (0) Canonicalize the target BEFORE the lock and BEFORE authorization: collapse
+	// every alternate spelling of the same file ("./x", "a/../x", "a//x", a symlink
+	// to x) to one path. This closes two doors at once — an authorization bypass
+	// (OwnerOf/policy now see one canonical path, so a case- or traversal- or
+	// symlink-variant address cannot dodge an ownership rule, CRITICAL-2) and a
+	// concurrency hole (all spellings hash to one sidecar lock, so a Go writer using
+	// "agents/b.md" and another using "./agents/b.md" actually serialize).
+	target = canonicalTarget(target)
+
 	// (1) Acquire the sidecar "<file>.md.lock" flock — NEVER the target fd, because
 	// the durable write renames a new inode over target and an fd lock would guard
 	// the wrong inode. This is the same sidecar path ccc-cli's TS writer uses, so a
@@ -176,10 +185,14 @@ func Splice(target string, edits []Edit, rev, actor string) (Result, error) {
 
 	// (8) Journal AFTER the rename — a crash before rename leaves an orphan tmp and
 	// NO journal entry (the write never happened); metadata only, never content.
+	// Journaled reflects COMPLETE journaling of the batch (LOW-6): it is true only
+	// when every planned entry landed. A partial batch (some entries failed) reports
+	// false rather than OR-ing to true, so an incomplete audit trail is never
+	// advertised as complete.
 	newRev := newDoc.fileRev()
-	journaled := false
+	journaled := len(journal) > 0
 	for _, jp := range journal {
-		if appendJournal(target, journalEntry{
+		if !appendJournal(target, journalEntry{
 			TS:      time.Now().Format(time.RFC3339Nano),
 			Path:    target,
 			Section: jp.section,
@@ -188,7 +201,7 @@ func Splice(target string, edits []Edit, rev, actor string) (Result, error) {
 			Actor:   actor,
 			Hash:    jp.hash,
 		}) {
-			journaled = true
+			journaled = false
 		}
 	}
 
@@ -217,18 +230,26 @@ func planEdit(doc *Document, e Edit, topRev, actor, target string) (editResult, 
 	// BEFORE using any of its content (EPERM-first: refuse without leaking work).
 	sec, section, resolveErr := doc.resolveEditTarget(e)
 
-	// (I3) Authorization FIRST. For a create, the section name is the new heading;
-	// for a resolve failure we still authorize against the addressed section so an
-	// unauthorized actor gets EPERM, not a resolver hint (no oracle before authz).
+	// (I3) Authorization FIRST, against EVERY section that governs the addressed
+	// bytes. A heading or create target is governed by exactly its own section. A
+	// resolved block (^id) is governed by every section whose span contains it —
+	// derived from the block's byte offset — so a block-ref can NEVER reach a
+	// protected section (# Tasks / # Handoff) through an alternate address form
+	// (CRITICAL-1 address-forge): the write is denied if ANY governing section denies
+	// it. On a resolve failure we still authorize against the addressed section name
+	// so an unauthorized actor gets EPERM, not a resolver hint (no oracle before
+	// authz). EPERM-first: the first denial wins, before any content is read.
 	casProvided := e.Rev != "" || topRev != ""
-	if dec := splicePolicy.Check(policy.Request{
-		Actor:       actor,
-		Path:        target,
-		Section:     section,
-		Op:          string(e.Op),
-		CASProvided: casProvided,
-	}); !dec.Allow {
-		return editResult{}, policyError(dec)
+	for _, gs := range doc.governingSections(e, sec, section, resolveErr) {
+		if dec := splicePolicy.Check(policy.Request{
+			Actor:       actor,
+			Path:        target,
+			Section:     gs,
+			Op:          string(e.Op),
+			CASProvided: casProvided,
+		}); !dec.Allow {
+			return editResult{}, policyError(dec)
+		}
 	}
 
 	// Authorization passed — now a resolve failure is a real, teachable miss.
@@ -238,7 +259,7 @@ func planEdit(doc *Document, e Edit, topRev, actor, target string) (editResult, 
 
 	switch e.Op {
 	case OpAppend:
-		return planAppend(doc, e, sec, section, target)
+		return planAppend(doc, e, sec, section, actor, target)
 	case OpPrepend:
 		return planPrepend(doc, e, sec, section)
 	case OpReplaceSection:
@@ -257,11 +278,22 @@ func planEdit(doc *Document, e Edit, topRev, actor, target string) (editResult, 
 }
 
 // planAppend adds e.New at the section tail (anchor-free, rev-free) with a 10-minute
-// content-hash dedupe window: a byte-identical append to the same (path, section)
-// within the window is a no-op ack rather than a duplicate line.
-func planAppend(doc *Document, e Edit, sec Section, section, target string) (editResult, *Error) {
+// content-hash dedupe window: a byte-identical append by the SAME actor to the same
+// (path, section) within the window is a no-op ack rather than a duplicate line.
+//
+// A block (^id) target is REFUSED (MED-3): a block's End sits mid-line, BEFORE its
+// " ^id" marker, so appending there would orphan the marker and split the line. The
+// reparse gate does not catch that corruption. Append targets a section, not a block.
+func planAppend(doc *Document, e Edit, sec Section, section, actor, target string) (editResult, *Error) {
+	if _, ok := blockRef(e.Target); ok {
+		return editResult{}, blockAddErr(e.Op, e.Target, section)
+	}
 	hash := rev8([]byte(e.New))
-	if recentAppendHashes(target, section)[hash] {
+	// Dedupe is scoped to (path, section, actor): only the SAME actor's at-least-once
+	// retry is absorbed. A DIFFERENT actor writing byte-identical content is a
+	// distinct write and must land with its own audit line (MED-4) — never silently
+	// dropped by another actor's earlier append.
+	if recentAppendHashes(target, section, actor)[hash] {
 		return editResult{dedupSkip: true, warnings: []string{"append_deduped:" + section}}, nil
 	}
 	at := sec.End
@@ -275,14 +307,34 @@ func planAppend(doc *Document, e Edit, sec Section, section, target string) (edi
 	}, nil
 }
 
-// planPrepend inserts e.New at the section head (anchor-free, rev-free additive).
+// planPrepend inserts e.New at the section head (anchor-free, rev-free additive). A
+// block (^id) target is REFUSED for the same reason as append (MED-3): a block's
+// Start is inside its line, so prepending there splits the line rather than adding a
+// clean line at the section head.
 func planPrepend(doc *Document, e Edit, sec Section, section string) (editResult, *Error) {
+	if _, ok := blockRef(e.Target); ok {
+		return editResult{}, blockAddErr(e.Op, e.Target, section)
+	}
 	at := sec.Start
 	payload := ensureTrailingNL(e.New)
 	return editResult{
 		ops:     []spliceOp{{start: at, end: at, replacement: payload}},
 		journal: journalPlan{section: section, op: "prepend"},
 	}, nil
+}
+
+// blockAddErr refuses an append/prepend to a block anchor: those ops splice at the
+// section boundary, but a block's span ends mid-line before its " ^id" marker, so
+// the splice would orphan the marker and corrupt the line (MED-3). The remedy points
+// at the right tool — a section target for adding a line, or an anchored op to edit
+// the block's own line.
+func blockAddErr(op EditOp, target, section string) *Error {
+	return &Error{
+		Code:    "E_FAIL_LOUD",
+		Message: string(op) + " to a block anchor " + strconv.Quote(target) + " is not supported: it would splice before the block's \" ^id\" marker and orphan it",
+		Remedy:  "append/prepend target a section (pass the containing heading path); to change the block's line use replace/insert_after with a Find anchor",
+		Context: map[string]string{"block": target, "section": section},
+	}
 }
 
 // planReplaceSection swaps the whole section body. It is destructive, so a FRESH
@@ -407,10 +459,11 @@ func planAnchored(doc *Document, e Edit, sec Section, section, topRev string) (e
 }
 
 // resolveEditTarget resolves an edit's fragment to a section (or block) view and its
-// policy section name. A create names its new section directly; a block target
-// carries an empty section name (blocks are governed by path rules, not section
-// rules). A resolve failure is returned so the caller can authorize BEFORE surfacing
-// it (EPERM must not be preceded by a resolver oracle).
+// HOME policy section name (for journaling and error text). A create names its new
+// section directly; a block target resolves to the innermost section that contains
+// it (the section the block lives in), NOT "" — an empty name would let a block-ref
+// dodge every section rule (CRITICAL-1). A resolve failure is returned so the caller
+// can authorize BEFORE surfacing it (EPERM must not be preceded by a resolver oracle).
 func (d *Document) resolveEditTarget(e Edit) (Section, string, *Error) {
 	if e.Op == OpCreateSection {
 		return Section{}, e.Target, nil
@@ -420,13 +473,66 @@ func (d *Document) resolveEditTarget(e Edit) (Section, string, *Error) {
 		if err != nil {
 			return Section{}, "", err
 		}
-		return d.enrich(sec), "", nil
+		sec = d.enrich(sec)
+		return sec, d.innermostSection(sec.Start), nil
 	}
 	sec, err := d.resolveSection(e.Target)
 	if err != nil {
 		return Section{}, "", err
 	}
 	return sec, sec.Title, nil
+}
+
+// governingSections is the set of policy sections a write must be authorized against
+// (CRITICAL-1). A heading or create target is governed by exactly its own section.
+// A RESOLVED block (^id) is governed by every section whose content span contains
+// its bytes: because parent section spans enclose their children's spans, a block
+// nested anywhere under "# Tasks" yields "Tasks" among its governors, so the Tasks
+// rule cannot be skipped by addressing the block instead of the section. On a
+// resolve failure we authorize against the single addressed name (the empty string
+// for an unresolvable block) so EPERM still precedes any resolver oracle.
+func (d *Document) governingSections(e Edit, sec Section, section string, resolveErr *Error) []string {
+	if resolveErr != nil {
+		return []string{section}
+	}
+	if _, ok := blockRef(e.Target); ok && e.Op != OpCreateSection {
+		if titles := d.containingSectionTitles(sec.Start); len(titles) > 0 {
+			return titles
+		}
+		// A block before the first heading (preamble) is under no section rule.
+		return []string{""}
+	}
+	return []string{section}
+}
+
+// containingSectionTitles returns the Title of every section whose content span
+// [Start,End) contains offset, in document order (outermost enclosing section
+// first). Empty-body sections (Start==End) contain nothing.
+func (d *Document) containingSectionTitles(offset int) []string {
+	var out []string
+	for _, s := range d.sections {
+		if s.Start <= offset && offset < s.End {
+			out = append(out, s.Title)
+		}
+	}
+	return out
+}
+
+// innermostSection returns the Title of the NARROWEST section span containing
+// offset ("" if none) — the section a block lives in, used as its home section for
+// journal and error text.
+func (d *Document) innermostSection(offset int) string {
+	best := ""
+	bestWidth := -1
+	for _, s := range d.sections {
+		if s.Start <= offset && offset < s.End {
+			if w := s.End - s.Start; bestWidth < 0 || w < bestWidth {
+				bestWidth = w
+				best = s.Title
+			}
+		}
+	}
+	return best
 }
 
 // findAnchors returns the absolute start offsets of every byte-exact occurrence of
@@ -569,9 +675,28 @@ func ensureTrailingNL(s string) []byte {
 	return []byte(s + "\n")
 }
 
+// canonicalTarget normalizes a write target so every alternate spelling of the same
+// file collapses to one path: filepath.Clean resolves ".", "..", and "//"; then
+// EvalSymlinks resolves symlinks to the real file. It is the authorization- and
+// lock-canonical form used throughout Splice (see Splice step 0). EvalSymlinks is
+// best-effort — a not-yet-created target (create_section on a new file) has no real
+// path to resolve, so its cleaned form is kept; an EXISTING symlinked path resolves
+// to its real file so a symlink cannot smuggle a write past an ownership rule.
+func canonicalTarget(target string) string {
+	clean := filepath.Clean(target)
+	if real, err := filepath.EvalSymlinks(clean); err == nil {
+		return real
+	}
+	return clean
+}
+
 // atomicWrite writes data to path via a temp file + fsync + rename in the same
 // directory, preserving the original file's permission bits. A crash before the
-// rename leaves only an orphan tmp; the original is never partially written.
+// rename leaves only an orphan tmp; the original is never partially written. After
+// the rename it fsyncs the PARENT DIRECTORY so the rename itself is durable — the
+// tmp file's data is already fsynced, but without a directory fsync a power loss can
+// drop the rename while the journal already records the new rev, diverging CAS/audit
+// (MED-5).
 func atomicWrite(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, ".md-splice-*.tmp")
@@ -596,7 +721,26 @@ func atomicWrite(path string, data []byte) error {
 			return err
 		}
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	fsyncDir(dir)
+	return nil
+}
+
+// fsyncDir flushes a directory entry so a completed rename survives a power loss.
+// Best-effort: the rename is already visible to readers, so a failed dir sync only
+// weakens power-loss durability — it must never turn a committed splice into a
+// reported failure (which would violate the "failure ⇒ original intact" contract,
+// since the new bytes are already in place). A platform that rejects a directory
+// fsync simply keeps the pre-fix durability.
+func fsyncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	_ = d.Close()
 }
 
 // conformanceHook is the I4 seam: once U7 lands the defs validator, a write that

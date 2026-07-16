@@ -87,7 +87,11 @@ func TestBuiltinHandoffSection(t *testing.T) {
 	}
 }
 
-// TestOwnerOf pins the agent-file owner derivation.
+// TestOwnerOf pins the agent-file owner derivation, including the case- and
+// traversal-variant spellings that must NOT dodge ownership (CRITICAL-2): on a
+// case-insensitive filesystem "agents/b.MD" and "AGENTS/b.md" are the same file as
+// "agents/b.md", so all three derive owner "b"; "./", "//", and ".." spellings are
+// path.Clean'd to the same address.
 func TestOwnerOf(t *testing.T) {
 	cases := []struct{ path, want string }{
 		{"agents/b.md", "b"},
@@ -98,10 +102,41 @@ func TestOwnerOf(t *testing.T) {
 		{"agents/", ""},
 		{"b.md", ""},
 		{"notagents/b.md", ""},
+		// CRITICAL-2 case variants: ext, dir, and mixed case fold to the same owner.
+		{"agents/b.MD", "b"},
+		{"AGENTS/b.md", "b"},
+		{"Agents/b.Md", "b"},
+		{"AGENTS/b.MD", "b"},
+		// CRITICAL-2 non-canonical spellings: ./ // .. all reduce to agents/b.md.
+		{"./agents/b.md", "b"},
+		{"agents//b.md", "b"},
+		{"agents/../agents/b.md", "b"},
+		{"/repo/./agents/b.md", "b"},
+		// a case-variant on a NON-agents dir still yields no owner.
+		{"nOtAgEnTs/b.md", ""},
 	}
 	for _, c := range cases {
 		if got := OwnerOf(c.path); got != c.want {
 			t.Errorf("OwnerOf(%q) = %q, want %q", c.path, got, c.want)
+		}
+	}
+}
+
+// TestCaseVariantPathOwnership is CRITICAL-2 at the policy layer: a non-owner
+// addressing another agent's file through a case-variant or non-canonical path is
+// still denied EPERM (the path rule matches case-insensitively and OwnerOf folds the
+// structural parts), and the true owner is still admitted through the same spellings.
+func TestCaseVariantPathOwnership(t *testing.T) {
+	p := Builtin()
+	for _, path := range []string{
+		"agents/b.MD", "AGENTS/b.md", "Agents/b.Md",
+		"./agents/b.md", "agents//b.md", "agents/../agents/b.md",
+	} {
+		if d := req(p, "a", path, "Notes", "append"); d.Allow || d.Code != "EPERM" {
+			t.Fatalf("non-owner via %q must EPERM (case/path variant dodged ownership): %+v", path, d)
+		}
+		if d := req(p, "b", path, "Notes", "append"); !d.Allow {
+			t.Fatalf("true owner via %q must be allowed: %+v", path, d)
 		}
 	}
 }

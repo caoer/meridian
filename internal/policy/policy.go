@@ -284,16 +284,27 @@ func (r *Rule) rank() int {
 // by <id>. Any other path (or a non-.md file, or a bare "agents" dir) has no
 // derived owner and returns "". The derivation is by convention only — it never
 // touches the filesystem.
+//
+// The path is path.Clean'd first (so "./agents/b.md", "agents/../agents/b.md", and
+// "agents//b.md" all reduce to "agents/b.md"), and the "agents" directory and the
+// ".md" extension are recognized CASE-INSENSITIVELY. On a case-insensitive
+// filesystem "agents/b.MD" and "AGENTS/b.md" are the SAME inode as "agents/b.md";
+// if OwnerOf missed those spellings, a non-owner could reach a protected file
+// through a case-variant address (CRITICAL-2 address-forge). Folding the structural
+// parts fails CLOSED (more paths recognized as agent files → more ownership
+// enforcement), which on a case-sensitive filesystem is at worst over-strict on a
+// non-conventional AGENTS/ path — never a bypass. The <id> case is preserved so the
+// owner still compares exactly against the session-derived actor id.
 func OwnerOf(p string) string {
-	p = strings.TrimSuffix(p, "/")
+	p = path.Clean(p)
 	dir, file := splitPath(p)
-	if baseName(dir) != "agents" {
+	if !strings.EqualFold(baseName(dir), "agents") {
 		return ""
 	}
-	if !strings.HasSuffix(file, ".md") {
+	if len(file) < len(".md") || !strings.EqualFold(file[len(file)-len(".md"):], ".md") {
 		return ""
 	}
-	id := strings.TrimSuffix(file, ".md")
+	id := file[:len(file)-len(".md")]
 	if id == "" || strings.ContainsAny(id, "/") {
 		return ""
 	}
@@ -327,9 +338,16 @@ func actorAllowed(list []string, actor, owner string) bool {
 // matchPath matches a doublestar glob against a file path. A pattern with no
 // leading "**/" also matches a path SUFFIX, so callers can write in-repo patterns
 // ("agents/*.md") that still match the absolute targets Splice receives.
+//
+// Matching is CASE-INSENSITIVE (both operands are lowercased): on a case-insensitive
+// filesystem "AGENTS/b.MD" is the same file as "agents/b.md", so the path rule
+// "agents/*.md" must match it too — otherwise the owner-rule is skipped and the
+// case-variant address dodges authorization (CRITICAL-2). This only decides rule
+// applicability; the owner id is still derived from the original-case path by
+// OwnerOf, so exact actor↔owner comparison is unaffected.
 func matchPath(pattern, p string) bool {
-	pattern = strings.Trim(pattern, "/")
-	clean := strings.Trim(path.Clean("/"+p), "/")
+	pattern = strings.ToLower(strings.Trim(pattern, "/"))
+	clean := strings.ToLower(strings.Trim(path.Clean("/"+p), "/"))
 	if ok, _ := doublestar.Match(pattern, clean); ok {
 		return true
 	}

@@ -94,10 +94,13 @@ func appendJournal(target string, e journalEntry) bool {
 }
 
 // recentAppendHashes returns the set of payload hashes appended to (path, section)
-// with op "append" within the dedupe window, newest-relevant only. It reads the
-// journal best-effort (a missing/garbled journal yields an empty set — dedupe is an
+// BY actor with op "append" within the dedupe window, newest-relevant only. The
+// actor scoping is load-bearing: dedupe must absorb only the SAME actor's
+// at-least-once retry, never a DIFFERENT actor's byte-identical (but distinct)
+// write, which would vanish with no audit line (MED-4). It reads the journal
+// best-effort (a missing/garbled journal yields an empty set — dedupe is an
 // optimization, never a correctness gate).
-func recentAppendHashes(target, section string) map[string]bool {
+func recentAppendHashes(target, section, actor string) map[string]bool {
 	out := map[string]bool{}
 	f, err := os.Open(journalPath(target))
 	if err != nil {
@@ -113,7 +116,7 @@ func recentAppendHashes(target, section string) map[string]bool {
 		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
 			continue
 		}
-		if e.Op != "append" || e.Section != section || e.Hash == "" {
+		if e.Op != "append" || e.Section != section || e.Hash == "" || e.Actor != actor {
 			continue
 		}
 		if !sameTarget(e.Path, target, abs) {
