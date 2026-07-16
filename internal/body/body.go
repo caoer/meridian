@@ -1,0 +1,332 @@
+// Package body is meridian's markdown-as-filesystem engine: a path-addressable,
+// byte-span view of a markdown record that supports guarded byte-splice writes
+// without ever re-serializing the document.
+//
+// This file is the U1 API SKELETON: the public integration contract shared by
+// U2 (scanner/map/toc), U3 (splice engine + authorization), U4 (read verbs),
+// and U5 (write verbs). Every function here is a compiling stub that returns the
+// [ErrNotImpl] sentinel (or a zero value). U2/U3 replace the stub bodies; the
+// signatures, types, and the laws documented here are the frozen contract they
+// implement against. The conformance corpus in testdata/ and conformance_test.go
+// were authored BEFORE this engine, and encode the invariants the real code must
+// satisfy.
+//
+// # The span law (from ccc-mdfs internal/mdmap, the port seed)
+//
+// A node's byte span [Start,End) covers its CONTENT and nothing else. The bytes
+// that ADDRESS a node live OUTSIDE its span, so no write through a node can ever
+// destroy what names it:
+//
+//   - section body: everything after the heading line up to the next heading of
+//     same-or-shallower depth (or EOF). The heading line itself, and the newline
+//     that ends it, are OUTSIDE the span.
+//   - frontmatter key: the value bytes only. The "key: " prefix and the line's
+//     newline are OUTSIDE the span — uniform for every field, including the last
+//     field before the closing "---".
+//   - block (^id): the line's content before the " ^id" marker. The marker (and
+//     its leading space and the newline) are OUTSIDE the span.
+//
+// Reading a node returns exactly Source[Start:End). Writing splices exactly over
+// [Start,End) (see I0 below); the untouched bytes are byte-identical before and
+// after.
+//
+// # I0 — splice, never re-serialize
+//
+// The write primitive is a byte-range splice over an immutable parse. The parse
+// tree is used to LOCATE bytes, never to REGENERATE them. Any byte outside the
+// spliced range is identical before and after the write. A Document holds its
+// original [Source] bytes for its whole lifetime and never reformats them; this
+// is what makes round-trip byte-identity (the core conformance invariant) hold by
+// construction rather than by careful serialization.
+//
+// # Byte-span and line-number convention (deliberate — avoids the known off-by-one)
+//
+// Byte spans are the AUTHORITATIVE addressing: 0-based, half-open [Start,End) into
+// [Document.Source] (the immutable original bytes). Emptiness is Start == End —
+// tested on the byte span, never on line numbers.
+//
+// Line numbers are DERIVED and advisory (for human display and teaching errors):
+// 1-based, physical, whole-file. Line 1 is the first line of the file — the opening
+// "---" of frontmatter when present, NOT the first body line. They are computed by
+// counting '\n' bytes in Source[0:offset]; they are NEVER body-relative. This is the
+// deliberate choice that avoids meridian's historical "md check" off-by-one, where a
+// body-relative index was combined with a body-start line (bodyOffset+i+1), double
+// counting the frontmatter. A '\n' terminates the line it ends; under CRLF the
+// "\r\n" terminates its line and the '\r' is an ordinary content byte inside the
+// preceding span (so CRLF files round-trip byte-identically).
+//
+// # Revisions (sec_rev / file_rev)
+//
+// [Section.Rev] (sec_rev) and [Toc.Rev] (file_rev) are content hashes computed at
+// read time — xxhash64 (cespare/xxhash/v2) over the span-law CONTENT bytes,
+// hex-encoded and truncated to the first 8 characters. They are per-section-history
+// scoped, which is safe for compare-and-swap; widen to 12 characters only if a rev
+// is ever used as a cross-file dedup key. No revision counter is stored in the file
+// (git stays quiet; hand edits stay legal — a hand edit changes the hash and the
+// next stale tool write conflicts loudly instead of clobbering). U2 implements the
+// hashing; this skeleton only declares the fields and the contract.
+package body
+
+import "errors"
+
+// ErrNotImpl is returned by every U1 skeleton stub whose real body lands in a
+// downstream unit (U2 scanner/map/toc, U3 splice engine). Callers and tests use
+// errors.Is(err, ErrNotImpl) to distinguish "not built yet" from a real failure;
+// the conformance harness skips assertions that depend on the unimplemented engine.
+var ErrNotImpl = errors.New("body: not implemented (pending U2/U3)")
+
+// Document is an immutable, path-addressable view of one markdown record. It owns
+// its original bytes ([Source]) for its whole lifetime and never reformats them
+// (I0). Loading is cheap and side-effect-free; all mutation goes through [Splice],
+// which re-reads and re-maps under a lock rather than mutating a Document in place.
+//
+// The exported fields below are the stable surface; U2 adds the unexported parsed
+// representation (frontmatter map, section table, block index) alongside them.
+type Document struct {
+	// Path is the file the document was loaded from ("" for in-memory Parse).
+	Path string
+	// Source is the immutable original bytes. Every Section span indexes into it.
+	Source []byte
+}
+
+// Section is one addressable region of a document — a heading section, or (via
+// [Document.Read] of a "#^id" fragment) a block. The same type serves both the
+// shape query ([Document.Toc], where Content is nil) and content reads
+// ([Document.Read], where Content is populated): one map, two granularities.
+type Section struct {
+	// N is the ordinal path of the section within the document, e.g. "3.8". It is
+	// valid ONLY against the Document rev it was produced from; it is a display and
+	// addressing convenience, not a stable identity.
+	N string
+	// HPath is the heading path: the section's own sanitized heading, joined to its
+	// ancestors with "/", e.g. "Notes" or "Notes/Lab-state". This is the stable,
+	// human-facing address used by Read and the write verbs.
+	HPath string
+	// Title is the heading text as written, with any trailing " ^id" block marker
+	// and surrounding whitespace stripped.
+	Title string
+	// Depth is the ATX heading level, 1..6.
+	Depth int
+	// Start and End are the content byte span [Start,End) into Document.Source, per
+	// the span law (heading line excluded). Start == End for an empty section body.
+	Start int
+	End   int
+	// StartLine and EndLine are 1-based, physical, whole-file line numbers for the
+	// content span: the first and last content lines (inclusive). For an empty body
+	// they are advisory only — test Start == End for emptiness, never the lines.
+	StartLine int
+	EndLine   int
+	// Words is the whitespace-split word count over the content span.
+	Words int
+	// Rev is the section content hash (sec_rev) — see the package doc. Empty until
+	// U2 implements hashing.
+	Rev string
+	// Marks are structural facts surfaced in the TOC without reading the body, e.g.
+	// a claim owner ("claimed_by:cc-task-sync") or a sync source ("sync:cc-tasks").
+	Marks []string
+	// Content is the raw span bytes Source[Start:End]. Populated by Read; nil in
+	// Toc entries (the shape query carries no content).
+	Content []byte
+}
+
+// Toc is the shape of a document: its heading tree with per-section metadata and
+// no content bytes. A 30k-token file becomes a small table. Sections are in
+// document order (a pre-order walk of the heading tree).
+type Toc struct {
+	// Rev is the whole-document content hash (file_rev) at the time the Toc was
+	// produced; the section ordinals (Section.N) are valid only against it.
+	Rev string
+	// Sections are the heading sections in document order, each with Content nil.
+	Sections []Section
+}
+
+// EditOp is the operation an [Edit] performs. The set is closed and matches the
+// splice engine's op vocabulary (U3 / tooling-FUSED §4).
+type EditOp string
+
+const (
+	// OpReplace swaps an exact Find anchor within the target section for New.
+	OpReplace EditOp = "replace"
+	// OpAppend adds New at the end of the target section (anchor-free, no rev
+	// required; deduped within a short content-hash window).
+	OpAppend EditOp = "append"
+	// OpPrepend adds New at the start of the target section's content.
+	OpPrepend EditOp = "prepend"
+	// OpInsertAfter inserts New immediately after the Find anchor.
+	OpInsertAfter EditOp = "insert_after"
+	// OpDelete removes the Find anchor (splice-with-empty).
+	OpDelete EditOp = "delete"
+	// OpBlank replaces the Find anchor with a tombstone comment, keeping the line
+	// (splice-with-tombstone: "<!-- md:deleted -->").
+	OpBlank EditOp = "blank"
+	// OpReplaceSection replaces the whole target section body; requires a fresh rev.
+	OpReplaceSection EditOp = "replace_section"
+	// OpCreateSection creates a new section (heading + body).
+	OpCreateSection EditOp = "create_section"
+)
+
+// Edit is one guarded change to a section, applied by [Splice]. Edits in a batch
+// are validated as a group, then spliced together atomically (offsets applied
+// high-to-low so earlier splices never shift later ones).
+type Edit struct {
+	// Op is the operation (see EditOp).
+	Op EditOp
+	// Target is the fragment within the file: a heading path ("Notes/Lab-state"),
+	// a block id ("^cct-2"), or the section scope an exact Find is resolved within.
+	Target string
+	// Find is the exact anchor text to locate within the target section (I1 anchored
+	// write, I2 uniqueness-in-scope). Byte-exact — no normalization.
+	Find string
+	// Old, when set for OpReplace, is the current text being swapped; it is a
+	// content-granular CAS in addition to the section Rev.
+	Old string
+	// New is the content to write (replacement, or inserted/appended text).
+	New string
+	// Rev is the section CAS token (sec_rev) the edit was composed against. Empty is
+	// legal only where the rev ladder allows it (append; unique-and-exact anchor).
+	Rev string
+	// All opts into matching every occurrence of Find in scope; default is
+	// unique-in-scope (a non-unique anchor without All is an ambiguity error).
+	All bool
+}
+
+// SectionDelta is one entry of a [DiffSections] result: how a section changed
+// between two revisions of the same document. Used by the watch loop to emit typed
+// edge events against the cached section table.
+type SectionDelta struct {
+	// HPath is the heading path of the section (the section's stable address).
+	HPath string
+	// Change is the kind of change.
+	Change DeltaKind
+	// OldRev and NewRev are the section content hashes on each side ("" when the
+	// section is absent on that side).
+	OldRev string
+	NewRev string
+}
+
+// DeltaKind classifies a [SectionDelta].
+type DeltaKind string
+
+const (
+	// DeltaAdded marks a section present in b but not a.
+	DeltaAdded DeltaKind = "added"
+	// DeltaRemoved marks a section present in a but not b.
+	DeltaRemoved DeltaKind = "removed"
+	// DeltaModified marks a section whose content hash differs between a and b.
+	DeltaModified DeltaKind = "modified"
+)
+
+// Result is the outcome of a [Splice]. On success OK is true and NewRev carries
+// the document's post-write file_rev; Changed lists the per-section deltas. On a
+// guarded refusal (authorization, CAS conflict, anchor miss, would-corrupt) Splice
+// returns a zero Result and a structured [*Error].
+type Result struct {
+	// OK reports whether the splice was applied.
+	OK bool
+	// NewRev is the document's file_rev after the write.
+	NewRev string
+	// Changed lists what changed, for the caller and the watch loop.
+	Changed []SectionDelta
+	// Journaled reports whether a metadata-only journal entry was appended
+	// (path/rev/actor/op — never content spans).
+	Journaled bool
+}
+
+// Error is the single structured error type emitted across every body-engine
+// emission site (parse, resolve, guard, CAS, would-corrupt). It carries a machine
+// Code, a human Message, an executable Remedy, and free-form Context so the same
+// shape teaches an agent and drives a client. It is a pointer error; callers use
+// errors.As(err, &*body.Error) to inspect it.
+type Error struct {
+	// Code is the stable machine code, e.g. "EPERM", "ECAS", "E_NO_MATCH",
+	// "E_AMBIGUOUS", "E_WOULD_CORRUPT", "E_FAIL_LOUD".
+	Code string
+	// Message states what went wrong, in one line.
+	Message string
+	// Remedy is the executable next step (a corrected call, a re-read command).
+	Remedy string
+	// Context carries structured detail (owner name, current hash, candidate list).
+	Context map[string]string
+}
+
+func (e *Error) Error() string {
+	if e == nil {
+		return "<nil>"
+	}
+	if e.Remedy != "" {
+		return e.Code + ": " + e.Message + " — " + e.Remedy
+	}
+	return e.Code + ": " + e.Message
+}
+
+// Load reads the file at path and returns its immutable Document (I0). It fails
+// LOUD on malformed structure — in particular, any content before the opening
+// frontmatter "---" is an error, never a silent body-only fallback.
+//
+// Stub: returns ErrNotImpl until U2 lands the scanner.
+func Load(path string) (*Document, error) {
+	return nil, ErrNotImpl
+}
+
+// Parse builds a Document from in-memory bytes, applying the same rules and the
+// same fail-loud contract as Load (the file cases go through Load; the inline
+// corpus cases go through Parse). The returned Document holds src as its immutable
+// Source.
+//
+// Stub: returns ErrNotImpl until U2 lands the scanner.
+func Parse(src []byte) (*Document, error) {
+	return nil, ErrNotImpl
+}
+
+// Toc returns the document's shape: the heading tree with per-section words,
+// marks, revs, and line numbers, and no content bytes.
+//
+// Stub: returns a zero Toc until U2 lands.
+func (d *Document) Toc() Toc {
+	return Toc{}
+}
+
+// Read returns the Section at hpath with its Content populated. A "#^id" fragment
+// resolves a block instead of a heading section. An ambiguous hpath (duplicate
+// headings) returns an *Error with a candidate list rather than guessing.
+//
+// Stub: returns ErrNotImpl until U2 lands.
+func (d *Document) Read(hpath string) (Section, error) {
+	return Section{}, ErrNotImpl
+}
+
+// Bytes returns the document's canonical bytes. Because a Document never
+// re-serializes (I0), this is exactly Source; it exists so callers and the
+// conformance harness can express the round-trip invariant (Load(f).Bytes() == f)
+// without reaching into the field.
+func (d *Document) Bytes() []byte {
+	if d == nil {
+		return nil
+	}
+	return d.Source
+}
+
+// Splice is THE one write path (tooling-FUSED: MCP put, md CLI verbs, pipe handler,
+// and daemon sync writers all call this). It acquires the sidecar "<target>.md.lock"
+// flock, re-reads and re-maps target under the lock, resolves each Edit's fragment,
+// then applies the guard ladder in order — I3 authorization (EPERM-first; actor is
+// daemon-derived, never flag-asserted) → I1/I2 anchor checks → the rev ladder → I4
+// conformance — before splicing high-to-low, re-parsing the result (refuse if it
+// would corrupt the section table), writing tmp+fsync+rename preserving perms, and
+// appending a METADATA-ONLY journal entry. All-or-nothing.
+//
+// Stub: returns ErrNotImpl until U3 lands. (U3 also ports the ccc-mdfs
+// internal/policy shape for the I3 authorization layer.)
+func Splice(target string, edits []Edit, rev, actor string) (Result, error) {
+	return Result{}, ErrNotImpl
+}
+
+// DiffSections reports how sections changed between two revisions of the same
+// document (a before/after pair). It powers the watch loop's typed edge events by
+// diffing against the cached section table. Sections are matched by HPath; a rev
+// change is a DeltaModified, a presence change is DeltaAdded / DeltaRemoved.
+//
+// Stub: returns nil until U2 lands.
+func DiffSections(a, b *Document) []SectionDelta {
+	return nil
+}
