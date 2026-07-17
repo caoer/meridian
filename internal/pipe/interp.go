@@ -49,35 +49,42 @@ const (
 	DefaultMaxStderr = 64 << 10
 )
 
-// maxPrintfWidthBytes bounds the bytes a single `printf` call's field-width
-// padding may materialize (U12 runtime allocation bound).
+// maxPrintfWidthBytes bounds the bytes a single `printf` pass may materialize in
+// its one pre-write buffer (U12 runtime allocation bound).
 //
 // THE CLASS (adversarial review): mvdan's printf builtin (interp/builtin.go)
 // builds its ENTIRE formatted output in one strings.Builder via expand.Format
-// BEFORE the single r.out write. Field width is the only amplifier —
-// `%999999d` pads to ~1 MB; a runtime-constructed format of many such
-// directives (`for i in ...; do f+="%999999d"; done; printf "$f"`) materializes
-// gigabytes in that builder before any byte reaches the ctx-cancelling
-// capWriter. The wall-clock timeout cannot preempt it either: neither
-// expand.Format nor printf's arg-cycling loop checks ctx. It is a single
-// uninterruptible builtin call, so the ONLY seam that can stop it is
-// pre-execution — interp.CallHandler, which fires with fully-expanded args
-// (the runtime-built format now concrete) before the builtin runs.
+// BEFORE the single r.out write. TWO amplifiers, both pre-write:
+//   - FIELD WIDTH — `%999999d` pads to ~1 MB; a runtime-constructed format of
+//     many such directives (`for i in ...; do f+="%999999d"; done; printf "$f"`)
+//     builds gigabytes with no args at all;
+//   - ARGUMENT CONTENT — `printf "%s%s...%s" $v $v ...` has NO width digits yet
+//     concatenates Σ len(arg) into the same one buffer (adversarial F1).
 //
-// 4 MiB is ~64x above any realistic in-pipe printf (column padding is bytes to
-// low-KB) and ~256x below the ~1 GiB daemon-fatal scale; at the global-16
-// admission ceiling the worst-case transient is 16*4 = 64 MiB. A single legit
-// call never approaches it; a width bomb blows past it by orders of magnitude.
-// A looped-printf whose every call sits just under this ceiling is bounded
-// separately by the capWriter, which cancels the run on the first over-cap
-// emission (TestPrintf_LoopedWideStreamsAreCapped).
+// Either reaches the buffer before any byte hits the ctx-cancelling capWriter,
+// and the wall-clock timeout cannot preempt it: neither expand.Format nor
+// printf's arg-cycling loop checks ctx. It is a single uninterruptible builtin
+// call, so the ONLY seam that can stop it is pre-execution — interp.CallHandler,
+// which fires with fully-expanded args (format AND value args concrete) before
+// the builtin runs. projectPrintfAlloc bounds both.
 //
-// PIN: this mirrors mvdan.cc/sh/v3 v3.13.1 printf semantics — field width is
-// the sole pre-write amplifier (no precision: expand.Format errors on `.`; no
-// `*` dynamic width; a single directive above Go fmt's ~1e7 width renders as a
-// tiny BADWIDTH string, so summing raw widths only ever OVER-counts absurd
-// single directives that are never legitimate). Re-audit printf/expand on any
-// mvdan bump alongside escape_test.go.
+// 4 MiB is ~64x above any realistic in-pipe printf (column padding and per-line
+// args are bytes to low-KB) and ~256x below the ~1 GiB daemon-fatal scale. The
+// physical peak is ~2-4x the projected logical bytes (strings.Builder growth
+// doubling + the final String copy — measured ~17 MiB physical at a 4 MiB
+// logical projection), so even at the global-16 admission ceiling the transient
+// stays well under 1 GiB. A looped-printf whose every pass sits under this
+// ceiling is bounded separately by the capWriter, which cancels the run on the
+// first over-cap emission (TestPrintf_LoopedWideStreamsAreCapped).
+//
+// PIN: mirrors mvdan.cc/sh/v3 v3.13.1 printf/expand.Format semantics —
+//   - field width honored by %s/%d/%i/%u/%o/%x; %c/%b honor neither width nor
+//     full arg length (they emit ~1 byte — TestPrintfCPercentBNotAmplifiers), so
+//     the projector's counting of their width/arg is a fail-SAFE over-count;
+//   - no precision (expand.Format errors on `.`) and no `*` dynamic width;
+//   - every `%`-directive except `%%` consumes exactly one value arg.
+//
+// Re-audit printf/expand on any mvdan bump alongside escape_test.go.
 const maxPrintfWidthBytes = 4 << 20
 
 // MdHandler executes an in-pipe `md` call (U9b's staged handler). It returns
@@ -272,9 +279,9 @@ func execDispatch(vfs *VFS, md MdHandler) func(next interp.ExecHandlerFunc) inte
 // allocGuard is the U12 runtime allocation bound, installed as the mvdan
 // CallHandler — it fires on EVERY simple command (builtins, functions, toolset)
 // with fully-expanded args, before the command runs. It returns the args
-// unchanged for everything except `printf`, whose projected field-width output
-// it refuses when it would exceed maxPrintfWidthBytes. Returning a non-nil
-// error halts the Runner (interp.CallHandlerFunc contract) and surfaces as the
+// unchanged for everything except `printf`, whose projected single-pass output
+// it refuses when it reaches maxPrintfWidthBytes. Returning a non-nil error
+// halts the Runner (interp.CallHandlerFunc contract) and surfaces as the
 // program's fatal error, which Run classifies as the E_ALLOC refusal.
 //
 // This is the seam static preflight cannot cover: the format may be built at
@@ -282,40 +289,68 @@ func execDispatch(vfs *VFS, md MdHandler) func(next interp.ExecHandlerFunc) inte
 // here. Because printf is a single uninterruptible builtin call, refusing it
 // pre-execution is the only bound that actually prevents the allocation — the
 // timeout and capWriter both act too late (see maxPrintfWidthBytes).
+//
+// PIN: this assumes args[1] is the format and args[2:] are the value args —
+// true for mvdan v3.13.1 (printf has NO option parsing: builtin.go does
+// `format, args := args[0], args[1:]`). A future mvdan adding real `printf -v
+// var FMT` would move the format to args[3] and silently bypass this; the pin
+// test TestPrintfNoDashV asserts `printf -v out FMT` prints "-v", failing loud
+// on such a bump. Re-audit alongside escape_test.go on any mvdan change.
 func allocGuard(_ context.Context, args []string) ([]string, error) {
 	// args is never empty (interp contract). Only printf amplifies; a user
-	// function named "printf" is shadow-checked nowhere here, but its arg would
+	// function named "printf" is shadow-checked nowhere here, but its args would
 	// have to be bomb-shaped to trip the projection, so a benign call is unaffected.
 	if args[0] != "printf" || len(args) < 2 {
 		return args, nil
 	}
-	// mvdan's printf takes args[1] as the format verbatim (no option parsing).
-	if projectPrintfWidth(args[1]) > maxPrintfWidthBytes {
+	if projectPrintfAlloc(args[1], args[2:]) >= maxPrintfWidthBytes {
 		return nil, &Error{
 			Exit: ExitRefused, Code: "E_ALLOC",
-			Message: "printf field-width padding would materialize more than " +
-				strconv.Itoa(maxPrintfWidthBytes>>20) + " MiB in memory before any output — refused to protect the shared daemon",
-			Remedy: "shrink the field widths, or emit large output through a loop (streamed and output-capped) instead of one wide printf",
+			Message: "printf would materialize more than " +
+				strconv.Itoa(maxPrintfWidthBytes>>20) + " MiB in one buffer before any output (field-width padding and/or argument content) — refused to protect the shared daemon",
+			Remedy: "shrink the field widths or the argument sizes, or emit large output through a loop (streamed and output-capped) instead of one wide printf",
 		}
 	}
 	return args, nil
 }
 
-// projectPrintfWidth sums the field widths of every conversion directive in a
-// printf format, saturating at maxPrintfWidthBytes+1. It mirrors the single
-// pre-write allocation peak: one expand.Format pass materializes every
-// directive's padding into one buffer regardless of how many args cycle through
-// it (arg-cycling reuses the buffer per pass, so the peak is one pass = the sum
-// of all widths). Only the width integer matters — literal bytes are bounded by
-// the format length (already an allocated arg) and non-width verbs pad nothing.
-// Allocation-free and independent of the arg values.
-func projectPrintfWidth(format string) int64 {
-	const ceil = maxPrintfWidthBytes + 1
-	var total int64
+// projectPrintfAlloc upper-bounds the bytes ONE printf pass materializes in its
+// single pre-write buffer (mvdan expand.Format), saturating at
+// maxPrintfWidthBytes. It has two additive amplifiers, both fed by the concrete
+// post-expansion inputs already in hand at the CallHandler seam:
+//
+//   - FIELD WIDTH: every pass re-applies the whole format, so its width padding
+//     is the same each pass — projectFormat sums it once.
+//   - ARGUMENT CONTENT: printf cycles the format over the value args in groups
+//     of `directives` (one per conversion), building each group into one buffer.
+//     The peak buffer is the largest single group, so the arg term is the max
+//     over consecutive `directives`-sized windows of the args' byte lengths —
+//     NOT the total (a `%s`-per-line stream of many small args stays small and
+//     is separately output-capped; only a single fat pass is a pre-write bomb).
+//
+// max(width_i, len(arg_i)) per directive is over-approximated as width_i +
+// len(arg_i) (summing the two terms), a safe over-count. %c/%b honor neither
+// width nor full arg length (they emit ~1 byte in v3.13.1 — see
+// TestPrintfCPercentBNotAmplifiers), so counting their width and arg length is a
+// deliberate fail-SAFE over-count. Allocation-free.
+func projectPrintfAlloc(format string, valueArgs []string) int64 {
+	widthSum, directives := projectFormat(format)
+	total := widthSum
+	if directives > 0 && len(valueArgs) > 0 {
+		total = satAddCap(total, peakArgWindow(valueArgs, directives))
+	}
+	return total
+}
+
+// projectFormat walks a printf format once and returns (sum of field widths
+// saturated at the ceiling, count of arg-consuming conversion directives). Every
+// `%`-directive except `%%` consumes exactly one arg in mvdan v3.13.1, so the
+// count is the pass's arg-group size.
+func projectFormat(format string) (widthSum int64, directives int) {
 	i := 0
 	for i < len(format) {
 		c := format[i]
-		if c == '\\' { // escape: the next char is literal, never a width
+		if c == '\\' { // escape: the next char is literal, never a directive
 			i += 2
 			continue
 		}
@@ -327,10 +362,11 @@ func projectPrintfWidth(format string) int64 {
 		if i >= len(format) {
 			break
 		}
-		if format[i] == '%' { // %% literal percent
+		if format[i] == '%' { // %% literal percent — consumes no arg
 			i++
 			continue
 		}
+		directives++
 		// Skip flag chars (-, +, space, #, 0). A leading '0' is the zero-pad
 		// flag; the width digits follow and carry the magnitude either way.
 		for i < len(format) && isPrintfFlag(format[i]) {
@@ -342,10 +378,7 @@ func projectPrintfWidth(format string) int64 {
 			i++
 		}
 		if i > start {
-			total += parseWidthSat(format[start:i])
-			if total > ceil {
-				return ceil
-			}
+			widthSum = satAddCap(widthSum, parseWidthSat(format[start:i]))
 		}
 		// Consume the verb (or whatever terminates the directive); an invalid
 		// directive just makes printf error at runtime with no allocation.
@@ -353,25 +386,57 @@ func projectPrintfWidth(format string) int64 {
 			i++
 		}
 	}
-	return total
+	return widthSum, directives
+}
+
+// peakArgWindow returns the largest byte-length sum over consecutive
+// window-sized groups of args, mirroring how printf cycles the format over the
+// args one group per pass. Saturates at the ceiling.
+func peakArgWindow(args []string, window int) int64 {
+	var peak int64
+	for i := 0; i < len(args); i += window {
+		var sum int64
+		end := i + window
+		if end > len(args) {
+			end = len(args)
+		}
+		for j := i; j < end; j++ {
+			sum = satAddCap(sum, int64(len(args[j])))
+		}
+		if sum > peak {
+			peak = sum
+		}
+		if peak >= maxPrintfWidthBytes {
+			return maxPrintfWidthBytes
+		}
+	}
+	return peak
 }
 
 func isPrintfFlag(c byte) bool {
 	return c == '-' || c == '+' || c == ' ' || c == '#' || c == '0'
 }
 
-// parseWidthSat parses a decimal width, saturating at maxPrintfWidthBytes+1 so a
+// parseWidthSat parses a decimal width, saturating at maxPrintfWidthBytes so a
 // pathologically long digit run (e.g. %999...999d) cannot overflow int64.
 func parseWidthSat(s string) int64 {
-	const ceil = maxPrintfWidthBytes + 1
 	var w int64
 	for j := 0; j < len(s); j++ {
 		w = w*10 + int64(s[j]-'0')
-		if w > ceil {
-			return ceil
+		if w >= maxPrintfWidthBytes {
+			return maxPrintfWidthBytes
 		}
 	}
 	return w
+}
+
+// satAddCap adds two non-negative values, saturating at maxPrintfWidthBytes.
+func satAddCap(a, b int64) int64 {
+	s := a + b
+	if s >= maxPrintfWidthBytes {
+		return maxPrintfWidthBytes
+	}
+	return s
 }
 
 // capWriter is decision 9's bounded writer: it ACCEPTS every write (mvdan's
