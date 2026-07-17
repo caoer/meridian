@@ -50,6 +50,23 @@ func TestBuiltinTasksSection(t *testing.T) {
 	}
 }
 
+// TestSectionRuleCaseAndSpaceFolded: section-rule matching normalizes case and
+// surrounding whitespace like the path matcher does (U11 adversarial review):
+// "tasks", "TASKS", and "Tasks " must all fall under the section:Tasks rule —
+// exact-case matching let an owner create a lower-case sibling as an
+// unprotected escape hatch. Fail-safe direction: more headings governed.
+func TestSectionRuleCaseAndSpaceFolded(t *testing.T) {
+	p := Builtin()
+	for _, section := range []string{"tasks", "TASKS", "Tasks ", " tasks"} {
+		if d := req(p, "b", "agents/b.md", section, "create_section"); d.Allow || d.Code != "EPERM" {
+			t.Fatalf("section %q escaped the Tasks rule: %+v", section, d)
+		}
+		if d := req(p, "cc-task-sync", "agents/b.md", section, "append"); !d.Allow {
+			t.Fatalf("cc-task-sync refused on folded spelling %q: %+v", section, d)
+		}
+	}
+}
+
 // TestBuiltinAgentOwnsFile: an agent owns its own file; another agent is refused
 // and the deny names the owner + path.
 func TestBuiltinAgentOwnsFile(t *testing.T) {

@@ -255,15 +255,27 @@ func (p *Pack) match(req Request) *Rule {
 }
 
 // matches reports whether the rule governs the request's (path, section). An empty
-// Section matches any section; an empty Path matches any path.
+// Section matches any section; an empty Path matches any path. Section names
+// compare case-folded and whitespace-trimmed, aligning with the path matcher's
+// tolerance (matchPath lower-cases both sides): exact-case comparison let an
+// owner create "# tasks" or "# Tasks " as an UNPROTECTED sibling outside the
+// section:Tasks rule (U11 adversarial review). Normalizing folds every spelling
+// under the same rule — the fail-safe direction: more headings governed by a
+// protective rule, never fewer.
 func (r *Rule) matches(req Request) bool {
-	if r.Section != "" && r.Section != req.Section {
+	if r.Section != "" && !sameSectionName(r.Section, req.Section) {
 		return false
 	}
 	if r.Path != "" && !matchPath(r.Path, req.Path) {
 		return false
 	}
 	return true
+}
+
+// sameSectionName compares a rule's section name to a request's, case-folded and
+// whitespace-trimmed (see Rule.matches).
+func sameSectionName(rule, req string) bool {
+	return strings.EqualFold(strings.TrimSpace(rule), strings.TrimSpace(req))
 }
 
 // rank is the specificity score: a section match dominates (a section rule is more
