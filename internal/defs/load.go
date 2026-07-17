@@ -105,7 +105,22 @@ func LoadDef(path string) (*Def, error) {
 	if err != nil {
 		return nil, fmt.Errorf("def %s: %w", path, err)
 	}
+	return parseDefDoc(doc, path)
+}
 
+// ParseDef parses one definition from in-memory bytes — the same strict,
+// fail-closed reading as LoadDef, without a disk path. source labels errors
+// (a fabric-relative name for the pipe, a path for disk callers).
+func ParseDef(raw []byte, source string) (*Def, error) {
+	doc, err := body.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("def %s: %w", source, err)
+	}
+	return parseDefDoc(doc, source)
+}
+
+// parseDefDoc is the shared strict reading behind LoadDef and ParseDef.
+func parseDefDoc(doc *body.Document, path string) (*Def, error) {
 	fm, err := frontmatter.ParseBytes(doc.Bytes())
 	if err != nil || fm == nil {
 		return nil, fmt.Errorf("def %s: unreadable frontmatter: %v", path, err)

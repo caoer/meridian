@@ -40,7 +40,11 @@ type PipeParams struct {
 	Session string `json:"session"`
 	// Self is the agent id mirrored at self/ ("" = the derived actor).
 	Self string `json:"self"`
-	// Dry stages and validates but commits nothing, reporting would-commit.
+	// Dry stages and validates but writes no target file, reporting would-commit
+	// per write. It models the real commit path: the same sidecar locks are
+	// taken (creating `.lock` sidecar files if absent — the one disk artifact);
+	// under lock contention it reports preview-unavailable (non-fatal, fast)
+	// instead of stalling on the unrelated writer.
 	Dry bool `json:"dry"`
 	// TimeoutMs bounds the program wall-clock (0 = engine default, 10s).
 	TimeoutMs int    `json:"timeout_ms"`

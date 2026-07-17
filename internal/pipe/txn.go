@@ -36,6 +36,16 @@ import (
 //     5. real body.Splice per file (CallerLocked — the flock from step 2 is
 //     the lock). Every write inherits I3 + reparse + the metadata-only journal.
 //
+//   - DRY (--dry) is the same commit minus step 5: it takes the SAME sidecar
+//     locks (creating the `.lock` sidecar files if absent — the one disk
+//     artifact a dry run leaves) and runs the SAME CAS + dry validation, so a
+//     clean dry is an honest predictor precisely because it models the real
+//     lock path. No target file is ever written. One carve-out: under lock
+//     contention a dry does not stall out the full commit timeout — it waits
+//     briefly (dryLockTimeout), then returns a NON-FATAL preview-unavailable
+//     outcome instead of an E_LOCK_TIMEOUT conflict, because a preview must
+//     not hang or hard-fail on an unrelated concurrent writer.
+//
 // A failure at any step aborts the whole commit and names the step (lock:…,
 // cas:…, validate:…, write:…) in a structured CommitConflict — data to act on,
 // distinct from preflight's stderr teaching errors.
@@ -133,7 +143,7 @@ type WriteReceipt struct {
 	Op      string `json:"op"`
 	Find    string `json:"find,omitempty"`
 	New     string `json:"new"`
-	Status  string `json:"status"` // staged | would-commit | committed | discarded | aborted
+	Status  string `json:"status"` // staged | would-commit | committed | discarded | aborted | preview-unavailable
 	FileRev string `json:"file_rev,omitempty"`
 	SecRev  string `json:"sec_rev,omitempty"`
 }
@@ -171,6 +181,12 @@ type CommitResult struct {
 // longer wait means a stuck holder).
 const commitLockTimeout = 5 * time.Second
 
+// dryLockTimeout bounds a DRY run's sidecar acquisition: long enough for an
+// ms-scale concurrent writer to finish, short enough that a preview never
+// visibly stalls on one (contention past this returns preview-unavailable,
+// not a conflict).
+const dryLockTimeout = 250 * time.Millisecond
+
 // fileGroup is one target file's staged edits, in program order.
 type fileGroup struct {
 	rel   string
@@ -206,8 +222,11 @@ func (t *Txn) groups() []*fileGroup {
 }
 
 // Commit lands every staged write or none (dry=false), or reports what WOULD
-// land (dry=true) without touching disk — same locks, same CAS, same dry
-// validation, so a clean Dry is an honest predictor.
+// land (dry=true) writing NO target file — a dry takes the same sidecar locks
+// (creating `.lock` sidecars if absent) and runs the same CAS + dry
+// validation, so a clean Dry is an honest predictor; under lock contention it
+// returns a non-fatal preview-unavailable result after a short wait instead
+// of stalling into E_LOCK_TIMEOUT (see the header contract).
 func (t *Txn) Commit(ctx context.Context, dry bool) CommitResult {
 	receipts := t.Writes()
 	res := CommitResult{Writes: receipts}
@@ -238,12 +257,25 @@ func (t *Txn) Commit(ctx context.Context, dry bool) CommitResult {
 			_ = held[i].Unlock()
 		}
 	}()
+	lockTimeout := commitLockTimeout
+	if dry {
+		lockTimeout = dryLockTimeout
+	}
 	for _, g := range groups {
 		lk := flock.New(g.real + ".lock")
-		lctx, cancel := context.WithTimeout(ctx, commitLockTimeout)
+		lctx, cancel := context.WithTimeout(ctx, lockTimeout)
 		locked, err := lk.TryLockContext(lctx, 25*time.Millisecond)
 		cancel()
 		if err != nil || !locked {
+			if dry {
+				// A preview must not hang or hard-fail on an unrelated writer:
+				// report non-fatally that no prediction is available right now.
+				mark("preview-unavailable")
+				res.Warnings = append(res.Warnings,
+					"dry: preview unavailable under contention — another writer holds "+
+						g.rel+".lock; nothing was validated, re-run when it finishes")
+				return res
+			}
 			return fail("lock", g, "E_LOCK_TIMEOUT",
 				"could not acquire "+g.rel+".lock within "+commitLockTimeout.String(),
 				"another writer holds the sidecar lock; re-run the program")
@@ -351,6 +383,12 @@ func asBodyErr(err error) *body.Error {
 // retained streams, plus the transaction outcome (per-write diffs, commit
 // status, conflict). Decision 10: preflight summary lives in the teaching error
 // (stderr, nothing ran); this receipt covers everything that DID run.
+//
+// PARTIAL-COMMIT CAVEAT (plan-accepted gap): a genuine step-5 disk error
+// (ENOSPC, EIO) after an earlier file already landed leaves Committed=false
+// while that earlier file's writes honestly read "committed". Callers MUST
+// inspect each write's Status — never just the top-level Committed bool — to
+// know what actually reached disk.
 type Receipt struct {
 	Exit      int             `json:"exit"`
 	Truncated bool            `json:"truncated,omitempty"`

@@ -73,6 +73,61 @@ func TestMdR7_HandlerIsInProcess(t *testing.T) {
 	}
 }
 
+// TestMdDefCheckEnvInvariant: the R7-adjacent env oracle is closed — def-check
+// stdout/stderr/exit are a pure function of the T0 snapshot, byte-identical
+// whether $UCC_HOME is unset or points at a defs tree that WOULD change the
+// verdict through DiscoverLayers, and no host absolute path ever reaches
+// program-readable output.
+func TestMdDefCheckEnvInvariant(t *testing.T) {
+	session := testSession(t)
+	fab, err := BuildFabric(session, "a1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fab.Close()
+
+	// Decoy $UCC_HOME: an agent def adding a required key a1.md lacks (would
+	// add a finding if merged), plus a task def testSession does NOT have
+	// (would flip tasks/t1.md from fail-closed to a verdict if discovered).
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "defs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, def := range map[string]string{
+		"agent.md": "---\ntype: def\ndefines: agent\nversion: 1\n---\n\n# Def\n\n```yaml\nplanted: {shape: line, required: true}\n```\n^properties\n",
+		"task.md":  "---\ntype: def\ndefines: task\nversion: 1\n---\n\n# Def\n\n```yaml\ntype: {shape: line}\n```\n^properties\n",
+	} {
+		if err := os.WriteFile(filepath.Join(home, "defs", name), []byte(def), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	run := func(target string) (int, string) {
+		code, out, errS := callMd(t, fab, nil, "", "def-check", target)
+		return code, out + "\n--stderr--\n" + errS
+	}
+	// agents/a1.md HAS a fabric def (types/agent.md); tasks/t1.md has NONE and
+	// must fail closed identically both ways, never resolving the decoy's def.
+	for _, target := range []string{"agents/a1.md", "tasks/t1.md"} {
+		t.Setenv("UCC_HOME", "")
+		codeUnset, outUnset := run(target)
+		t.Setenv("UCC_HOME", home)
+		codeSet, outSet := run(target)
+		if codeUnset != codeSet || outUnset != outSet {
+			t.Errorf("%s: def-check varies with UCC_HOME:\nunset (exit %d):\n%s\nset (exit %d):\n%s",
+				target, codeUnset, outUnset, codeSet, outSet)
+		}
+		for _, host := range []string{session, home} {
+			if strings.Contains(outSet, host) {
+				t.Errorf("%s: host absolute path %q leaked into def-check output:\n%s", target, host, outSet)
+			}
+		}
+	}
+	if code, out := run("tasks/t1.md"); code == 0 || !strings.Contains(out, "fail-closed") {
+		t.Errorf("no-fabric-def target did not fail closed: exit %d\n%s", code, out)
+	}
+}
+
 // TestMdTocServesSnapshotTSV: toc reads the T0 shape as header-less TSV.
 func TestMdTocServesSnapshotTSV(t *testing.T) {
 	fab := buildTestFabric(t, "")

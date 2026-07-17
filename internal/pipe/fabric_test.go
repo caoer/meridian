@@ -87,6 +87,27 @@ func buildTestFabric(t *testing.T, selfID string) *Fabric {
 	return fab
 }
 
+// TestBuildFabricAbsolutesSessionDir: a relative session dir is made absolute
+// at the seam, so RealPaths — and with them the receipt spellings and sidecar
+// lock paths — are canonical regardless of caller cwd (defense in depth).
+func TestBuildFabricAbsolutesSessionDir(t *testing.T) {
+	session := testSession(t)
+	t.Chdir(filepath.Dir(session))
+	fab, err := BuildFabric(filepath.Base(session), "a1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fab.Close()
+	if !filepath.IsAbs(fab.SessionDir) {
+		t.Errorf("SessionDir not absolute: %q", fab.SessionDir)
+	}
+	for rel, real := range fab.RealPaths {
+		if !filepath.IsAbs(real) {
+			t.Errorf("RealPaths[%q] = %q, not absolute", rel, real)
+		}
+	}
+}
+
 func TestFabricLayoutAndFilenameGrammar(t *testing.T) {
 	fab := buildTestFabric(t, "a1")
 	v := fab.vfs

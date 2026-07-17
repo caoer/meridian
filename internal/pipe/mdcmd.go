@@ -20,10 +20,17 @@ import (
 //     spawns the `md` binary, so there is no argv surface an excluded verb
 //     could reach. Preflight already rejects off-allowlist verbs statically;
 //     this file enforces the same list at runtime as defense in depth.
-//   - CURATED ENV: nothing here reads os.Environ. The write actor arrives on
-//     the Txn (session/daemon-derived, bound by the host face); the def cascade
-//     resolves from the record's real path. A program can reflect no
-//     CCC_*/token environment through this handler (adversarial F1 oracle).
+//   - CURATED ENV: nothing in this handler reads os.Environ or stats the host
+//     tree. The write actor arrives on the Txn (session/daemon-derived, bound
+//     by the host face); def-check resolves its def from the fabric's types/
+//     projection (defs.ResolveLayer — never DiscoverLayers, never $UCC_HOME).
+//     A program can reflect no CCC_*/token environment and recover no host
+//     absolute path through this handler (adversarial F1 oracle).
+//   - R7 LINK RESIDUAL: os/exec IS link-reachable in the md binary via
+//     internal/run (the exec verbs outside the pipe). TestMdR7_HandlerIsInProcess
+//     guards only internal/pipe's OWN imports — the guarantee rests on this
+//     package never importing or calling internal/run; a future internal/run
+//     import into package pipe would silently reopen the seam.
 //   - READS SERVE T0: toc / read / def-check operate on the fabric's snapshot
 //     bytes, never the live files — consistent with every other read in the
 //     sandbox (preflight's R4 staged-read rejection is the static guard; the
@@ -165,8 +172,12 @@ func (m *MdCmd) read(args []string, stdout, stderr io.Writer) int {
 }
 
 // defCheck runs the def-driven validator over the T0 snapshot of a base file.
-// The record's CONTENT is the snapshot; the def cascade resolves from the real
-// session path (defs are host config, not program-addressable state).
+// The record's CONTENT and its DEF both come from the snapshot: the def
+// resolves from the fabric's types/ projection (the session's defs/ dir at
+// T0) via defs.ResolveLayer — never DiscoverLayers, so no $UCC_HOME read, no
+// os.Stat over the host tree, and no host absolute path in the error text a
+// program can read from stdout. The verdict is a pure function of the
+// snapshot: invariant under the host environment.
 func (m *MdCmd) defCheck(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 1 {
 		return teach(stderr, usageErr("md def-check takes exactly one file", "md def-check agents/<id>.md"))
@@ -175,7 +186,7 @@ func (m *MdCmd) defCheck(args []string, stdout, stderr io.Writer) int {
 	if frag != "" {
 		return teach(stderr, usageErr("md def-check operates on a whole record", "drop the #fragment"))
 	}
-	real, isBase := m.Fab.RealPaths[rel]
+	_, isBase := m.Fab.RealPaths[rel]
 	if !isBase {
 		return teach(stderr, &Error{Exit: ExitRefused, Code: "E_NO_MATCH",
 			Message: rel + ": def-check targets a base record (agents/<id>.md, tasks/, sessions/, types/)"})
@@ -195,7 +206,9 @@ func (m *MdCmd) defCheck(args []string, stdout, stderr io.Writer) int {
 			Message: rel + ": no `type:` in frontmatter",
 			Remedy:  "def-check resolves the def by the record's kind"})
 	}
-	def, derr := defs.Resolve(kind, fm.StringField("preset"), defs.DiscoverLayers(real))
+	def, derr := defs.ResolveLayer(kind, fm.StringField("preset"), func(name string) []byte {
+		return m.Fab.Snapshot("types/" + name)
+	})
 	if derr != nil {
 		// Fail closed like the CLI: stratum-1 findings only, nonzero exit.
 		fmt.Fprintf(stdout, "verdict\tfail-closed\n")

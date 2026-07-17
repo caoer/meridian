@@ -100,6 +100,13 @@ func (f *Fabric) Snapshot(rel string) []byte {
 // BuildFabric renders sessionDir into a new fabric. selfID, when non-empty,
 // mirrors that agent's exploded dir at self/. The caller owns Close.
 func BuildFabric(sessionDir, selfID string) (*Fabric, error) {
+	// Canonical/absolute session root regardless of caller cwd: RealPaths (and
+	// with them the receipt spellings, sidecar lock paths and CanonicalTarget's
+	// EvalSymlinks) all derive from it. Defense in depth — inode-shared flocks
+	// exclude either way — but relative spellings must not leak downstream.
+	if abs, err := filepath.Abs(sessionDir); err == nil {
+		sessionDir = abs
+	}
 	root, err := os.MkdirTemp("", "mdpipe-fabric-*")
 	if err != nil {
 		return nil, err

@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/caoer/meridian/internal/body"
+	"github.com/gofrs/flock"
 )
 
 // txn_test.go — the staging transaction and its all-or-nothing commit,
@@ -171,6 +173,59 @@ func TestDryReturnsDiffsWithoutCommitting(t *testing.T) {
 	after, _ := os.ReadFile(filepath.Join(session, "tasks", "t1.md"))
 	if string(before) != string(after) {
 		t.Fatal("dry run touched the file")
+	}
+	// The one disk artifact a dry leaves: the `.lock` sidecar (dry models the
+	// real lock path — documented in the txn contract). The target and the
+	// session dir are otherwise untouched: no journal, no temp files.
+	real := body.CanonicalTarget(filepath.Join(session, "tasks", "t1.md"))
+	if _, err := os.Stat(real + ".lock"); err != nil {
+		t.Errorf("dry left no .lock sidecar (the documented artifact): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(session, "tasks", ".ccc", "events.ndjson")); err == nil {
+		t.Error("dry run wrote a journal")
+	}
+}
+
+// TestDryNonFatalUnderContention: a dry run whose target sidecar lock a
+// foreign writer holds returns FAST with a non-fatal preview-unavailable
+// outcome — no Conflict, no E_LOCK_TIMEOUT, no full commit-timeout stall (a
+// preview must not hang or hard-fail on an unrelated concurrent writer).
+func TestDryNonFatalUnderContention(t *testing.T) {
+	session := testSession(t)
+	fab, err := BuildFabric(session, "a1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fab.Close()
+	txn := NewTxn(fab, "a1")
+	if code, _, errS := callMd(t, fab, txn, "", "append", "tasks/t1.md#Task", "contended"); code != 0 {
+		t.Fatalf("stage: %s", errS)
+	}
+
+	real := body.CanonicalTarget(filepath.Join(session, "tasks", "t1.md"))
+	foreign := flock.New(real + ".lock")
+	locked, err := foreign.TryLock()
+	if err != nil || !locked {
+		t.Fatalf("foreign lock: locked=%v err=%v", locked, err)
+	}
+	defer foreign.Unlock()
+
+	start := time.Now()
+	res := txn.Commit(context.Background(), true)
+	if elapsed := time.Since(start); elapsed >= 2*time.Second {
+		t.Fatalf("dry stalled %v under contention (commit timeout is %v)", elapsed, commitLockTimeout)
+	}
+	if res.Conflict != nil {
+		t.Fatalf("dry contention reported fatally: %+v", res.Conflict)
+	}
+	if res.Committed {
+		t.Fatal("dry committed")
+	}
+	if len(res.Writes) != 1 || res.Writes[0].Status != "preview-unavailable" {
+		t.Fatalf("writes: %+v", res.Writes)
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "contention") {
+		t.Fatalf("warnings: %v", res.Warnings)
 	}
 }
 

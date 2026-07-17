@@ -78,6 +78,41 @@ func mergeDef(near, far *Def) *Def {
 	return near
 }
 
+// ResolveLayer resolves the def for a kind (and optional preset) from ONE
+// virtual layer — a name → content lookup instead of directories on disk. The
+// pipe's in-sandbox def-check resolves this way from the fabric's types/
+// projection: the same nearest-wins merging as Resolve applies within the
+// layer (the preset-qualified def is nearer than the generic one), but no
+// os.Stat over the host tree and no $UCC_HOME — resolution is a pure function
+// of the lookup, so a sandboxed program can neither probe the host filesystem
+// nor detect the environment through def resolution, and error text carries
+// only the names the lookup was asked for, never a host absolute path.
+func ResolveLayer(kind, preset string, load func(name string) []byte) (*Def, error) {
+	var merged *Def
+	names := []string{kind + ".md"}
+	if preset != "" {
+		names = append([]string{kind + "-" + preset + ".md"}, names...)
+	}
+	for _, name := range names {
+		raw := load(name)
+		if raw == nil {
+			continue
+		}
+		def, err := ParseDef(raw, name)
+		if err != nil {
+			return nil, err // malformed def anywhere in the cascade → fail closed
+		}
+		if def.Kind != kind {
+			return nil, fmt.Errorf("def %s: defines %q, resolved for kind %q", name, def.Kind, kind)
+		}
+		merged = mergeDef(merged, def)
+	}
+	if merged == nil {
+		return nil, fmt.Errorf("%w: kind %q (preset %q)", ErrNoDef, kind, preset)
+	}
+	return merged, nil
+}
+
 // DiscoverLayers builds the default layer ladder for a record path: every
 // defs/ directory from the record's own directory upward (session layer,
 // nearest first), then $UCC_HOME/defs (builtin). An explicit layer list from
