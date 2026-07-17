@@ -514,7 +514,7 @@ func planEdit(doc *Document, e Edit, topRev, actor, target string, pendingNL map
 	case OpSetProperty:
 		return planSetProperty(doc, e)
 	case OpReplace, OpInsertAfter, OpDelete, OpBlank:
-		return planAnchored(doc, e, sec, section, topRev)
+		return planAnchored(doc, e, sec, section, topRev, actor, target)
 	default:
 		return editResult{}, &Error{
 			Code:    "E_FAIL_LOUD",
@@ -738,8 +738,9 @@ func yamlSafeValue(val string) string {
 // planAnchored handles the anchored ops (replace / insert_after / delete / blank):
 // I1 requires an exact byte anchor, I2 requires it be unique-in-scope unless All.
 // The rev ladder: fresh rev → proceed; stale → conflict; omitted → proceed IFF the
-// anchor is exact-and-unique (single, not All), emitting a foreign_changes warning.
-func planAnchored(doc *Document, e Edit, sec Section, section, topRev string) (editResult, *Error) {
+// anchor is exact-and-unique (single, not All), emitting a foreign_changes warning
+// unless the drift is provably the actor's own (see the omitted-rev branch).
+func planAnchored(doc *Document, e Edit, sec Section, section, topRev, actor, target string) (editResult, *Error) {
 	if e.Find == "" {
 		return editResult{}, &Error{
 			Code:    "E_NO_MATCH",
@@ -770,9 +771,20 @@ func planAnchored(doc *Document, e Edit, sec Section, section, topRev string) (e
 			Context: map[string]string{"section": section, "current_rev": sec.Rev},
 		}
 	default:
-		// Omitted rev, single exact anchor → relaxation applies, but warn: the section
-		// may carry foreign changes the caller has not seen.
-		warnings = append(warnings, "foreign_changes:"+section)
+		// Omitted rev, single exact anchor → relaxation applies. The warning is
+		// reserved for drift that may actually be FOREIGN (E2 finding 3): when the
+		// journal's latest entry for this file is the writing actor's own and its
+		// rev matches the file as re-read under the lock, everything since the
+		// caller's just-completed operation is the caller's own work — warning
+		// there is self-inflicted noise that trains actors to ignore the one
+		// warning that matters. Any other state (no journal, a foreign tail actor,
+		// rev drift past the tail entry — e.g. a hand edit or a non-journaling
+		// writer) keeps the warning: a genuine concurrent writer must still
+		// surface. Keyed on journal/rev identity, never blanket-suppressed per
+		// batch.
+		if la, lr, ok := lastJournaled(target); !ok || la != actor || lr != doc.fileRev() {
+			warnings = append(warnings, "foreign_changes:"+section)
+		}
 	}
 
 	if e.Op == OpReplace && e.Old != "" && e.Old != e.Find {

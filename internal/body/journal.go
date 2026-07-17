@@ -146,6 +146,36 @@ func recentHashes(target, section, key, op, actor string) map[string]bool {
 	return out
 }
 
+// lastJournaled returns the actor and post-write file rev of the most recent
+// journal entry for target — the identity of the just-completed operation on the
+// file. planAnchored's omitted-rev relaxation keys its foreign_changes warning on
+// it (E2 finding 3): when the journal tail is the writing actor's OWN entry and
+// its rev still matches the file as re-read under the lock, every change since
+// the caller's just-completed operation is provably the caller's own. Best-effort
+// like every journal read: a missing or garbled journal reports ok=false — the
+// caller keeps the warning (the conservative direction).
+func lastJournaled(target string) (actor, rev string, ok bool) {
+	f, err := os.Open(journalPath(target))
+	if err != nil {
+		return "", "", false
+	}
+	defer f.Close()
+	abs, _ := filepath.Abs(target)
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		var e journalEntry
+		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+			continue
+		}
+		if !sameTarget(e.Path, target, abs) {
+			continue
+		}
+		actor, rev, ok = e.Actor, e.Rev, true
+	}
+	return actor, rev, ok
+}
+
 // ForceStat aggregates one actor's journaled writes and forced-warning overrides
 // — the R-force audit surface. ForcedWrites counts journal entries that carried at
 // least one forced warning; ForcedWarnings counts the individual overridden rules.
