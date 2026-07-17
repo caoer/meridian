@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,13 +31,16 @@ func editSectionHandler() cli.Handler {
 // editEditParam is one entry of the edits[] batch: one anchored replace within a
 // section. At names the entry's section, defaulting to the call-level selector
 // (top-level at, or the target's #fragment); Hash is the per-edit sec_rev CAS
-// token (the top-level hash is the batch-wide default).
+// token (the top-level hash is the batch-wide default). New is a pointer so
+// omission is distinguishable from an explicit `new: ""` — a missing
+// replacement is refused, never treated as empty (E3 R1: the content-for-new
+// slip silently deleted the matched span).
 type editEditParam struct {
-	At   string `json:"at"`
-	Old  string `json:"old"`
-	New  string `json:"new"`
-	All  bool   `json:"all"`
-	Hash string `json:"hash"`
+	At   string  `json:"at"`
+	Old  string  `json:"old"`
+	New  *string `json:"new"`
+	All  bool    `json:"all"`
+	Hash string  `json:"hash"`
 }
 
 // editSectionHandlerWith is the injectable core: fsys rooted at base resolves the
@@ -56,23 +60,30 @@ func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 			At         string            `json:"at"`
 			Hash       string            `json:"hash"`
 			Old        string            `json:"old"`
-			New        string            `json:"new"`
+			New        *string           `json:"new"`
 			All        bool              `json:"all"`
 			Edits      []editEditParam   `json:"edits"`
 			Properties map[string]string `json:"properties"`
 			Force      bool              `json:"force"`
 			Format     string            `json:"format"`
 		}
+		// Strict decode: an unknown key is INVALID_PARAMS, never silently
+		// dropped — a param-name slip (`content` for `new`, append's key) used
+		// to decode as "replace old with nothing" and wiped the span with
+		// exit 0 (E3 R1, the one observed wrong-state-with-success path).
 		if req.Params != nil {
-			if err := json.Unmarshal(req.Params, &params); err != nil {
-				return cli.ErrorResponse(cli.ErrInvalidParams, "invalid params: "+err.Error())
+			dec := json.NewDecoder(bytes.NewReader(req.Params))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&params); err != nil {
+				return cli.ErrorResponse(cli.ErrInvalidParams,
+					fmt.Sprintf("invalid params: %v — md edit-section accepts: target, at, hash, old, new, all, edits, properties, force, format; edits[] entries: at, old, new, all, hash", err))
 			}
 		}
 		if params.Target == "" {
 			return cli.ErrorResponse(cli.ErrInvalidParams, "missing required param: target (file, with at or #Section)")
 		}
-		if params.Old != "" && len(params.Edits) > 0 {
-			return cli.ErrorResponseWithHint(cli.ErrInvalidParams, "old and edits are mutually exclusive",
+		if (params.Old != "" || params.New != nil) && len(params.Edits) > 0 {
+			return cli.ErrorResponseWithHint(cli.ErrInvalidParams, "old/new and edits are mutually exclusive",
 				"put the top-level old/new into the edits array")
 		}
 		if params.Old == "" && len(params.Edits) == 0 {
@@ -82,6 +93,10 @@ func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 			}
 			return cli.ErrorResponseWithHint(cli.ErrInvalidParams, "missing required param: old",
 				"old is the exact bytes to replace within the section (byte-exact, no normalization)")
+		}
+		if params.Old != "" && params.New == nil {
+			return cli.ErrorResponseWithHint(cli.ErrInvalidParams, "missing required param: new",
+				`new is the replacement bytes; omission is never an empty replacement — deleting the old span must be explicit: new: ""`)
 		}
 
 		diskPath, defSection, errResp := resolveSectionSelector(fsys, base, params.Target, params.At)
@@ -95,7 +110,7 @@ func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 					"missing section: a single edit addresses one section",
 					`name it once: at:"Section", or a #Section fragment on target`)
 			}
-			return editSectionSingle(diskPath, defSection, actor, params.Hash, params.Old, params.New, params.All, params.Force)
+			return editSectionSingle(diskPath, defSection, actor, params.Hash, params.Old, *params.New, params.All, params.Force)
 		}
 
 		replaces := params.Edits
@@ -118,11 +133,15 @@ func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 				return cli.ErrorResponseWithHint(cli.ErrInvalidParams, fmt.Sprintf("edits[%d]: missing old", i),
 					"old is the exact bytes to replace within the section (byte-exact, no normalization)")
 			}
+			if ee.New == nil {
+				return cli.ErrorResponseWithHint(cli.ErrInvalidParams, fmt.Sprintf("edits[%d]: missing new", i),
+					`new is the replacement bytes; omission is never an empty replacement — deleting the old span must be explicit: new: ""`)
+			}
 			edits = append(edits, body.Edit{
 				Op:     body.OpReplace,
 				Target: frag,
 				Find:   ee.Old,
-				New:    ee.New,
+				New:    *ee.New,
 				All:    ee.All,
 				Rev:    ee.Hash,
 			})
