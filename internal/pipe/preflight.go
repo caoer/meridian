@@ -1,11 +1,16 @@
 package pipe
 
 import (
+	"path"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
 )
 
+// PIN: go.mod pins mvdan.cc/sh/v3 v3.13.1. escape_test.go MUST be re-run on any
+// mvdan bump — a new FS-touching builtin, redirect operator, or expansion form
+// could open a hole this static gate does not yet know to close.
+//
 // preflight.go is the static policy gate (plan decision 5 + feasibility F8 +
 // review R4/R-discovery). It parses the program with LangBash and walks the AST
 // BEFORE anything executes, rejecting every construct that would either escape
@@ -85,6 +90,17 @@ var unsafeUnaryTests = map[syntax.UnTestOperator]string{
 // mdWriteVerbs are the md sub-verbs that stage a write (R4 tracking).
 var mdWriteVerbs = map[string]bool{
 	"append": true, "edit-section": true, "create_section": true,
+}
+
+// fabricReadOnlyRoots are the fabric projection roots that are READ-ONLY views
+// (R5): the exploded/whole-file agent projections, the self/ mirror, the
+// session-file and defs projections, and the rev manifest. A write verb whose
+// target resolves under one of these is refused — writes address the source
+// hpath/`^id`, never a projection path. `tasks/` is deliberately absent: task
+// files are the session's writable work surface (the R4 staged-read tests
+// exercise `md append tasks/…`), so a tasks/ target stays a legal write.
+var fabricReadOnlyRoots = map[string]bool{
+	"agents": true, "self": true, "sessions": true, "types": true,
 }
 
 // fileReaders are the commands whose path arguments are file READS (R4 scope);
@@ -220,15 +236,33 @@ func checkCall(call *syntax.CallExpr, funcs map[string]bool, staged map[string]s
 			}
 		}
 	case name == "md":
+		// Every md sub-arg must be a literal. A computed sub-verb or target
+		// (parameter, command substitution, or $'...') cannot be statically
+		// vetted for the nested-pipe guard, R4 staging, or the R5 write-target
+		// check — and $'...' in particular decodes at runtime to bytes preflight
+		// never saw. Fail closed rather than analyze a spelling that lies.
+		for _, w := range call.Args[1:] {
+			if _, lit := wordLitOK(w); !lit {
+				return posErr(ExitRefused, "E_BANNED",
+					"md argument is not a literal — a computed md sub-verb or target (parameter, command substitution, or $'...') cannot be statically vetted",
+					"spell the md sub-verb and its target out as literal words", pos)
+			}
+		}
 		if len(args) > 0 && args[0] == "pipe" {
 			return posErr(ExitRefused, "E_BANNED",
 				"nested `md pipe` is rejected: one program, one sandbox",
 				"merge the inner program into this one", pos)
 		}
 		if len(args) > 0 && mdWriteVerbs[args[0]] {
+			// R5: fabric projection paths are read-only — never write targets.
+			if len(args) > 1 && isFabricReadOnlyTarget(args[1]) {
+				return posErr(ExitRefused, "EROFS",
+					"`md "+args[0]+"` cannot write to "+args[1]+": fabric paths (agents/ self/ sessions/ types/ .revs) are read-only projections",
+					"name the source section — an hpath (file#Heading) or a `^block-id`, not a projection path", pos)
+			}
 			for _, a := range args[1:] {
 				if p := pathishArg(a); p != "" {
-					staged[stripFragment(p)] = pos
+					staged[normPath(p)] = pos
 				}
 			}
 			return nil
@@ -236,7 +270,7 @@ func checkCall(call *syntax.CallExpr, funcs map[string]bool, staged map[string]s
 		// md read verbs: reading a path staged earlier is the R4 trap.
 		for _, a := range args {
 			if p := pathishArg(a); p != "" {
-				if wpos, ok := staged[stripFragment(p)]; ok {
+				if wpos, ok := staged[normPath(p)]; ok {
 					return stagedReadErr(p, wpos, pos)
 				}
 			}
@@ -247,7 +281,7 @@ func checkCall(call *syntax.CallExpr, funcs map[string]bool, staged map[string]s
 	// echo/printf of the path string is not a read and stays legal.
 	if fileReaders[name] {
 		for _, a := range args {
-			if wpos, ok := staged[a]; ok {
+			if wpos, ok := staged[normPath(a)]; ok {
 				return stagedReadErr(a, wpos, pos)
 			}
 		}
@@ -278,8 +312,10 @@ func checkRedirect(r *syntax.Redirect, staged map[string]string) *Error {
 	}
 	switch r.Op {
 	case syntax.RdrIn, syntax.Hdoc, syntax.DashHdoc, syntax.WordHdoc:
-		if wpos, ok := staged[target]; ok && target != "" {
-			return stagedReadErr(target, wpos, pos)
+		if nt := normPath(target); nt != "" {
+			if wpos, ok := staged[nt]; ok {
+				return stagedReadErr(target, wpos, pos)
+			}
 		}
 		return nil
 	case syntax.DplIn:
@@ -344,12 +380,29 @@ func stagedReadErr(path, writePos, readPos string) *Error {
 		"move the read before the write, or split into two programs", readPos)
 }
 
-// wordLit returns the word's literal value when it is statically known:
-// pure Lit parts, a single-quoted string, or a double-quoted string of
-// literals. Anything with expansions returns "".
+// wordLit returns the word's literal value when statically known, or "" for a
+// computed (non-literal) word. Callers that must distinguish a literal empty
+// string ("" / '') from a computed word use wordLitOK.
 func wordLit(w *syntax.Word) string {
+	s, _ := wordLitOK(w)
+	return s
+}
+
+// wordLitOK returns the word's literal value and whether it is statically
+// known: pure Lit parts, a plain single-quoted string, or a double-quoted
+// string of literals are literal. Anything with an expansion — parameter,
+// command substitution, arithmetic — is non-literal (ok == false).
+//
+// A `$'...'` ANSI-C string (SglQuoted with Dollar) is treated as NON-literal
+// even though its bytes are statically present: the interpreter DECODES it via
+// expand.Format at runtime, so the raw p.Value preflight would see diverges
+// from what actually executes (`$'\x70ipe'` → `pipe`). Reporting it as computed
+// fails closed — a `$'...'` command word is refused as a computed name and a
+// `$'...'` md sub-arg is conservatively rejected, so no decoded byte sequence
+// can dodge the nested-pipe guard, R4 staging, or the R5 write-target check.
+func wordLitOK(w *syntax.Word) (string, bool) {
 	if w == nil {
-		return ""
+		return "", true
 	}
 	var b strings.Builder
 	for _, part := range w.Parts {
@@ -357,20 +410,23 @@ func wordLit(w *syntax.Word) string {
 		case *syntax.Lit:
 			b.WriteString(p.Value)
 		case *syntax.SglQuoted:
+			if p.Dollar {
+				return "", false // $'...' — runtime ANSI-C decode diverges from these bytes
+			}
 			b.WriteString(p.Value)
 		case *syntax.DblQuoted:
 			for _, ip := range p.Parts {
 				il, ok := ip.(*syntax.Lit)
 				if !ok {
-					return ""
+					return "", false
 				}
 				b.WriteString(il.Value)
 			}
 		default:
-			return ""
+			return "", false
 		}
 	}
-	return b.String()
+	return b.String(), true
 }
 
 func literalArgs(words []*syntax.Word) []string {
@@ -400,6 +456,38 @@ func stripFragment(p string) string {
 		return p[:i]
 	}
 	return p
+}
+
+// normPath canonicalizes a path word for staged-map keying and lookup so the
+// write side and read side agree on spelling: drop the "#fragment", then
+// path.Clean (which strips a leading "./", collapses "//" and interior ".").
+// Glob-spelled paths (agents/*.md) are intentionally left un-expanded — the T0
+// snapshot is the backstop for a staged read reached only through a glob.
+func normPath(p string) string {
+	p = stripFragment(p)
+	if p == "" {
+		return ""
+	}
+	return path.Clean(p)
+}
+
+// isFabricReadOnlyTarget reports whether an md write target resolves under a
+// read-only fabric projection root (R5). The target is normalized and its first
+// path segment is matched against fabricReadOnlyRoots (`.revs` is a whole-file
+// projection with no directory segment).
+func isFabricReadOnlyTarget(target string) bool {
+	p := normPath(target)
+	if p == "" {
+		return false
+	}
+	if p == ".revs" {
+		return true
+	}
+	seg := p
+	if i := strings.IndexByte(p, '/'); i >= 0 {
+		seg = p[:i]
+	}
+	return fabricReadOnlyRoots[seg]
 }
 
 // isFlagWith reports whether a is a short-flag cluster containing c (e.g.

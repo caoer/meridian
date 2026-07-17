@@ -18,6 +18,10 @@ import (
 	"github.com/caoer/meridian/internal/pipe/toolset"
 )
 
+// PIN: go.mod pins mvdan.cc/sh/v3 v3.13.1. escape_test.go MUST be re-run on any
+// mvdan bump — a new FS-touching builtin, redirect operator, or expansion form
+// could open a hole the interpreter wiring or the preflight gate does not close.
+//
 // interp.go wires the mvdan interpreter per plan decision 9, with the U8
 // deltas folded in. Every option maps 1:1 to a source-verified mvdan leak:
 //
