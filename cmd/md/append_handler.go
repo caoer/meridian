@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -55,9 +56,16 @@ func appendHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 			Force      bool              `json:"force"`
 			Format     string            `json:"format"`
 		}
+		// Strict decode: an unknown key is INVALID_PARAMS, never silently
+		// dropped — the write verbs share one strict envelope so a param-name
+		// slip (edit-section's old/new here, or vice versa) fails loud instead
+		// of writing something the caller did not say (E3 R1).
 		if req.Params != nil {
-			if err := json.Unmarshal(req.Params, &params); err != nil {
-				return cli.ErrorResponse(cli.ErrInvalidParams, "invalid params: "+err.Error())
+			dec := json.NewDecoder(bytes.NewReader(req.Params))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&params); err != nil {
+				return cli.ErrorResponse(cli.ErrInvalidParams,
+					fmt.Sprintf("invalid params: %v — md append accepts: target, at, content, edits, properties, force, format; edits[] entries: at, content", err))
 			}
 		}
 		if params.Target == "" {

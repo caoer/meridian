@@ -199,7 +199,10 @@ func TestWriteVerbActorNotForgeable(t *testing.T) {
 	dir := t.TempDir()
 	p := writeCorpus(t, dir, "agents/A.md", "---\ntype: agent\n---\n# Notes\nA's note\n")
 
-	// Session identity is B; a forged "actor":"A" in the params must not be honored.
+	// Session identity is B; a forged "actor":"A" in the params must not be
+	// honored. Since the strict param envelope, the forgery dies even before
+	// authorization: "actor" is not a param any write verb defines, so the
+	// request is INVALID_PARAMS naming the alien key.
 	r, out := newWriteRouter(t, dir, "B")
 	params := `{"target":"agents/A.md#Notes","hash":"","old":"A's note","new":"pwned","actor":"A","format":"json"}`
 	code := r.Run([]string{"edit-section", params}, nil)
@@ -208,15 +211,37 @@ func TestWriteVerbActorNotForgeable(t *testing.T) {
 	}
 	var resp cli.Response
 	json.Unmarshal(out.Bytes(), &resp)
+	if resp.Error == nil || resp.Error.Code != cli.ErrInvalidParams {
+		t.Fatalf("want INVALID_PARAMS, got %+v", resp.Error)
+	}
+	if !strings.Contains(resp.Error.Message, "actor") {
+		t.Errorf("refusal should name the forged key: %q", resp.Error.Message)
+	}
+	got, _ := os.ReadFile(p)
+	if strings.Contains(string(got), "pwned") {
+		t.Errorf("forged-actor write must not land:\n%s", got)
+	}
+
+	// Without the forged key, authorization sees the SESSION identity (B) and
+	// refuses B writing A's file — the derived actor, not a caller claim, is
+	// what I3 judges.
+	out.Reset()
+	code = r.Run([]string{"edit-section",
+		`{"target":"agents/A.md#Notes","hash":"","old":"A's note","new":"pwned","format":"json"}`}, nil)
+	if code != 2 {
+		t.Fatalf("cross-actor write must be refused (exit 2), got %d: %s", code, out.String())
+	}
+	resp = cli.Response{}
+	json.Unmarshal(out.Bytes(), &resp)
 	if resp.Error == nil || resp.Error.Code != "EPERM" {
 		t.Fatalf("want EPERM, got %+v", resp.Error)
 	}
 	if !strings.Contains(resp.Error.Message, "A") {
 		t.Errorf("teaching error should name owner A: %q", resp.Error.Message)
 	}
-	got, _ := os.ReadFile(p)
+	got, _ = os.ReadFile(p)
 	if strings.Contains(string(got), "pwned") {
-		t.Errorf("forged-actor write must not land:\n%s", got)
+		t.Errorf("cross-actor write must not land:\n%s", got)
 	}
 }
 

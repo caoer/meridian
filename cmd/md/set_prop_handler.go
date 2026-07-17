@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 
@@ -36,9 +38,15 @@ func setPropHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 			Force      bool              `json:"force"`
 			Format     string            `json:"format"`
 		}
+		// Strict decode: an unknown key is INVALID_PARAMS, never silently
+		// dropped (E3 R1 class). Strictness binds the param envelope only —
+		// the keys INSIDE properties{} are payload and stay free.
 		if req.Params != nil {
-			if err := json.Unmarshal(req.Params, &params); err != nil {
-				return cli.ErrorResponse(cli.ErrInvalidParams, "invalid params: "+err.Error())
+			dec := json.NewDecoder(bytes.NewReader(req.Params))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&params); err != nil {
+				return cli.ErrorResponse(cli.ErrInvalidParams,
+					fmt.Sprintf("invalid params: %v — md set-prop accepts: target, properties, force, format", err))
 			}
 		}
 		if params.Target == "" {
