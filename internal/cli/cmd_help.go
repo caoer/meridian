@@ -213,6 +213,29 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 				`md encode '{"slug":"locus","path":"wiki/meridian/development.md","fragment":"Testing","form":"citation"}'`,
 			},
 		},
+		"pipe": {
+			Description: "Run ONE bash program over a read-only /fabric projection of a session directory (agents/, tasks/, sessions/, types/, .revs). Whitelisted tools (grep head tail wc sort uniq cut) plus in-pipe `md` verbs (toc read append edit-section create_section def-check) run in-process; reads serve the pre-program snapshot; writes STAGE and commit all-or-nothing at program end through the guarded splice engine (I3 authorization, per-file CAS vs the T0 revs). Text mode: program emit on stdout, receipt summary on stderr; a COMMIT CONFLICT prints the structured JSON receipt on stdout with exit 1. `md pipe --grammar` prints the full command surface",
+			Usage:       "md pipe '<one bash body>'  |  md pipe '{\"program\":\"…\",\"session\":\"<dir>\",\"dry\":true}'  |  md pipe --grammar",
+			Params: map[string]paramHelp{
+				"program":    {Type: "string", Required: true},
+				"session":    {Type: "string", Required: false},
+				"self":       {Type: "string", Required: false},
+				"dry":        {Type: "bool", Required: false},
+				"timeout_ms": {Type: "int", Required: false},
+				"format":     {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{
+				"0": "program ran and staged writes committed (or none staged)",
+				"1": "commit conflict — structured receipt on stdout names the step, file and drift",
+				"2": "program syntax error", "124": "wall-clock timeout", "126": "refused by policy (preflight teaching error on stderr)",
+				"127": "unknown command (the complete whitelist is in the error)", "141": "output cap exceeded",
+			},
+			Examples: []string{
+				`md pipe 'for f in agents/*/01-memo.md; do wc -l "$f"; done | sort | head -5'`,
+				`md pipe 'md append tasks/t1.md#Task "reviewed"'`,
+				`md pipe --grammar`,
+			},
+		},
 		"read": {
 			Description: "Read vault-addressed content: path, [[note]], [[note#Heading]], or [[note#^block]]; text mode prints verification metadata (base, matches, warnings) to stderr, stdout stays pure content. With embeds:true, ![[...]] embeds are recursively inlined (frontmatter stripped from whole-note embeds). With strip-frontmatter:true, the matched file's own frontmatter is dropped — returns the deployable body",
 			Usage:       "md read '{\"target\":\"<path | [[note]] | [[note#Heading]] | [[note#^block]]>\"}'",

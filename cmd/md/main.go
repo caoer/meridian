@@ -214,6 +214,7 @@ func main() {
 	router.Handle("run", runHandler())
 	registerBodyVerbs(router)
 	registerDefVerbs(router)
+	registerPipeVerb(router)
 	// resolve is config-gated: hashing resolves wikilinks against the corpus
 	// index built from the scan root, exactly as check does.
 	router.Handle("resolve", resolveHandler(cfg, cfgErr))

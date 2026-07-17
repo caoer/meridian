@@ -14,8 +14,10 @@
 //   - Reads serve the T0 snapshot. The fabric is materialized once at build
 //     time; mutating the real files mid-program does not change what a running
 //     program reads.
-//   - Fabric paths are read-only projections. The `md` write handler (U9b)
-//     never accepts a fabric path as a write target — only hpath/`^id` (R5).
+//   - Fabric PROJECTIONS are read-only. The `md` write handler (U9b) accepts
+//     only a base file's section address (<base>.md#hpath / #^id — the R5
+//     write-target model, pinned in preflight.go); exploded section files,
+//     self/, .revs and .properties.yml are never write targets.
 //   - Preflight is the policy gate: everything the interpreter cannot mediate
 //     (unix.Access tests, process substitution, eval's fresh-parser bypass,
 //     background jobs, pwd -P, read -s, ~user lookup) is rejected before
@@ -93,7 +95,13 @@ func Grammar() string {
 	b.WriteString("Commands (complete whitelist):\n  " + WhitelistLine() + "\n")
 	b.WriteString("  plus bash builtins: echo printf cd pwd test [ [[ read set shift local declare export true false :\n\n")
 	b.WriteString("md sub-verbs inside a pipe:\n  md " + strings.Join(MdVerbs, " | md ") + "\n")
-	b.WriteString("  (reads serve the pre-program snapshot; writes are STAGED and commit at program end)\n\n")
+	b.WriteString("  (reads serve the pre-program snapshot; writes are STAGED and commit all-or-nothing at program end)\n\n")
+	b.WriteString("Write targets (R5):\n")
+	b.WriteString("  a write names a real session file's SECTION: <base>.md#<Heading> or <base>.md#^<block-id>\n")
+	b.WriteString("  base files: agents/<id>.md  tasks/<slug>.md  sessions/<name>.md  types/<kind>.md\n")
+	b.WriteString("  never writable: exploded section files (agents/<id>/NN-*.md), self/, .revs, .properties.yml\n")
+	b.WriteString("  md append  <file>#<Section> <content|->     md edit-section <file>#<Section> <old> <new>\n")
+	b.WriteString("  md create_section <file>#<New-Heading> [content|-]\n\n")
 	b.WriteString("Layout:\n")
 	b.WriteString("  agents/<id>.md          whole agent file\n")
 	b.WriteString("  agents/<id>/            exploded: .properties.yml + NN-slug.md per section\n")

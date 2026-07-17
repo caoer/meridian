@@ -130,7 +130,35 @@ func appendDistinct(list []string, s string) []string {
 // SpliceOption configures one Splice invocation beyond its positional contract.
 type SpliceOption func(*spliceConfig)
 
-type spliceConfig struct{ force bool }
+type spliceConfig struct {
+	force        bool
+	callerLocked bool
+	dryRun       bool
+}
+
+// CallerLocked marks the invocation as running under the target's sidecar flock
+// ALREADY HELD by the caller. The pipe commit (internal/pipe/txn.go) holds every
+// target's "<file>.md.lock" in canonical path order for its all-or-nothing window;
+// a second flock on the same path from the same process would block (flock(2)
+// treats separate fds independently), so Splice skips its own acquisition.
+// Everything else — re-read under the (caller's) lock, the full guard ladder,
+// the reparse gate, the atomic rename, the journal — is unchanged. The caller
+// MUST hold the flock on CanonicalTarget(target) + ".lock" before invoking.
+func CallerLocked() SpliceOption { return func(c *spliceConfig) { c.callerLocked = true } }
+
+// DryRun runs the COMPLETE validate/plan pipeline — canonicalization, I3
+// authorization, anchors, the rev ladder, the in-memory splice, the reparse gate,
+// I4 conformance — and stops just before the durable write: no rename, no journal.
+// The returned Result carries the would-be NewRev and Changed deltas. Because a
+// dry pass and a real pass see identical bytes while the caller holds the sidecar
+// lock, "every file dry-passes" guarantees "every file will commit" (modulo disk
+// failure) — the seam the pipe's all-or-nothing multi-file commit is built on.
+func DryRun() SpliceOption { return func(c *spliceConfig) { c.dryRun = true } }
+
+// CanonicalTarget exposes Splice's canonical write-target form (clean + resolve
+// symlinks) so an external lock coordinator (CallerLocked) locks exactly the
+// sidecar path Splice itself would.
+func CanonicalTarget(target string) string { return canonicalTarget(target) }
 
 // Force opts the invocation into overriding WARNING-rung I4 conformance findings.
 // ERROR-rung findings are never forceable. Force is auditable, never silent
@@ -197,20 +225,24 @@ func Splice(target string, edits []Edit, rev, actor string, opts ...SpliceOption
 	// (1) Acquire the sidecar "<file>.md.lock" flock — NEVER the target fd, because
 	// the durable write renames a new inode over target and an fd lock would guard
 	// the wrong inode. This is the same sidecar path ccc-cli's TS writer uses, so a
-	// Go writer and a TS writer serialize against each other.
-	lock := flock.New(target + ".lock")
-	ctx, cancel := context.WithTimeout(context.Background(), lockTimeout)
-	defer cancel()
-	locked, err := lock.TryLockContext(ctx, lockRetry)
-	if err != nil || !locked {
-		return Result{}, &Error{
-			Code:    "E_LOCK_TIMEOUT",
-			Message: "could not acquire the write lock within " + lockTimeout.String(),
-			Remedy:  "another writer holds " + target + ".lock; retry shortly",
-			Context: map[string]string{"lock": target + ".lock"},
+	// Go writer and a TS writer serialize against each other. A CallerLocked
+	// invocation skips acquisition: the caller already holds this exact sidecar
+	// (canonical path) for its multi-file all-or-nothing window.
+	if !cfg.callerLocked {
+		lock := flock.New(target + ".lock")
+		ctx, cancel := context.WithTimeout(context.Background(), lockTimeout)
+		defer cancel()
+		locked, err := lock.TryLockContext(ctx, lockRetry)
+		if err != nil || !locked {
+			return Result{}, &Error{
+				Code:    "E_LOCK_TIMEOUT",
+				Message: "could not acquire the write lock within " + lockTimeout.String(),
+				Remedy:  "another writer holds " + target + ".lock; retry shortly",
+				Context: map[string]string{"lock": target + ".lock"},
+			}
 		}
+		defer func() { _ = lock.Unlock() }()
 	}
-	defer func() { _ = lock.Unlock() }()
 
 	// (2) Re-read + re-map UNDER the lock — never map stale bytes.
 	doc, lerr := Load(target)
@@ -354,6 +386,18 @@ func Splice(target string, edits []Edit, rev, actor string, opts ...SpliceOption
 	}
 	for _, rule := range forced {
 		warnings = append(warnings, "forced_warning:"+rule)
+	}
+
+	// (7-dry) A DryRun stops here: every guard has passed and the candidate is
+	// exactly what a real pass would rename into place — report the would-be
+	// outcome without touching disk or journal.
+	if cfg.dryRun {
+		return Result{
+			OK:       true,
+			NewRev:   newDoc.fileRev(),
+			Changed:  DiffSections(doc, newDoc),
+			Warnings: dedupWarnings(warnings),
+		}, nil
 	}
 
 	// (7) Durable write: tmp + fsync + rename, preserving the original perms.

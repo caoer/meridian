@@ -19,12 +19,23 @@ type Response struct {
 	Stats    *Stats       `json:"stats,omitempty"`
 	Warnings []Warning    `json:"warnings,omitempty"`
 	Error    *ErrorDetail `json:"error,omitempty"`
+
+	// ExitOverride, when non-nil, is the exact process exit code this command
+	// demands. It exists for verbs whose contract pins a POSIX-style code
+	// convention the findings-derived mapping below cannot express — md pipe's
+	// 127 unknown / 126 refused / 124 timeout / 141 overflow / 2 syntax /
+	// 1 commit-conflict. JSON-invisible: it shapes the process exit, not the
+	// envelope.
+	ExitOverride *int `json:"-"`
 }
 
 // ExitCode derives the process exit code from the response.
 // 0 = clean, 1 = error-severity findings (warn too when strict), 2 = tool failure.
 // Strict never demotes: error fails in both modes.
 func (r *Response) ExitCode() int {
+	if r.ExitOverride != nil {
+		return *r.ExitOverride
+	}
 	if r.Error != nil {
 		return 2
 	}

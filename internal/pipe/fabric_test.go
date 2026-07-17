@@ -62,14 +62,10 @@ type: task
 
 do the thing
 `)
-	write("defs/agent.md", `---
-type: def
----
-
-# Def
-
-shape
-`)
+	// A WELL-FORMED def: a malformed def makes I4 fail closed and refuse every
+	// agent-file write in any binary that links internal/defs (which the pipe
+	// does, for def-check) — the commit tests exercise real agent writes.
+	write("defs/agent.md", "---\ntype: def\ndefines: agent\nversion: 1\n---\n\n# Def\n\n```yaml\ntype: {shape: line}\n```\n^properties\n")
 	write("MISSION.md", `---
 type: mission
 ---

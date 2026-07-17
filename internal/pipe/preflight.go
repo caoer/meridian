@@ -33,7 +33,9 @@ import (
 //	~user tilde            → 126 (real os/user.Lookup — F8; bare ~ and ~/ are fine)
 //	write-redirect any path→ 126 except /dev/null       (R3; U8 delta 2 carve-out)
 //	read of staged path    → 126 (R4 — reads serve T0; a read-back would be silently stale)
-//	nested `md pipe`       → 126 + remedy               (R7 seam)
+//	nested `md pipe`       → 126 + remedy               (R7)
+//	md verb off-allowlist  → 126 (R7 — run/rules/skill/fix are exec-capable; only MdVerbs exist in-pipe)
+//	md write to projection → 126 EROFS (R5 write-target model — see vetWriteTarget)
 //	syntax error           → 2
 //
 // The staged-read check (R4) is static and literal: it tracks literal path
@@ -92,15 +94,88 @@ var mdWriteVerbs = map[string]bool{
 	"append": true, "edit-section": true, "create_section": true,
 }
 
-// fabricReadOnlyRoots are the fabric projection roots that are READ-ONLY views
-// (R5): the exploded/whole-file agent projections, the self/ mirror, the
-// session-file and defs projections, and the rev manifest. A write verb whose
-// target resolves under one of these is refused — writes address the source
-// hpath/`^id`, never a projection path. `tasks/` is deliberately absent: task
-// files are the session's writable work surface (the R4 staged-read tests
-// exercise `md append tasks/…`), so a tasks/ target stays a legal write.
-var fabricReadOnlyRoots = map[string]bool{
-	"agents": true, "self": true, "sessions": true, "types": true,
+// mdVerbAllowed is the R7 allowlist as a set ("pipe" is present only so the
+// nested-pipe rejection above owns that teaching; it never reaches the handler).
+var mdVerbAllowed = func() map[string]bool {
+	m := map[string]bool{"pipe": true}
+	for _, v := range MdVerbs {
+		m[v] = true
+	}
+	return m
+}()
+
+// THE WRITE-TARGET MODEL (R5, resolved in U9b — this is the authority both the
+// static gate below and the runtime handler in mdcmd.go implement):
+//
+// A pipe write addresses a REAL session file's section, spelled
+// "<base>#<hpath>" or "<base>#^id", where <base> is a whole-file fabric
+// projection of a real file: agents/<id>.md, tasks/<slug>.md, sessions/<name>.md,
+// or types/<kind>.md. The base names WHICH real file; the #fragment is the
+// hpath/^id write address plan R5 requires. Cross-agent writes are governed by
+// I3 (body.Splice's policy check, actor session/daemon-derived) — addressing is
+// not authorization.
+//
+// NEVER write targets (read-only projections, refused with teaching):
+//   - exploded section files (agents/<id>/NN-slug.md) and .properties.yml —
+//     projections of section CONTENT; their section space is not the file's;
+//   - self/** — a mirror; write your own file as agents/<id>.md#…;
+//   - .revs — the T0 manifest;
+//   - a FRAGMENTLESS base spelling — that is a whole-FILE projection write,
+//     exactly what R5 bans (writes address sections, not projections);
+//   - traversal (../, absolute) spellings — outside the fabric namespace.
+//
+// The static gate is defense-in-depth over LITERAL spellings; mdcmd.go's
+// runtime check is authoritative (it also requires the base to exist in the T0
+// fabric). One deliberate static relaxation: a fragmentless tasks/ spelling
+// passes preflight (U9a's R4 staged-read machinery and suite stage against
+// bare tasks/ paths) and is refused at the handler with the same teaching.
+var fabricProjectionRoots = map[string]bool{
+	"agents": true, "sessions": true, "types": true,
+}
+
+// vetWriteTarget applies the write-target model to one literal md write target.
+// Nil means the spelling is statically plausible (the handler still decides).
+func vetWriteTarget(verb, target, pos string) *Error {
+	frag := ""
+	base := target
+	if i := strings.IndexByte(target, '#'); i >= 0 {
+		base, frag = target[:i], target[i+1:]
+	}
+	base = path.Clean(base)
+	refuse := func(why, remedy string) *Error {
+		return posErr(ExitRefused, "EROFS",
+			"`md "+verb+"` cannot write to "+target+": "+why,
+			remedy, pos)
+	}
+	sectionRemedy := "name the real file's section: <file>.md#<Heading> or <file>.md#^<block-id>"
+	if strings.HasPrefix(base, "/") || base == ".." || strings.HasPrefix(base, "../") {
+		return refuse("the target escapes the fabric namespace",
+			"write targets are session files: agents/<id>.md, tasks/, sessions/, types/ — "+sectionRemedy)
+	}
+	if base == ".revs" {
+		return refuse(".revs is the read-only T0 rev manifest", sectionRemedy)
+	}
+	if path.Base(base) == ".properties.yml" {
+		return refuse(".properties.yml is a read-only frontmatter projection",
+			"set properties on the real file (outside the pipe: md set-prop); body writes use "+sectionRemedy)
+	}
+	seg, rest := base, ""
+	if i := strings.IndexByte(base, '/'); i >= 0 {
+		seg, rest = base[:i], base[i+1:]
+	}
+	if seg == "self" {
+		return refuse("self/ is a read-only mirror of your own agent file",
+			"write your own file by name: agents/<your-id>.md#<Heading>")
+	}
+	if seg == "agents" && strings.ContainsRune(rest, '/') {
+		return refuse("exploded section files (agents/<id>/NN-slug.md) are read-only projections",
+			"address the section on the base file: agents/<id>.md#<Heading>")
+	}
+	if fabricProjectionRoots[seg] && frag == "" {
+		return refuse("a whole-file spelling is a read-only projection — writes address a section",
+			sectionRemedy)
+	}
+	return nil
 }
 
 // fileReaders are the commands whose path arguments are file READS (R4 scope);
@@ -253,12 +328,21 @@ func checkCall(call *syntax.CallExpr, funcs map[string]bool, staged map[string]s
 				"nested `md pipe` is rejected: one program, one sandbox",
 				"merge the inner program into this one", pos)
 		}
+		// R7 verb allowlist, statically: only the MdVerbs surface exists inside a
+		// pipe. Exec-capable verbs (run, rules, skill, fix) are refused BEFORE
+		// execution; the in-process handler (mdcmd.go) enforces the same list at
+		// runtime as defense in depth.
+		if len(args) > 0 && !mdVerbAllowed[args[0]] {
+			return posErr(ExitRefused, "E_BANNED",
+				"`md "+args[0]+"` is not available inside a pipe. In-pipe md verbs: md "+strings.Join(MdVerbs, " | md "),
+				"exec-capable verbs (run, rules, skill, fix) never run in the sandbox; use the allowlisted verbs or run `md "+args[0]+"` outside the pipe", pos)
+		}
 		if len(args) > 0 && mdWriteVerbs[args[0]] {
-			// R5: fabric projection paths are read-only — never write targets.
-			if len(args) > 1 && isFabricReadOnlyTarget(args[1]) {
-				return posErr(ExitRefused, "EROFS",
-					"`md "+args[0]+"` cannot write to "+args[1]+": fabric paths (agents/ self/ sessions/ types/ .revs) are read-only projections",
-					"name the source section — an hpath (file#Heading) or a `^block-id`, not a projection path", pos)
+			// R5 write-target model (see vetWriteTarget): projections refused.
+			if len(args) > 1 {
+				if e := vetWriteTarget(args[0], args[1], pos); e != nil {
+					return e
+				}
 			}
 			for _, a := range args[1:] {
 				if p := pathishArg(a); p != "" {
@@ -469,25 +553,6 @@ func normPath(p string) string {
 		return ""
 	}
 	return path.Clean(p)
-}
-
-// isFabricReadOnlyTarget reports whether an md write target resolves under a
-// read-only fabric projection root (R5). The target is normalized and its first
-// path segment is matched against fabricReadOnlyRoots (`.revs` is a whole-file
-// projection with no directory segment).
-func isFabricReadOnlyTarget(target string) bool {
-	p := normPath(target)
-	if p == "" {
-		return false
-	}
-	if p == ".revs" {
-		return true
-	}
-	seg := p
-	if i := strings.IndexByte(p, '/'); i >= 0 {
-		seg = p[:i]
-	}
-	return fabricReadOnlyRoots[seg]
 }
 
 // isFlagWith reports whether a is a short-flag cluster containing c (e.g.

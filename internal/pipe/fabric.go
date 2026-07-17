@@ -42,8 +42,11 @@ import (
 // duplicate name gets a "-2" (then "-3", …) suffix. Every registered path is
 // filepath.Clean-ed and asserted under the fabric root (traversal defense).
 //
-// Fabric paths are READ-ONLY projections: the `md` write handler (U9b) never
-// accepts a fabric path as a write target — only hpath/`^id` (R5).
+// Fabric PROJECTIONS are READ-ONLY: the `md` write handler (U9b) accepts only
+// a base file's section address (<base>.md#hpath / #^id — the R5 write-target
+// model, pinned in preflight.go); exploded section files, self/, .revs and
+// .properties.yml are never write targets. RealPaths (below) is the base-file
+// resolution the write path uses.
 
 // entry is one row of the single enumeration.
 type entry struct {
@@ -62,11 +65,36 @@ type Fabric struct {
 	// files, sec_rev for exploded section files. U9b's commit CAS runs
 	// against these.
 	Revs map[string]string
+	// RealPaths maps each BASE-FILE fabric path (agents/<id>.md, tasks/*.md,
+	// sessions/*.md, types/*.md) to the real on-disk file it projects — the
+	// resolution the U9b write path uses to address real session files. Exploded
+	// section files, self/ mirrors, .properties.yml and .revs are deliberately
+	// ABSENT: they are read-only projections, never write targets (R5).
+	RealPaths map[string]string
+	// SessionDir is the source session directory the fabric was built from.
+	SessionDir string
+	// SelfID is the agent id mirrored at self/ ("" when unset).
+	SelfID string
 	// Warnings lists source files skipped because they failed to parse —
 	// honest omission, never a silent fallback.
 	Warnings []string
 
 	vfs *VFS
+}
+
+// Snapshot returns the T0 content bytes of a fabric-relative file, or nil when
+// the path names no virtual file (absent, or a directory). It is the byte-level
+// face of the same snapshot the VFS serves the interpreter.
+func (f *Fabric) Snapshot(rel string) []byte {
+	abs, ok := f.vfs.resolve(filepath.FromSlash(rel))
+	if !ok {
+		return nil
+	}
+	n, found := f.vfs.nodes[abs]
+	if !found || n.dir {
+		return nil
+	}
+	return n.content
 }
 
 // BuildFabric renders sessionDir into a new fabric. selfID, when non-empty,
@@ -81,9 +109,12 @@ func BuildFabric(sessionDir, selfID string) (*Fabric, error) {
 	if r, err := filepath.EvalSymlinks(root); err == nil {
 		root = r
 	}
-	f := &Fabric{Root: root, Revs: map[string]string{}, vfs: newVFS(root)}
+	f := &Fabric{
+		Root: root, Revs: map[string]string{}, RealPaths: map[string]string{},
+		SessionDir: sessionDir, SelfID: selfID, vfs: newVFS(root),
+	}
 
-	entries, warnings, err := enumerate(sessionDir, selfID, f.Revs)
+	entries, warnings, err := enumerate(sessionDir, selfID, f.Revs, f.RealPaths)
 	if err != nil {
 		f.Close()
 		return nil, err
@@ -137,9 +168,10 @@ func (f *Fabric) Close() error { return os.RemoveAll(f.Root) }
 // TmpDir is the curated TMPDIR inside the sandbox.
 func (f *Fabric) TmpDir() string { return filepath.Join(f.Root, ".tmp") }
 
-// enumerate builds the single entries slice both consumers use, filling revs
-// as it goes. Enumeration order is deterministic (sorted per class).
-func enumerate(sessionDir, selfID string, revs map[string]string) ([]entry, []string, error) {
+// enumerate builds the single entries slice both consumers use, filling revs —
+// and realPaths for the base files (the write-target resolution) — as it goes.
+// Enumeration order is deterministic (sorted per class).
+func enumerate(sessionDir, selfID string, revs, realPaths map[string]string) ([]entry, []string, error) {
 	var out []entry
 	var warnings []string
 
@@ -163,6 +195,7 @@ func enumerate(sessionDir, selfID string, revs map[string]string) ([]entry, []st
 		rel := "agents/" + id + ".md"
 		out = append(out, entry{rel: rel, content: doc.Bytes()})
 		revs[rel] = doc.Toc().Rev
+		realPaths[rel] = p
 
 		exploded := explode(doc, "agents/"+id, revs)
 		out = append(out, exploded...)
@@ -191,6 +224,7 @@ func enumerate(sessionDir, selfID string, revs map[string]string) ([]entry, []st
 			rel := cls.dst + "/" + filepath.Base(p)
 			out = append(out, entry{rel: rel, content: doc.Bytes()})
 			revs[rel] = doc.Toc().Rev
+			realPaths[rel] = p
 		}
 	}
 
