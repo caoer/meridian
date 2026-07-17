@@ -58,6 +58,7 @@ func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 			All        bool              `json:"all"`
 			Edits      []editEditParam   `json:"edits"`
 			Properties map[string]string `json:"properties"`
+			Force      bool              `json:"force"`
 			Format     string            `json:"format"`
 		}
 		if req.Params != nil {
@@ -82,7 +83,7 @@ func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 		}
 
 		if len(params.Edits) == 0 && len(params.Properties) == 0 {
-			return editSectionSingle(fsys, base, actor, params.Target, params.Hash, params.Old, params.New, params.All)
+			return editSectionSingle(fsys, base, actor, params.Target, params.Hash, params.Old, params.New, params.All, params.Force)
 		}
 
 		diskPath, defFrag, errResp := resolveWriteFileBare(fsys, base, params.Target)
@@ -122,7 +123,7 @@ func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 
 		// The top-level hash is the batch rev (each edit's own hash wins when set);
 		// the rev ladder and all-or-nothing refusal are Splice's.
-		res, err := body.Splice(diskPath, edits, params.Hash, actor)
+		res, err := body.Splice(diskPath, edits, params.Hash, actor, forceOpts(params.Force)...)
 		if err != nil {
 			return editSpliceError(diskPath, "", params.Hash, err)
 		}
@@ -143,7 +144,7 @@ func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 // editSectionSingle is the pre-batch single-edit path, kept verbatim: same
 // resolution (fragment required), same Splice call, same JSON — the back-compat
 // contract.
-func editSectionSingle(fsys fs.FS, base, actor, target, hash, old, new string, all bool) *cli.Response {
+func editSectionSingle(fsys fs.FS, base, actor, target, hash, old, new string, all, force bool) *cli.Response {
 	diskPath, frag, errResp := resolveWriteFile(fsys, base, target)
 	if errResp != nil {
 		return errResp
@@ -158,7 +159,7 @@ func editSectionSingle(fsys fs.FS, base, actor, target, hash, old, new string, a
 		Find:   old,
 		New:    new,
 		All:    all,
-	}}, hash, actor)
+	}}, hash, actor, forceOpts(force)...)
 	if err != nil {
 		return editSpliceError(diskPath, frag, hash, err)
 	}

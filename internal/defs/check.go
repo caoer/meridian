@@ -5,7 +5,15 @@
 // legacy-useful, NEVER invalid — and an entry that doesn't parse is flagged for
 // form, kept for content. Only real violations (nested frontmatter, shape
 // breaks, the terminal biconditional, guarded-empty sections at terminal) make
-// a file invalid. Stratum 4 (# Checks md-run plug-ins) is U7.
+// a file invalid.
+//
+// DEFERRED beyond v1 (leader a32b8a12, U6→U7 handoff): stratum 4 (`# Checks`
+// md-run plug-in blocks) and per-terminal-value guard binding (`done` vs
+// `retired` needing different guards) — v1 ships UNIFORM terminal guards; the
+// closed guard set (actor-not-owner · section-non-empty · requires ·
+// append-only) is per-def, not per-terminal-value. Revisit as a declared
+// per-value guard map (amending the `def` kind's own def) or an imperative
+// check here if a real def needs it.
 package defs
 
 import (
@@ -297,6 +305,16 @@ func scoreDeclared(doc *body.Document, toc body.Toc, sec body.Section, rule Sect
 			}
 			if rule.Sync != "" && strings.HasSuffix(text, "<!-- manual -->") {
 				continue // the merge contract's manual lines are never grammar-bound
+			}
+			// A legacy-marked LINE entry is exempt from the grammar, exactly like a
+			// marked heading entry: the mark is the sanctioned "kept for content,
+			// excluded from strict harvest" state — re-flagging it would make
+			// `md def fix` non-idempotent and its own writes non-conformant.
+			if rule.LegacyMark != "" && strings.Contains(text, rule.LegacyMark) {
+				legacy++
+				rep.Findings = append(rep.Findings, findingAt("def/legacy-entry", "warn", path, ln.num,
+					fmt.Sprintf("# %s: entry %q carries %s — kept for content, excluded from strict harvest", sec.Title, text, rule.LegacyMark)))
+				continue
 			}
 			if !grammar.MatchString(text) {
 				miss++

@@ -38,6 +38,11 @@ type (
 	DeltaKind = ibody.DeltaKind
 	// Error is the single structured engine error {code, message, remedy, context}.
 	Error = ibody.Error
+	// SpliceOption configures one Splice invocation (see Force).
+	SpliceOption = ibody.SpliceOption
+	// ForceStat aggregates one actor's journaled writes and forced-warning
+	// overrides — the R-force audit surface.
+	ForceStat = ibody.ForceStat
 )
 
 // EditOp values, re-exported.
@@ -68,9 +73,21 @@ func Load(path string) (*Document, error) { return ibody.Load(path) }
 func Parse(src []byte) (*Document, error) { return ibody.Parse(src) }
 
 // Splice is the one write path: guarded, locked, atomic byte-splice over target.
-func Splice(target string, edits []Edit, rev, actor string) (Result, error) {
-	return ibody.Splice(target, edits, rev, actor)
+func Splice(target string, edits []Edit, rev, actor string, opts ...SpliceOption) (Result, error) {
+	return ibody.Splice(target, edits, rev, actor, opts...)
 }
+
+// Force opts a Splice into overriding WARNING-rung I4 conformance findings.
+// Errors are never forceable; every forced warning is journaled and censused.
+func Force() SpliceOption { return ibody.Force() }
+
+// JournalForceStats returns per-actor force stats from the journal governing
+// target — the per-agent force-rate surface (R-force).
+func JournalForceStats(target string) map[string]ForceStat { return ibody.JournalForceStats(target) }
+
+// ForceStatsUnder aggregates per-actor force stats from every journal under root
+// — the fleet def-census consumer (R-force).
+func ForceStatsUnder(root string) map[string]ForceStat { return ibody.ForceStatsUnder(root) }
 
 // DiffSections reports how sections changed between two revisions of a document.
 func DiffSections(a, b *Document) []SectionDelta { return ibody.DiffSections(a, b) }

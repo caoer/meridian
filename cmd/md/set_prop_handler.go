@@ -33,6 +33,7 @@ func setPropHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 		var params struct {
 			Target     string            `json:"target"`
 			Properties map[string]string `json:"properties"`
+			Force      bool              `json:"force"`
 			Format     string            `json:"format"`
 		}
 		if req.Params != nil {
@@ -58,7 +59,7 @@ func setPropHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 				"drop the #fragment — properties belong to the file; to write a section use md append / md edit-section")
 		}
 
-		res, err := body.Splice(diskPath, propertyEdits(params.Properties), "", actor)
+		res, err := body.Splice(diskPath, propertyEdits(params.Properties), "", actor, forceOpts(params.Force)...)
 		if err != nil {
 			return spliceError(err)
 		}

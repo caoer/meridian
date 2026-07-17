@@ -1,7 +1,7 @@
 ---
 type: def
 defines: memo
-version: 1
+version: 2
 status: active
 tags: [type/def]
 ---
@@ -9,8 +9,15 @@ tags: [type/def]
 # What a memo is
 
 One promoted finding with a claim that carries the whole thing in its title,
-evidence, and a consequence — the unit the compound sweep absorbs. (Minimal U6
-gate def; U7 authors the full builtin.)
+evidence, and a consequence — the unit the compound sweep absorbs. A memo is
+born either as a `### {memo-type}: {title}` entry in an agent file's `# Memo`
+section or as this standalone record when it outgrows the entry form; the
+title IS the structure (harvest = title extraction, no JSON second line —
+structured payloads go in fenced blocks under the heading).
+
+Provenance rides the frontmatter: which agent, which task, which session. The
+one terminal is `absorbed` — compound took it into an immutable source; an
+open memo is a pending knowledge transfer, not a status report.
 
 # Properties
 
@@ -33,18 +40,22 @@ tags:      {shape: list(line), required: true, default: [type/memo]}
 write: owner
 on-violation: flag
 ```
+The finding, restated as one falsifiable assertion.
 
 ## section: Evidence
 ```yaml
 write: owner
 on-violation: flag
 ```
+What was observed: commands, output, file:line — enough for a stranger to
+re-verify without the session.
 
 ## section: Consequence
 ```yaml
 write: owner
 on-violation: flag
 ```
+What changes because this is true: the rule, the fix, the convention.
 
 # Template
 

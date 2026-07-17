@@ -44,6 +44,10 @@ type journalEntry struct {
 	Actor string `json:"actor"`
 	// Hash is the xxhash8 of the write payload — dedupe key only, never the payload.
 	Hash string `json:"hash,omitempty"`
+	// Forced lists the I4 warning RULE IDS this write overrode with Force() —
+	// metadata (rule vocabulary), never content. The fleet def census consumes
+	// these counts and the per-agent force-rate derives from them (R-force).
+	Forced []string `json:"forced,omitempty"`
 }
 
 // journalDir resolves the .ccc directory for a target file: the nearest ancestor
@@ -140,6 +144,64 @@ func recentHashes(target, section, key, op, actor string) map[string]bool {
 		out[e.Hash] = true
 	}
 	return out
+}
+
+// ForceStat aggregates one actor's journaled writes and forced-warning overrides
+// — the R-force audit surface. ForcedWrites counts journal entries that carried at
+// least one forced warning; ForcedWarnings counts the individual overridden rules.
+type ForceStat struct {
+	Writes         int `json:"writes"`
+	ForcedWrites   int `json:"forced_writes"`
+	ForcedWarnings int `json:"forced_warnings"`
+}
+
+// JournalForceStats reads the journal that governs target (its nearest .ccc) and
+// returns per-actor force stats — the per-agent force-rate that surfaces in the
+// agent's own `md def check` context (R-force). Best-effort like every journal
+// read: a missing or garbled journal yields an empty map.
+func JournalForceStats(target string) map[string]ForceStat {
+	return forceStatsFromFile(journalPath(target), map[string]ForceStat{})
+}
+
+// ForceStatsUnder walks root for .ccc/events.ndjson journals and aggregates
+// per-actor force stats fleet-wide — the def census consumer (R-force).
+func ForceStatsUnder(root string) map[string]ForceStat {
+	out := map[string]ForceStat{}
+	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // unreadable subtree: audit is best-effort, never fatal
+		}
+		if d.IsDir() && d.Name() == ".ccc" {
+			forceStatsFromFile(filepath.Join(p, "events.ndjson"), out)
+		}
+		return nil
+	})
+	return out
+}
+
+// forceStatsFromFile folds one journal file's entries into acc.
+func forceStatsFromFile(path string, acc map[string]ForceStat) map[string]ForceStat {
+	f, err := os.Open(path)
+	if err != nil {
+		return acc
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		var e journalEntry
+		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+			continue
+		}
+		s := acc[e.Actor]
+		s.Writes++
+		if len(e.Forced) > 0 {
+			s.ForcedWrites++
+			s.ForcedWarnings += len(e.Forced)
+		}
+		acc[e.Actor] = s
+	}
+	return acc
 }
 
 // sameTarget reports whether a journal entry's recorded path addresses the same

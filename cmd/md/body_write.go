@@ -212,8 +212,13 @@ func freshSecRev(path, frag string) string {
 	return sec.Rev
 }
 
-// def/grammar SEAM: v1 write verbs are def-unaware. U6 (def parser) and U7 (I4
-// conformance) wire a pre-write shape/grammar check here — and inside Splice at
-// the conformanceHook — so a write that violates a def kind's declared shape
-// refuses or warns. Until then every structurally-valid splice passes; the seam is
-// this comment plus Splice's conformanceHook, deliberately left as no-ops.
+// forceOpts renders a verb's `"force": true` param into Splice options. Force
+// overrides WARNING-rung I4 conformance findings only (errors never yield);
+// every forced warning is journaled by rule id and consumed by `md def census`
+// (R-force: force is auditable, not silent).
+func forceOpts(force bool) []body.SpliceOption {
+	if force {
+		return []body.SpliceOption{body.Force()}
+	}
+	return nil
+}

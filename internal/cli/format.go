@@ -299,6 +299,12 @@ func formatData(w io.Writer, data any) {
 	case DefCheckData:
 		d.renderText(w)
 
+	case DefFixData:
+		d.renderText(w)
+
+	case DefCensusReportData:
+		d.renderText(w)
+
 	case AppendData:
 		d.renderText(w)
 

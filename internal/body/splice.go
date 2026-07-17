@@ -35,7 +35,9 @@ import (
 //     unless the edit opts into `All`).
 //  3. The rev ladder (fresh / stale-conflict / omitted-relaxation / append-dedupe /
 //     destructive-requires-fresh).
-//  4. I4 conformance (stub until U7).
+//  4. I4 conformance — the def-driven severity ladder (error refuse / warning
+//     refuse-unless-force / repair autofill), installed via SetConformance by
+//     internal/defs' init (U7). Forced warnings are journaled and censused.
 //
 // Then splices apply high→low (so earlier offsets stay valid), the result must
 // re-map cleanly (reparse gate — refuse rather than corrupt), the bytes land via
@@ -125,9 +127,56 @@ func appendDistinct(list []string, s string) []string {
 	return append(list, s)
 }
 
+// SpliceOption configures one Splice invocation beyond its positional contract.
+type SpliceOption func(*spliceConfig)
+
+type spliceConfig struct{ force bool }
+
+// Force opts the invocation into overriding WARNING-rung I4 conformance findings.
+// ERROR-rung findings are never forceable. Force is auditable, never silent
+// (R-force): every overridden warning's rule id lands in the journal entry's
+// `forced` field, the fleet def census consumes those counts, and the per-agent
+// force-rate surfaces in the agent's own `md def check` context.
+func Force() SpliceOption { return func(c *spliceConfig) { c.force = true } }
+
+// ConformanceRequest is what the I4 hook sees for one committed-candidate write:
+// the pre-write document, the post-splice candidate, and the invocation identity.
+type ConformanceRequest struct {
+	Target string
+	Actor  string
+	Force  bool
+	Prev   *Document // the document as read under the lock, before this write
+	Next   *Document // the spliced candidate (already past the reparse gate)
+}
+
+// ConformanceResult is the I4 verdict on one write, per the severity ladder:
+// error → Refuse; warning → Refuse unless forced (then Forced carries the rule
+// ids for the journal/census); repair → Repairs autofill edits, applied and
+// re-checked once (the repaired result must conform with nothing further).
+type ConformanceResult struct {
+	Refuse  *Error
+	Forced  []string
+	Repairs []Edit
+}
+
+// ConformanceFunc is the I4 validator seam. internal/defs installs the def-driven
+// implementation from its init (any binary linking the defs package arms I4);
+// body's own tests exercise I0–I3 with the hook unset.
+type ConformanceFunc func(ConformanceRequest) ConformanceResult
+
+var conformance ConformanceFunc
+
+// SetConformance installs the I4 conformance validator called on every Splice
+// between the reparse gate and the durable write.
+func SetConformance(fn ConformanceFunc) { conformance = fn }
+
 // Splice applies edits to target under the sidecar lock, guarded I3→I1/I2→rev→I4.
 // See the file doc for the full contract.
-func Splice(target string, edits []Edit, rev, actor string) (Result, error) {
+func Splice(target string, edits []Edit, rev, actor string, opts ...SpliceOption) (Result, error) {
+	var cfg spliceConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	if len(edits) == 0 {
 		return Result{}, &Error{
 			Code:    "E_FAIL_LOUD",
@@ -248,9 +297,63 @@ func Splice(target string, edits []Edit, rev, actor string) (Result, error) {
 		}
 	}
 
-	// (6) I4 conformance hook — stub until U7; the seam is here.
-	if ierr := conformanceHook(newDoc); ierr != nil {
-		return Result{}, ierr
+	// (6) I4 conformance — the def-driven severity ladder (error refuse / warning
+	// refuse-unless-force / repair autofill), installed by internal/defs via
+	// SetConformance. A refusal leaves the original file untouched like every other
+	// guard. Repairs are applied over the candidate and the hook re-runs ONCE — the
+	// repaired result must conform with nothing further, else fail loud (no repair
+	// loops).
+	var forced []string
+	var repairPlans []journalPlan
+	if conformance != nil {
+		creq := ConformanceRequest{Target: target, Actor: actor, Force: cfg.force, Prev: doc, Next: newDoc}
+		cres := conformance(creq)
+		if cres.Refuse != nil {
+			return Result{}, cres.Refuse
+		}
+		forced = cres.Forced
+		if len(cres.Repairs) > 0 {
+			var rops []spliceOp
+			for i := range cres.Repairs {
+				rres, rerr := planEdit(newDoc, cres.Repairs[i], "", actor, target, map[int]bool{})
+				if rerr != nil {
+					return Result{}, &Error{
+						Code:    "E_FAIL_LOUD",
+						Message: "I4 repair edit failed to plan: " + rerr.Message,
+						Remedy:  "the write was refused; the file is unchanged. Report this — a repair must always be plannable",
+					}
+				}
+				rops = append(rops, rres.ops...)
+				if rres.journal.op != "" {
+					repairPlans = append(repairPlans, rres.journal)
+				}
+			}
+			if verr := assertDisjoint(rops); verr != nil {
+				return Result{}, verr
+			}
+			repaired := applySplices(newDoc.Source, rops)
+			repairedDoc, perr := parse(repaired)
+			if perr != nil {
+				return Result{}, &Error{
+					Code:    "E_WOULD_CORRUPT",
+					Message: "the I4-repaired result would not parse: " + perr.Message,
+					Remedy:  "the write was refused; the file is unchanged",
+				}
+			}
+			out = repaired
+			newDoc = repairedDoc
+			creq.Next = newDoc
+			if again := conformance(creq); again.Refuse != nil || len(again.Repairs) > 0 {
+				return Result{}, &Error{
+					Code:    "E_FAIL_LOUD",
+					Message: "I4 repair did not converge: the repaired result still fails conformance",
+					Remedy:  "the write was refused; the file is unchanged. Fix the content (md def check explains the def) and retry",
+				}
+			}
+		}
+	}
+	for _, rule := range forced {
+		warnings = append(warnings, "forced_warning:"+rule)
 	}
 
 	// (7) Durable write: tmp + fsync + rename, preserving the original perms.
@@ -280,6 +383,23 @@ func Splice(target string, edits []Edit, rev, actor string) (Result, error) {
 			Rev:     newRev,
 			Actor:   actor,
 			Hash:    batchEntry.hash,
+			Forced:  forced,
+		})
+	}
+	// An I4 repair journals its OWN audit line (op "repair") so the caller's entry
+	// stays byte-identical to what an at-least-once retry would compute — the
+	// append/batch dedupe identity must not absorb system-authored repair keys.
+	if len(repairPlans) > 0 {
+		rp := coalesceJournal(repairPlans)
+		appendJournal(target, journalEntry{
+			TS:      time.Now().Format(time.RFC3339Nano),
+			Path:    target,
+			Section: rp.section,
+			Op:      "repair",
+			Key:     rp.key,
+			Rev:     newRev,
+			Actor:   actor,
+			Hash:    rp.hash,
 		})
 	}
 
@@ -512,8 +632,16 @@ func planSetProperty(doc *Document, e Edit) (editResult, *Error) {
 	plan := journalPlan{op: string(OpSetProperty), key: key, hash: rev8([]byte(key + ":" + val))}
 	for _, k := range doc.fm {
 		if k.key == key {
+			repl := []byte(val)
+			// An empty value on a bare "key:" line (no trailing space — the form
+			// def templates scaffold) has its span flush against the colon; writing
+			// a value there must insert the "key: value" separator or the spliced
+			// line stops being a YAML mapping entry.
+			if val != "" && k.start == k.end && k.start > 0 && doc.Source[k.start-1] == ':' {
+				repl = append([]byte(" "), repl...)
+			}
 			return editResult{
-				ops:     []spliceOp{{start: k.start, end: k.end, replacement: []byte(val)}},
+				ops:     []spliceOp{{start: k.start, end: k.end, replacement: repl}},
 				journal: plan,
 			}, nil
 		}
@@ -896,11 +1024,6 @@ func fsyncDir(dir string) {
 	_ = d.Sync()
 	_ = d.Close()
 }
-
-// conformanceHook is the I4 seam: once U7 lands the defs validator, a write that
-// violates a def rule refuses (error rung) or warns (refuse-unless-force). Until
-// then it passes everything.
-func conformanceHook(*Document) *Error { return nil }
 
 // dedupWarnings returns the warnings slice with nil normalized away (an empty slice
 // reads cleaner than a shared nil in Result).

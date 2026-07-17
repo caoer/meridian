@@ -6,10 +6,18 @@
 package defs
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 )
+
+// ErrNoDef marks a Resolve miss: no def file exists for the kind anywhere in the
+// layer ladder. Callers that must FAIL CLOSED (def check, def fix) treat it like
+// any resolve error; the WRITE-path hook (I4) distinguishes it from a malformed
+// def — a kind nobody defined is not a record contract, so the write proceeds,
+// while a def that EXISTS but fails to load refuses-unless-forced.
+var ErrNoDef = errors.New("no def resolves for kind")
 
 // Resolve merges the def for kind (and optional preset) across layers — an
 // ordered list of defs directories, NEAREST FIRST. Within one layer a
@@ -39,7 +47,7 @@ func Resolve(kind, preset string, layers []string) (*Def, error) {
 		}
 	}
 	if merged == nil {
-		return nil, fmt.Errorf("no def for kind %q (preset %q) in layers %v", kind, preset, layers)
+		return nil, fmt.Errorf("%w: kind %q (preset %q) in layers %v", ErrNoDef, kind, preset, layers)
 	}
 	return merged, nil
 }

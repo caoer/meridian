@@ -2,7 +2,7 @@
 type: def
 defines: session
 preset: standard
-version: 1
+version: 2
 status: active
 tags: [type/def]
 ---
@@ -10,10 +10,20 @@ tags: [type/def]
 # What a standard session is
 
 The standard session file: mission in frontmatter, a Board of checkbox rows, an
-Agents roster, a Log. Terminal: `compounded` (knowledge absorbed) or
-`abandoned` (always legal — pretending otherwise would be ceremony). A preset
-IS a definition file; this one defines kind `session` for preset `standard`.
-(Minimal U6 gate def; U7 authors the full builtin.)
+Agents roster, a Log. A preset IS a definition file — this one defines kind
+`session` for preset `standard`, and the cascade makes it the nearest layer for
+every record under the session tree (a `defs/` directory beside SESSION.md
+overrides per key, no code).
+
+The Board is a real Kanban with no columns: tasks as checkbox rows, `owner`
+and `status` inline and free-form — the honest minimum. `promote-at` names the
+growth trigger: when a section outgrows the file, `md promote` shards it into
+the standard tree (tasks/ · agents/) without losing a byte; promotion
+preserves each row as a record under the bundled def.
+
+Terminals: `compounded` (knowledge absorbed — compound is the terminal
+cleanup) or `abandoned` (always legal — pretending otherwise would be
+ceremony).
 
 # Properties
 
@@ -37,7 +47,8 @@ entry: "- [{done}] {title}  ·  {owner}  ·  {status}  ^{blockid}"
 promote-at: 12 entries
 on-violation: flag
 ```
-Tasks as checkbox rows — a real Kanban with no columns.
+Tasks as checkbox rows — a real Kanban with no columns. The `^{blockid}`
+anchor makes every row block-addressable for splice edits and promotion.
 
 ## section: Agents
 ```yaml
@@ -46,6 +57,8 @@ entry: "- {role} {id} — {status} ^{blockid}"
 promote-at: 6 entries
 on-violation: flag
 ```
+The roster mirror, tool-written. Liveness is computed truth — this section
+records who exists, never hand-maintained status prose.
 
 ## section: Log
 ```yaml
@@ -53,6 +66,7 @@ write: any
 entry: "- {iso} {line}"
 on-violation: flag
 ```
+Append-only session journal: one dated line per event, any writer.
 
 # Template
 

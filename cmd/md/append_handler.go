@@ -49,6 +49,7 @@ func appendHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 			Content    string            `json:"content"`
 			Edits      []appendEditParam `json:"edits"`
 			Properties map[string]string `json:"properties"`
+			Force      bool              `json:"force"`
 			Format     string            `json:"format"`
 		}
 		if req.Params != nil {
@@ -72,7 +73,7 @@ func appendHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 		}
 
 		if len(params.Edits) == 0 && len(params.Properties) == 0 {
-			return appendSingle(fsys, base, actor, params.Target, params.Content)
+			return appendSingle(fsys, base, actor, params.Target, params.Content, params.Force)
 		}
 
 		diskPath, defFrag, errResp := resolveWriteFileBare(fsys, base, params.Target)
@@ -102,7 +103,7 @@ func appendHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 			sections = appendDistinct(sections, frag)
 		}
 
-		res, err := body.Splice(diskPath, edits, "", actor)
+		res, err := body.Splice(diskPath, edits, "", actor, forceOpts(params.Force)...)
 		if err != nil {
 			return spliceError(err)
 		}
@@ -123,7 +124,7 @@ func appendHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 
 // appendSingle is the pre-batch single-edit path, kept verbatim: same resolution
 // (fragment required), same Splice call, same JSON — the back-compat contract.
-func appendSingle(fsys fs.FS, base, actor, target, content string) *cli.Response {
+func appendSingle(fsys fs.FS, base, actor, target, content string, force bool) *cli.Response {
 	diskPath, frag, errResp := resolveWriteFile(fsys, base, target)
 	if errResp != nil {
 		return errResp
@@ -133,7 +134,7 @@ func appendSingle(fsys fs.FS, base, actor, target, content string) *cli.Response
 		Op:     body.OpAppend,
 		Target: frag,
 		New:    content,
-	}}, "", actor)
+	}}, "", actor, forceOpts(force)...)
 	if err != nil {
 		return spliceError(err)
 	}

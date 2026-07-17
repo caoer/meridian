@@ -202,6 +202,25 @@ func TestSetPropertyNewKey(t *testing.T) {
 	}
 }
 
+// TestSetPropertyBareEmptyKey: an empty value on a bare "key:" line (no trailing
+// space — the form def templates scaffold, e.g. "closed_at:") gets the "key: value"
+// separator inserted with the value; without it the spliced line would stop being
+// a YAML mapping entry and corrupt the frontmatter (found by U7's I4 tests).
+func TestSetPropertyBareEmptyKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "d.md")
+	if err := os.WriteFile(path, []byte("---\nclosed_at:\ntype: note\n---\n# Alpha\naaa\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Splice(path, []Edit{{Op: OpSetProperty, Target: "closed_at", New: "2026-07-16T11:00:00"}}, "", "worker"); err != nil {
+		t.Fatalf("set_property on bare empty key: %v", err)
+	}
+	want := "---\nclosed_at: 2026-07-16T11:00:00\ntype: note\n---\n# Alpha\naaa\n"
+	if got := string(readFile(t, path)); got != want {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+}
+
 // TestSetPropertyGuards: no-frontmatter refusal, newline injection, illegal keys —
 // each fails LOUD with the file untouched.
 func TestSetPropertyGuards(t *testing.T) {

@@ -497,3 +497,82 @@ todo
 		t.Fatalf("file = %q, want legacy-useful (form flagged, content kept)", rep.Verdict)
 	}
 }
+
+// TestLineGrammarLegacyMarkExempt pins the U7 completion of the legacy-mark
+// exemption: a MARKED line entry (bullet grammar) scores legacy-useful and is
+// NOT re-flagged as a grammar miss — the symmetry with heading entries that
+// makes `md def fix` idempotent and its own writes conformant.
+func TestLineGrammarLegacyMarkExempt(t *testing.T) {
+	dir := t.TempDir()
+	defSrc := `---
+type: def
+defines: logbook
+version: 1
+tags: [type/def]
+---
+
+# What a logbook is
+
+# Properties
+
+` + "```yaml" + `
+type: {shape: line, required: true, default: logbook}
+` + "```" + `
+^properties
+
+# Sections
+
+## section: Log
+` + "```yaml" + `
+entry: "- {iso} {line}"
+legacy-mark: "#legacy"
+` + "```" + `
+`
+	if err := os.WriteFile(filepath.Join(dir, "logbook.md"), []byte(defSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := filepath.Join(dir, "r.md")
+	src := `---
+type: logbook
+---
+
+# Log
+
+- 2026-07-16T10:00 parses fine
+- freeform relic line #legacy
+- relic
+`
+	if err := os.WriteFile(rec, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	def, err := Resolve("logbook", "", []string{dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := body.Load(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep := Check(doc, def)
+	var marked, missed int
+	for _, f := range rep.Findings {
+		switch f.RuleID {
+		case "def/legacy-entry":
+			marked++
+			if !strings.Contains(f.Message, "#legacy") {
+				t.Errorf("legacy-entry finding must name the mark: %s", f.Message)
+			}
+		case "def/entry-grammar":
+			missed++
+			if strings.Contains(f.Message, "freeform relic line") {
+				t.Errorf("a marked line must NOT be re-flagged as a grammar miss: %s", f.Message)
+			}
+		}
+	}
+	if marked != 1 || missed != 1 {
+		t.Fatalf("findings: %d legacy / %d missed, want 1/1; all: %+v", marked, missed, rep.Findings)
+	}
+	if sv := sectionVerdict(t, rep, "Log"); sv.Verdict != VerdictLegacy {
+		t.Fatalf("# Log verdict = %s, want legacy-useful", sv.Verdict)
+	}
+}

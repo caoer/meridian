@@ -1,7 +1,7 @@
 ---
 type: def
 defines: card
-version: 1
+version: 2
 status: active
 tags: [type/def]
 ---
@@ -9,10 +9,16 @@ tags: [type/def]
 # What a card is
 
 An ask/attention card: an immutable question posted to a human surface, with
-daemon-stamped resolution fields — a complete human-decision dataset (latency,
-channel, outcome) as a free byproduct. The question body is untouched by the
-answer; only the resolution stamps change. (Minimal U6 gate def; U7 authors
-the full builtin.)
+daemon-stamped resolution fields. The question body is untouched by the answer;
+only the resolution stamps change — `asked` / `answered` / `answered-via` are
+daemon-stamped and unforgeable, so the fleet's cards are a complete
+human-decision dataset (latency, channel, outcome) as a free byproduct.
+
+The record-title heading carries the question itself (`# {{question}}`) —
+declared shape via the template, never scored legacy. `answer` satisfies
+`requires(answered)`: an answer value without an answered timestamp is a
+cross-field violation. Terminals: `answered` (resolved), `withdrawn` (asker
+took it back), `expired` (timed urgency lapsed).
 
 # Properties
 
@@ -39,14 +45,16 @@ tags:         {shape: list(line), required: true, default: [type/card]}
 write: owner
 on-violation: flag
 ```
-The choices, as prose bullets; free-form.
+The choices, as prose bullets; free-form — a card teaches by reading like a
+question, not a form.
 
 ## section: Answer
 ```yaml
 write: tool
 on-violation: flag
 ```
-Appended once on resolution; absent while the card is open.
+Appended once on resolution by the resolving surface (Telegram relay, Obsidian
+reconciler, CLI); absent while the card is open.
 
 # Template
 
