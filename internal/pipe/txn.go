@@ -413,6 +413,9 @@ type ExecRequest struct {
 	Program string
 	Dry     bool
 	Options Options
+	// Extra merges provider-supplied read-only virtual files into the fabric
+	// (the U12 daemon face renders fleet state here). See ExtraFile.
+	Extra []ExtraFile
 }
 
 // Execute runs one program end to end: build fabric (T0 snapshot), run the
@@ -425,7 +428,7 @@ type ExecRequest struct {
 // an *Error — it is structured data inside the receipt (distinct channel), with
 // Exit = ExitConflict.
 func Execute(ctx context.Context, req ExecRequest) (Receipt, *Error) {
-	fab, err := BuildFabric(req.SessionDir, req.SelfID)
+	fab, err := BuildFabric(req.SessionDir, req.SelfID, req.Extra...)
 	if err != nil {
 		if perr, ok := err.(*Error); ok {
 			return Receipt{Exit: perr.Exit}, perr

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -55,6 +56,20 @@ type entry struct {
 	content []byte
 }
 
+// ExtraFile is one provider-supplied virtual file merged into the fabric at
+// build time — the U12 seam: the daemon renders its own read-shaped state
+// (fleet/<id>.md, …) through the SAME projection the session files use, never
+// a second shape. Extra files are read-only projections by construction: they
+// are excluded from RealPaths (so the U9b write path cannot address them) and
+// from Revs/.revs (they are computed render-time state, not CAS targets —
+// the computed-truth-never-committed law). Rel is fabric-relative,
+// "/"-separated; a path that escapes the root, duplicates an enumerated
+// entry, or names an existing directory is refused loudly.
+type ExtraFile struct {
+	Rel     string
+	Content []byte
+}
+
 // Fabric is the built projection: a real skeleton on disk plus the VFS
 // serving T0 content.
 type Fabric struct {
@@ -98,8 +113,10 @@ func (f *Fabric) Snapshot(rel string) []byte {
 }
 
 // BuildFabric renders sessionDir into a new fabric. selfID, when non-empty,
-// mirrors that agent's exploded dir at self/. The caller owns Close.
-func BuildFabric(sessionDir, selfID string) (*Fabric, error) {
+// mirrors that agent's exploded dir at self/. extra merges provider-supplied
+// read-only files (see ExtraFile) into the same enumeration. The caller owns
+// Close.
+func BuildFabric(sessionDir, selfID string, extra ...ExtraFile) (*Fabric, error) {
 	// Canonical/absolute session root regardless of caller cwd: RealPaths (and
 	// with them the receipt spellings, sidecar lock paths and CanonicalTarget's
 	// EvalSymlinks) all derive from it. Defense in depth — inode-shared flocks
@@ -127,6 +144,12 @@ func BuildFabric(sessionDir, selfID string) (*Fabric, error) {
 		return nil, err
 	}
 	f.Warnings = warnings
+
+	entries, err = mergeExtra(entries, extra)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
 
 	// ONE loop consumes the ONE enumeration: real skeleton and VFS together.
 	for _, e := range entries {
@@ -174,6 +197,53 @@ func (f *Fabric) Close() error { return os.RemoveAll(f.Root) }
 
 // TmpDir is the curated TMPDIR inside the sandbox.
 func (f *Fabric) TmpDir() string { return filepath.Join(f.Root, ".tmp") }
+
+// mergeExtra folds provider files into the single enumeration BEFORE the one
+// build loop, so the skeleton and the VFS stay in lockstep (the
+// single-enumeration law): each extra file contributes its missing parent
+// dirs as real skeleton dirs plus one virtual file. Rels are validated here
+// (clean, relative, root-contained) and refused on collision — provider
+// routes are deterministic daemon code, so a duplicate is a bug, never a
+// merge. Extra files enter neither revs nor realPaths: read-only, never
+// write targets, absent from .revs.
+func mergeExtra(entries []entry, extra []ExtraFile) ([]entry, error) {
+	if len(extra) == 0 {
+		return entries, nil
+	}
+	files := map[string]bool{}
+	dirs := map[string]bool{}
+	for _, e := range entries {
+		if e.dir {
+			dirs[e.rel] = true
+		} else {
+			files[e.rel] = true
+		}
+	}
+	for _, x := range extra {
+		rel := path.Clean(x.Rel)
+		if rel == "." || rel == ".." || strings.HasPrefix(rel, "../") || strings.HasPrefix(rel, "/") {
+			return nil, &Error{Exit: ExitRefused, Code: "E_TRAVERSAL",
+				Message: "extra file escapes the fabric root: " + x.Rel}
+		}
+		if files[rel] || dirs[rel] {
+			return nil, &Error{Exit: ExitRefused, Code: "E_PROVIDER_COLLISION",
+				Message: "extra file collides with a fabric entry: " + rel}
+		}
+		for d := path.Dir(rel); d != "."; d = path.Dir(d) {
+			if files[d] {
+				return nil, &Error{Exit: ExitRefused, Code: "E_PROVIDER_COLLISION",
+					Message: "extra file's parent collides with a fabric file: " + d}
+			}
+			if !dirs[d] {
+				dirs[d] = true
+				entries = append(entries, entry{rel: d, dir: true})
+			}
+		}
+		files[rel] = true
+		entries = append(entries, entry{rel: rel, content: x.Content})
+	}
+	return entries, nil
+}
 
 // enumerate builds the single entries slice both consumers use, filling revs —
 // and realPaths for the base files (the write-target resolution) — as it goes.
