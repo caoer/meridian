@@ -2,6 +2,7 @@ package pipe
 
 import (
 	"context"
+	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -11,13 +12,12 @@ import (
 	"github.com/gofrs/flock"
 )
 
-// txn.go is the pipe's staging transaction and its all-or-nothing commit — the
-// U9b half of the sandbox contract:
+// txn.go is the staging transaction and its all-or-nothing commit:
 //
-//   - During the program, `md` write verbs STAGE only (no mid-program disk
-//     write); reads keep serving the T0 snapshot (preflight already rejects a
-//     literal read-after-stage, R4; the snapshot is the dynamic backstop).
-//   - At program end, Commit lands every staged write or none:
+//   - Writes STAGE only (no mid-transaction disk write); reads serve the T0
+//     snapshot (VetRead refuses reading back a staged file — it would be
+//     silently stale).
+//   - At commit time, Commit lands every staged write or none:
 //
 //     1. group staged edits per real target file (canonicalized the same way
 //     Splice canonicalizes, so the sidecar lock paths agree), sort canonically;
@@ -56,54 +56,94 @@ import (
 // command): the caller has a structured receipt to act on.
 const ExitConflict = 1
 
-// stagedWrite is one md write verb captured mid-program.
+// stagedWrite is one write captured mid-transaction.
 type stagedWrite struct {
-	seq  int    // 1-based program order
-	rel  string // fabric-relative base file (agents/x.md, tasks/y.md, …)
+	seq  int    // 1-based staging order
+	rel  string // session-relative base file (agents/x.md, tasks/y.md, …)
 	real string // canonical real path (body.CanonicalTarget)
 	edit body.Edit
 }
 
-// maxStagedBytes bounds the content a single program may stage (mirrors the
-// CLI router's 10MB input cap).
+// maxStagedBytes bounds the content a single transaction may stage (mirrors
+// the CLI router's 10MB input cap).
 const maxStagedBytes = 10 << 20
 
-// Txn accumulates staged writes for one program run.
+// Snapshot is the T0 state a transaction stages against: for each stageable
+// session-relative file, its canonical real path, its file_rev at snapshot
+// time (the commit CAS anchor), and its snapshot bytes (the drift-delta base
+// in a conflict report). The snapshot provider fills it; the Txn only reads it.
+type Snapshot struct {
+	// Real maps a session-relative path (agents/<id>.md, tasks/<slug>.md, …)
+	// to its on-disk path.
+	Real map[string]string
+	// Revs maps the same keys to the file_rev at snapshot time.
+	Revs map[string]string
+	// Data maps the same keys to the snapshot bytes.
+	Data map[string][]byte
+}
+
+// Txn accumulates staged writes for one transaction.
 type Txn struct {
-	fab   *Fabric
+	snap  *Snapshot
 	actor string
 
 	mu          sync.Mutex
 	writes      []stagedWrite
+	staged      map[string]bool // rel → staged (the VetRead gate's index)
 	stagedBytes int
 }
 
-// NewTxn opens a staging transaction over fab for actor (the session/daemon-
-// derived identity — never program-asserted; the program has no surface to name
-// an actor).
-func NewTxn(fab *Fabric, actor string) *Txn {
-	return &Txn{fab: fab, actor: actor}
+// NewTxn opens a staging transaction over snap for actor (the session/daemon-
+// derived identity — never caller-asserted content; nothing staged can name an
+// actor).
+func NewTxn(snap *Snapshot, actor string) *Txn {
+	return &Txn{snap: snap, actor: actor, staged: map[string]bool{}}
 }
 
-// Stage records one write. rel is the fabric-relative base file; the edit is a
-// fully-formed body.Edit (rev already pinned to the T0 sec_rev by the handler
-// where the op is anchored).
+// Stage records one write. rel is the session-relative base file; the edit is
+// a fully-formed body.Edit (rev pinned to the T0 sec_rev by the caller where
+// the op is anchored). The write-target model (R5) gates every stage: only a
+// real file's section address is stageable — projections, mirrors, and
+// traversal spellings are refused with teaching.
 func (t *Txn) Stage(rel string, edit body.Edit) *Error {
+	target := rel
+	if edit.Target != "" {
+		target = rel + "#" + edit.Target
+	}
+	if e := vetWriteTarget(string(edit.Op), target, ""); e != nil {
+		return e
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.stagedBytes += len(edit.New) + len(edit.Find)
 	if t.stagedBytes > maxStagedBytes {
 		return &Error{Exit: ExitRefused, Code: "E_OVERFLOW",
 			Message: "staged writes exceed the 10MB transaction cap",
-			Remedy:  "split the program — a pipe transaction is not a bulk loader"}
+			Remedy:  "split the transaction — it is not a bulk loader"}
 	}
-	real := t.fab.RealPaths[rel]
+	real := t.snap.Real[rel]
+	t.staged[path.Clean(rel)] = true
 	t.writes = append(t.writes, stagedWrite{
 		seq:  len(t.writes) + 1,
 		rel:  rel,
 		real: body.CanonicalTarget(real),
 		edit: edit,
 	})
+	return nil
+}
+
+// VetRead is the staged-read gate: reading a file already staged in THIS
+// transaction is refused — reads serve the T0 snapshot, so the read would
+// silently miss the staged write. Consult it before serving any read that
+// shares a transaction with writes.
+func (t *Txn) VetRead(rel string) *Error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.staged[path.Clean(rel)] {
+		return &Error{Exit: ExitRefused, Code: "E_STAGED_READ",
+			Message: "you staged a write to " + rel + " and then read it — reads serve the pre-transaction snapshot, so the read would silently miss your write",
+			Remedy:  "read before you write, or split into two transactions"}
+	}
 	return nil
 }
 
@@ -206,7 +246,7 @@ func (t *Txn) groups() []*fileGroup {
 	for _, w := range t.writes {
 		g, ok := byReal[w.real]
 		if !ok {
-			g = &fileGroup{rel: w.rel, real: w.real, t0Rev: t.fab.Revs[w.rel]}
+			g = &fileGroup{rel: w.rel, real: w.real, t0Rev: t.snap.Revs[w.rel]}
 			byReal[w.real] = g
 			order = append(order, w.real)
 		}
@@ -303,7 +343,7 @@ func (t *Txn) Commit(ctx context.Context, dry bool) CommitResult {
 				g.rel+" changed since the snapshot (T0 "+g.t0Rev+" → now "+curRev+"); nothing was written",
 				"re-run the program against the current state")
 			r.Conflict.CurrentRev = curRev
-			if t0doc, perr := body.Parse(t.fab.Snapshot(g.rel)); perr == nil {
+			if t0doc, perr := body.Parse(t.snap.Data[g.rel]); perr == nil {
 				for _, d := range body.DiffSections(t0doc, cur) {
 					r.Conflict.Drift = append(r.Conflict.Drift, DriftDelta{
 						HPath: d.HPath, Change: string(d.Change), OldRev: d.OldRev, NewRev: d.NewRev,
@@ -379,16 +419,14 @@ func asBodyErr(err error) *body.Error {
 	return &body.Error{Code: "E_FAIL_LOUD", Message: err.Error()}
 }
 
-// Receipt is the ONE structured shape `md pipe` emits: the program's exit and
+// Receipt is the ONE structured shape a run emits: the program's exit and
 // retained streams, plus the transaction outcome (per-write diffs, commit
-// status, conflict). Decision 10: preflight summary lives in the teaching error
-// (stderr, nothing ran); this receipt covers everything that DID run.
+// status, conflict).
 //
-// PARTIAL-COMMIT CAVEAT (plan-accepted gap): a genuine step-5 disk error
-// (ENOSPC, EIO) after an earlier file already landed leaves Committed=false
-// while that earlier file's writes honestly read "committed". Callers MUST
-// inspect each write's Status — never just the top-level Committed bool — to
-// know what actually reached disk.
+// PARTIAL-COMMIT CAVEAT: a genuine step-5 disk error (ENOSPC, EIO) after an
+// earlier file already landed leaves Committed=false while that earlier file's
+// writes honestly read "committed". Callers MUST inspect each write's Status —
+// never just the top-level Committed bool — to know what actually reached disk.
 type Receipt struct {
 	Exit      int             `json:"exit"`
 	Truncated bool            `json:"truncated,omitempty"`
@@ -401,9 +439,27 @@ type Receipt struct {
 	Warnings  []string        `json:"warnings,omitempty"`
 }
 
-// ExecRequest is one pipe execution: the program, the session it projects, and
-// the invoking identity. One engine, two faces (decision 13): the `md pipe` CLI
-// and the daemon both call Execute.
+// DefaultTimeout is the run surface's wall-clock budget when Options.Timeout
+// is zero — callers clamping client-supplied timeouts anchor on it.
+const DefaultTimeout = 10 * time.Second
+
+// Options tune one run.
+type Options struct {
+	// Timeout is the wall-clock budget (DefaultTimeout when zero).
+	Timeout time.Duration
+}
+
+// ExtraFile is one provider-supplied read-only virtual file merged into a run's
+// projection (the daemon renders fleet state here). Rel is projection-relative,
+// "/"-separated. Extra files are read-only by construction: never write
+// targets, never CAS targets.
+type ExtraFile struct {
+	Rel     string
+	Content []byte
+}
+
+// ExecRequest is one run: the program, the session it projects, and the
+// invoking identity.
 type ExecRequest struct {
 	SessionDir string
 	SelfID     string
@@ -413,80 +469,18 @@ type ExecRequest struct {
 	Program string
 	Dry     bool
 	Options Options
-	// Extra merges provider-supplied read-only virtual files into the fabric
-	// (the U12 daemon face renders fleet state here). See ExtraFile.
-	Extra []ExtraFile
+	Extra   []ExtraFile
 }
 
-// Execute runs one program end to end: build fabric (T0 snapshot), run the
-// interpreter with the staged md handler, then — only after the engine has
-// reaped every handler goroutine (Run cancels before returning; commit never
-// races a stray goroutine) — commit or dry-report the staged writes.
-//
-// The returned *Error is non-nil for engine-stage refusals (preflight, timeout,
-// overflow, interpreter): teaching errors for stderr. A COMMIT conflict is NOT
-// an *Error — it is structured data inside the receipt (distinct channel), with
-// Exit = ExitConflict.
-func Execute(ctx context.Context, req ExecRequest) (Receipt, *Error) {
-	fab, err := BuildFabric(req.SessionDir, req.SelfID, req.Extra...)
-	if err != nil {
-		if perr, ok := err.(*Error); ok {
-			return Receipt{Exit: perr.Exit}, perr
-		}
-		return Receipt{Exit: ExitRefused}, &Error{Exit: ExitRefused, Code: "E_FABRIC",
-			Message: "cannot build the session fabric: " + err.Error()}
+// Execute is the run face — one program over a session projection. The run
+// surface is UNAVAILABLE in this build: every invocation is refused with one
+// named error before anything runs; nothing is staged and nothing is written.
+// The staged-commit engine (Txn) is the write path a run surface commits
+// through.
+func Execute(_ context.Context, _ ExecRequest) (Receipt, *Error) {
+	return Receipt{Exit: ExitRefused}, &Error{
+		Exit: ExitRefused, Code: "E_UNAVAILABLE", Message: "pipe: unavailable",
 	}
-	defer fab.Close()
-
-	txn := NewTxn(fab, req.Actor)
-	opts := req.Options
-	opts.Md = (&MdCmd{Fab: fab, Txn: txn}).Handler()
-
-	res, runErr := Run(ctx, req.Program, fab, opts)
-	rec := Receipt{
-		Exit:      res.Exit,
-		Truncated: res.Truncated,
-		Emit:      string(res.Stdout),
-		Stderr:    string(res.Stderr),
-		Dry:       req.Dry,
-		Warnings:  fab.Warnings,
-	}
-	if runErr != nil {
-		// Preflight/engine refusal: staged writes are DISCARDED, never partially
-		// committed (timeout/overflow row of the error map).
-		rec.Writes = txn.Writes()
-		for i := range rec.Writes {
-			rec.Writes[i].Status = "discarded"
-		}
-		var perr *Error
-		if e, ok := runErr.(*Error); ok {
-			perr = e
-		} else {
-			perr = &Error{Exit: ExitRefused, Code: "E_INTERP", Message: runErr.Error()}
-		}
-		return rec, perr
-	}
-	if res.Exit != 0 {
-		// The program itself failed: its staged writes do not land (all-or-
-		// nothing includes the program's own verdict).
-		rec.Writes = txn.Writes()
-		for i := range rec.Writes {
-			rec.Writes[i].Status = "discarded"
-		}
-		return rec, nil
-	}
-
-	// Run() has already cancelled and reaped every handler goroutine before
-	// returning (U8 delta 3) — the commit below cannot be raced.
-	cres := txn.Commit(ctx, req.Dry)
-	rec.Committed = cres.Committed
-	rec.Writes = cres.Writes
-	rec.Conflict = cres.Conflict
-	rec.Warnings = append(rec.Warnings, cres.Warnings...)
-	if cres.Conflict != nil {
-		rec.Exit = ExitConflict
-	}
-	return rec, nil
 }
 
 // renderConflictStep renders "step file: message" for human-facing summaries.

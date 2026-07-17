@@ -369,9 +369,8 @@ func blockRef(hpath string) (string, bool) {
 
 // Frontmatter returns the raw bytes of the frontmatter key/value region — the
 // lines between the opening "---" and the closing "---", exclusive of both
-// delimiter lines — or nil when the document has no frontmatter. The fabric
-// projection (internal/pipe) serves these bytes verbatim as
-// agents/<id>/.properties.yml; they are already YAML by construction.
+// delimiter lines — or nil when the document has no frontmatter. Callers may
+// serve these bytes verbatim as YAML; they are YAML by construction.
 func (d *Document) Frontmatter() []byte {
 	if d == nil {
 		return nil

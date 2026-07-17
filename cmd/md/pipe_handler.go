@@ -6,19 +6,11 @@ import (
 	"github.com/caoer/meridian/internal/cli"
 )
 
-// registerPipeVerb wires `md pipe` — the no-daemon face of the pipe engine
-// (decision 13) — onto the router. Like the body verbs it is config-free, and
-// main() and the boundary-wiring test both call it so the test exercises the
-// real registration: the session-derived actor binding (I3 — never a flag) and
-// the positional sugar.
+// registerPipeVerb wires `md pipe` onto the router. The pipe run surface is
+// unavailable: every invocation is refused with one named error.
 func registerPipeVerb(router *cli.Router) {
-	router.Handle("pipe", cli.PipeHandler(sessionActor()))
-	// `md pipe '<program>'` — positional sugar for {"program": …};
-	// `md pipe --grammar` — the discovery surface (R-discovery).
-	router.HandlePositional("pipe", func(arg string) (json.RawMessage, error) {
-		if arg == "--grammar" {
-			return json.Marshal(map[string]bool{"grammar": true})
-		}
-		return json.Marshal(map[string]string{"program": arg})
+	router.Handle("pipe", cli.PipeHandler())
+	router.HandlePositional("pipe", func(string) (json.RawMessage, error) {
+		return json.Marshal(map[string]any{})
 	})
 }

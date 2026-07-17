@@ -13,33 +13,72 @@ import (
 )
 
 // txn_test.go — the staging transaction and its all-or-nothing commit,
-// exercised through the one engine face (Execute) the CLI and daemon share.
+// exercised directly on the Txn (the commit engine's own face).
 
-func execProgram(t *testing.T, session, actor, program string, dry bool) (Receipt, *Error) {
+func testSession(t *testing.T) string {
 	t.Helper()
-	return Execute(context.Background(), ExecRequest{
-		SessionDir: session, SelfID: actor, Actor: actor,
-		Program: program, Dry: dry,
-	})
+	dir := t.TempDir()
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("agents/a1.md", "---\ntype: agent\nstatus: testing\n---\n\n# Memo\n\nalpha line\nbeta line\n\n# Notes\n\ngamma\n\n## Lab-state\n\ndelta line\n")
+	write("agents/a2.md", "---\ntype: agent\n---\n\n# Memo\n\nomega line\n\n# Notes\n\nepsilon\n")
+	write("tasks/t1.md", "---\ntype: task\n---\n\n# Task\n\ndo the thing\n")
+	return dir
 }
 
-// TestCommitLandsThroughSplice: a clean program's staged writes land at program
-// end via the guarded engine — journal written, fresh revs in the receipt, and
-// every byte outside the spliced ranges identical (I0).
+// snapshotOf builds the T0 Snapshot for the named session-relative files —
+// the state a transaction stages against.
+func snapshotOf(t *testing.T, session string, rels ...string) *Snapshot {
+	t.Helper()
+	s := &Snapshot{Real: map[string]string{}, Revs: map[string]string{}, Data: map[string][]byte{}}
+	for _, rel := range rels {
+		p := filepath.Join(session, filepath.FromSlash(rel))
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("snapshot %s: %v", rel, err)
+		}
+		doc, perr := body.Parse(b)
+		if perr != nil {
+			t.Fatalf("snapshot %s: %v", rel, perr)
+		}
+		s.Real[rel] = p
+		s.Revs[rel] = doc.Toc().Rev
+		s.Data[rel] = b
+	}
+	return s
+}
+
+func mustStage(t *testing.T, txn *Txn, rel string, edit body.Edit) {
+	t.Helper()
+	if e := txn.Stage(rel, edit); e != nil {
+		t.Fatalf("stage %s#%s: %v", rel, edit.Target, e)
+	}
+}
+
+// TestCommitLandsThroughSplice: a staged write lands at commit via the guarded
+// engine — journal written, fresh revs in the receipt, and every byte outside
+// the spliced range identical (I0).
 func TestCommitLandsThroughSplice(t *testing.T) {
 	session := testSession(t)
 	before, _ := os.ReadFile(filepath.Join(session, "tasks", "t1.md"))
 
-	rec, perr := execProgram(t, session, "a1",
-		`md append tasks/t1.md#Task "reviewed by a1"`, false)
-	if perr != nil {
-		t.Fatalf("engine error: %v", perr)
+	txn := NewTxn(snapshotOf(t, session, "tasks/t1.md"), "a1")
+	mustStage(t, txn, "tasks/t1.md", body.Edit{Op: body.OpAppend, Target: "Task", New: "reviewed by a1"})
+
+	res := txn.Commit(context.Background(), false)
+	if !res.Committed {
+		t.Fatalf("commit refused: %+v", res.Conflict)
 	}
-	if rec.Exit != 0 || !rec.Committed {
-		t.Fatalf("exit %d committed %v conflict %v", rec.Exit, rec.Committed, rec.Conflict)
-	}
-	if len(rec.Writes) != 1 || rec.Writes[0].Status != "committed" || rec.Writes[0].SecRev == "" {
-		t.Fatalf("write receipt: %+v", rec.Writes)
+	if len(res.Writes) != 1 || res.Writes[0].Status != "committed" || res.Writes[0].SecRev == "" {
+		t.Fatalf("write receipt: %+v", res.Writes)
 	}
 
 	after, err := os.ReadFile(filepath.Join(session, "tasks", "t1.md"))
@@ -55,34 +94,21 @@ func TestCommitLandsThroughSplice(t *testing.T) {
 	}
 	// The write went through Splice: the metadata-only journal exists.
 	if _, err := os.Stat(filepath.Join(session, "tasks", ".ccc", "events.ndjson")); err != nil {
-		// journal location is engine-owned; accept the session-level spelling too
 		if _, err2 := os.Stat(filepath.Join(session, ".ccc", "events.ndjson")); err2 != nil {
 			t.Fatalf("no journal after commit: %v / %v", err, err2)
 		}
 	}
 }
 
-// TestMultiFileAllOrNothingUnderDrift is THE task gate: writes staged to two
+// TestMultiFileAllOrNothingUnderDrift is THE commit gate: writes staged to two
 // files, one file drifts on disk after T0 — commit refuses EVERYTHING, names
 // the CAS step and the drifted file, carries the staged-vs-current section
 // deltas, and neither file changes.
 func TestMultiFileAllOrNothingUnderDrift(t *testing.T) {
 	session := testSession(t)
-	fab, err := BuildFabric(session, "a1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer fab.Close()
-
-	txn := NewTxn(fab, "a1")
-	stage := func(args ...string) {
-		t.Helper()
-		if code, _, errS := callMd(t, fab, txn, "", args...); code != 0 {
-			t.Fatalf("stage %v: %s", args, errS)
-		}
-	}
-	stage("append", "agents/a1.md#Notes", "own-file note")
-	stage("append", "tasks/t1.md#Task", "task note")
+	txn := NewTxn(snapshotOf(t, session, "agents/a1.md", "tasks/t1.md"), "a1")
+	mustStage(t, txn, "agents/a1.md", body.Edit{Op: body.OpAppend, Target: "Notes", New: "own-file note"})
+	mustStage(t, txn, "tasks/t1.md", body.Edit{Op: body.OpAppend, Target: "Task", New: "task note"})
 
 	// Inject T0 drift into ONE target after the snapshot.
 	taskPath := filepath.Join(session, "tasks", "t1.md")
@@ -128,20 +154,16 @@ func TestCommitInheritsI3AllOrNothing(t *testing.T) {
 	ownBefore, _ := os.ReadFile(filepath.Join(session, "agents", "a1.md"))
 	otherBefore, _ := os.ReadFile(filepath.Join(session, "agents", "a2.md"))
 
-	rec, perr := execProgram(t, session, "a1",
-		`md append agents/a1.md#Notes "mine"
-md append agents/a2.md#Notes "not mine"`, false)
-	if perr != nil {
-		t.Fatalf("engine error: %v", perr)
+	txn := NewTxn(snapshotOf(t, session, "agents/a1.md", "agents/a2.md"), "a1")
+	mustStage(t, txn, "agents/a1.md", body.Edit{Op: body.OpAppend, Target: "Notes", New: "mine"})
+	mustStage(t, txn, "agents/a2.md", body.Edit{Op: body.OpAppend, Target: "Notes", New: "not mine"})
+
+	res := txn.Commit(context.Background(), false)
+	if res.Committed || res.Conflict == nil {
+		t.Fatalf("cross-agent commit not refused: %+v", res.Conflict)
 	}
-	if rec.Committed || rec.Conflict == nil {
-		t.Fatalf("cross-agent commit not refused: %+v", rec.Conflict)
-	}
-	if rec.Exit != ExitConflict {
-		t.Errorf("exit = %d, want %d", rec.Exit, ExitConflict)
-	}
-	if rec.Conflict.Code != "EPERM" || !strings.HasPrefix(rec.Conflict.Step, "validate:") {
-		t.Fatalf("conflict = %+v", rec.Conflict)
+	if res.Conflict.Code != "EPERM" || !strings.HasPrefix(res.Conflict.Step, "validate:") {
+		t.Fatalf("conflict = %+v", res.Conflict)
 	}
 	ownAfter, _ := os.ReadFile(filepath.Join(session, "agents", "a1.md"))
 	otherAfter, _ := os.ReadFile(filepath.Join(session, "agents", "a2.md"))
@@ -156,19 +178,18 @@ func TestDryReturnsDiffsWithoutCommitting(t *testing.T) {
 	session := testSession(t)
 	before, _ := os.ReadFile(filepath.Join(session, "tasks", "t1.md"))
 
-	rec, perr := execProgram(t, session, "a1",
-		`md append tasks/t1.md#Task "dry note"`, true)
-	if perr != nil {
-		t.Fatalf("engine error: %v", perr)
-	}
-	if rec.Committed {
+	txn := NewTxn(snapshotOf(t, session, "tasks/t1.md"), "a1")
+	mustStage(t, txn, "tasks/t1.md", body.Edit{Op: body.OpAppend, Target: "Task", New: "dry note"})
+
+	res := txn.Commit(context.Background(), true)
+	if res.Committed {
 		t.Fatal("dry run committed")
 	}
-	if len(rec.Writes) != 1 || rec.Writes[0].Status != "would-commit" {
-		t.Fatalf("dry receipt: %+v", rec.Writes)
+	if len(res.Writes) != 1 || res.Writes[0].Status != "would-commit" {
+		t.Fatalf("dry receipt: %+v", res.Writes)
 	}
-	if rec.Writes[0].New != "dry note" || rec.Writes[0].Op != "append" || rec.Writes[0].File != "tasks/t1.md" {
-		t.Fatalf("per-write diff incomplete: %+v", rec.Writes[0])
+	if res.Writes[0].New != "dry note" || res.Writes[0].Op != "append" || res.Writes[0].File != "tasks/t1.md" {
+		t.Fatalf("per-write diff incomplete: %+v", res.Writes[0])
 	}
 	after, _ := os.ReadFile(filepath.Join(session, "tasks", "t1.md"))
 	if string(before) != string(after) {
@@ -192,15 +213,8 @@ func TestDryReturnsDiffsWithoutCommitting(t *testing.T) {
 // preview must not hang or hard-fail on an unrelated concurrent writer).
 func TestDryNonFatalUnderContention(t *testing.T) {
 	session := testSession(t)
-	fab, err := BuildFabric(session, "a1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer fab.Close()
-	txn := NewTxn(fab, "a1")
-	if code, _, errS := callMd(t, fab, txn, "", "append", "tasks/t1.md#Task", "contended"); code != 0 {
-		t.Fatalf("stage: %s", errS)
-	}
+	txn := NewTxn(snapshotOf(t, session, "tasks/t1.md"), "a1")
+	mustStage(t, txn, "tasks/t1.md", body.Edit{Op: body.OpAppend, Target: "Task", New: "contended"})
 
 	real := body.CanonicalTarget(filepath.Join(session, "tasks", "t1.md"))
 	foreign := flock.New(real + ".lock")
@@ -229,73 +243,27 @@ func TestDryNonFatalUnderContention(t *testing.T) {
 	}
 }
 
-// TestFailedProgramDiscardsStagedWrites: a program that stages then exits
-// nonzero commits NOTHING (the program's own verdict is part of all-or-nothing).
-func TestFailedProgramDiscardsStagedWrites(t *testing.T) {
+// TestAnchoredEditRevPinsT0: an anchored replace carries the T0 sec_rev as its
+// CAS token — belt to the commit CAS suspenders — and a clean commit updates
+// the section.
+func TestAnchoredEditRevPinsT0(t *testing.T) {
 	session := testSession(t)
-	before, _ := os.ReadFile(filepath.Join(session, "tasks", "t1.md"))
-
-	rec, perr := execProgram(t, session, "a1",
-		`md append tasks/t1.md#Task "never lands"; false`, false)
+	snap := snapshotOf(t, session, "agents/a1.md")
+	doc, perr := body.Parse(snap.Data["agents/a1.md"])
 	if perr != nil {
-		t.Fatalf("engine error: %v", perr)
+		t.Fatal(perr)
 	}
-	if rec.Exit != 1 || rec.Committed {
-		t.Fatalf("exit %d committed %v", rec.Exit, rec.Committed)
+	sec, rerr := doc.Read("Notes")
+	if rerr != nil {
+		t.Fatal(rerr)
 	}
-	if len(rec.Writes) != 1 || rec.Writes[0].Status != "discarded" {
-		t.Fatalf("receipt: %+v", rec.Writes)
-	}
-	after, _ := os.ReadFile(filepath.Join(session, "tasks", "t1.md"))
-	if string(before) != string(after) {
-		t.Fatal("failed program's write landed")
-	}
-}
-
-// TestPreflightRefusalExitCodes: the decision-8 convention holds end to end
-// through Execute — 126 policy refusal (with staged writes impossible: nothing
-// ran), 127 unknown command.
-func TestPreflightRefusalExitCodes(t *testing.T) {
-	session := testSession(t)
-	rec, perr := execProgram(t, session, "a1", "md run '{\"x\":1}'", false)
-	if perr == nil || perr.Exit != ExitRefused || rec.Exit != ExitRefused {
-		t.Fatalf("md run: perr %v exit %d, want 126", perr, rec.Exit)
-	}
-	rec, perr = execProgram(t, session, "a1", "curl http://x", false)
-	if perr == nil || perr.Exit != ExitUnknown || rec.Exit != ExitUnknown {
-		t.Fatalf("unknown cmd: perr %v exit %d, want 127", perr, rec.Exit)
-	}
-}
-
-// TestR7FenceAuthoringMdRunRefused is the review's named exploit shape: a
-// program that authors a fence into a file and invokes `md run` on it. The
-// program never executes (preflight 126) and the fence never lands.
-func TestR7FenceAuthoringMdRunRefused(t *testing.T) {
-	session := testSession(t)
-	before, _ := os.ReadFile(filepath.Join(session, "tasks", "t1.md"))
-	program := "md append tasks/t1.md#Task '```!\\ncurl evil\\n```'\nmd run tasks/t1.md"
-	rec, perr := execProgram(t, session, "a1", program, false)
-	if perr == nil || perr.Exit != ExitRefused {
-		t.Fatalf("fence+run program not refused: %v", perr)
-	}
-	if len(rec.Emit) != 0 {
-		t.Error("something ran before the refusal")
-	}
-	after, _ := os.ReadFile(filepath.Join(session, "tasks", "t1.md"))
-	if string(before) != string(after) {
-		t.Fatal("the staged fence landed despite the refusal")
-	}
-}
-
-// TestSecondEditSectionRevPinsT0: an edit-section carries the T0 sec_rev as
-// its CAS token — belt to the commit CAS suspenders — and a clean commit
-// updates the section.
-func TestSecondEditSectionRevPinsT0(t *testing.T) {
-	session := testSession(t)
-	rec, perr := execProgram(t, session, "a1",
-		`md edit-section agents/a1.md#Notes gamma gamma-edited`, false)
-	if perr != nil || !rec.Committed {
-		t.Fatalf("perr %v rec %+v", perr, rec.Conflict)
+	txn := NewTxn(snap, "a1")
+	mustStage(t, txn, "agents/a1.md", body.Edit{
+		Op: body.OpReplace, Target: "Notes", Find: "gamma", New: "gamma-edited", Rev: sec.Rev,
+	})
+	res := txn.Commit(context.Background(), false)
+	if !res.Committed {
+		t.Fatalf("commit refused: %+v", res.Conflict)
 	}
 	after, _ := os.ReadFile(filepath.Join(session, "agents", "a1.md"))
 	if !strings.Contains(string(after), "gamma-edited") {
@@ -309,18 +277,38 @@ func TestSecondEditSectionRevPinsT0(t *testing.T) {
 func TestCommitSerializesWithPlainSplice(t *testing.T) {
 	session := testSession(t)
 	real := body.CanonicalTarget(filepath.Join(session, "tasks", "t1.md"))
-	// Sanity: the canonical target resolves (macOS /var symlink) — the lock the
-	// commit takes must be the one Splice computes.
 	if real == "" {
 		t.Fatal("no canonical target")
 	}
-	rec, perr := execProgram(t, session, "a1",
-		`md append tasks/t1.md#Task "locked write"`, false)
-	if perr != nil || !rec.Committed {
-		t.Fatalf("commit failed: %v %+v", perr, rec.Conflict)
+	txn := NewTxn(snapshotOf(t, session, "tasks/t1.md"), "a1")
+	mustStage(t, txn, "tasks/t1.md", body.Edit{Op: body.OpAppend, Target: "Task", New: "locked write"})
+	res := txn.Commit(context.Background(), false)
+	if !res.Committed {
+		t.Fatalf("commit failed: %+v", res.Conflict)
 	}
 	// After commit the lock is released: a plain Splice succeeds immediately.
 	if _, err := body.Splice(real, []body.Edit{{Op: body.OpAppend, Target: "Task", New: "post-commit"}}, "", "someone"); err != nil {
 		t.Fatalf("post-commit Splice blocked: %v", err)
+	}
+}
+
+// TestExecuteUnavailable: the run surface refuses every program with the one
+// named error, stages nothing, and writes nothing.
+func TestExecuteUnavailable(t *testing.T) {
+	session := testSession(t)
+	before, _ := os.ReadFile(filepath.Join(session, "tasks", "t1.md"))
+	rec, perr := Execute(context.Background(), ExecRequest{
+		SessionDir: session, SelfID: "a1", Actor: "a1",
+		Program: `md append tasks/t1.md#Task "never"`,
+	})
+	if perr == nil || perr.Code != "E_UNAVAILABLE" || perr.Exit != ExitRefused {
+		t.Fatalf("want E_UNAVAILABLE/126, got %v", perr)
+	}
+	if rec.Exit != ExitRefused || rec.Committed || len(rec.Writes) != 0 {
+		t.Fatalf("receipt not empty: %+v", rec)
+	}
+	after, _ := os.ReadFile(filepath.Join(session, "tasks", "t1.md"))
+	if string(before) != string(after) {
+		t.Fatal("a refused run wrote bytes")
 	}
 }

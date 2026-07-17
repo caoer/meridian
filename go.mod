@@ -8,11 +8,10 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gofrs/flock v0.13.0
 	go.yaml.in/yaml/v3 v3.0.4
-	mvdan.cc/sh/v3 v3.13.1
 )
 
 require (
+	github.com/kr/text v0.2.0 // indirect
 	github.com/rogpeppe/go-internal v1.15.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
-	golang.org/x/term v0.41.0 // indirect
 )

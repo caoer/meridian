@@ -293,9 +293,6 @@ func formatData(w io.Writer, data any) {
 			fmt.Fprintln(w, "no conflicts or overlaps detected")
 		}
 
-	case PipeData:
-		d.renderText(w)
-
 	case TocData:
 		d.renderText(w)
 
