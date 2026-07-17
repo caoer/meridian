@@ -162,15 +162,6 @@ const (
 	// OpAppend adds New at the end of the target section (anchor-free, no rev
 	// required; deduped within a short content-hash window).
 	OpAppend EditOp = "append"
-	// OpPrepend adds New at the start of the target section's content.
-	OpPrepend EditOp = "prepend"
-	// OpInsertAfter inserts New immediately after the Find anchor.
-	OpInsertAfter EditOp = "insert_after"
-	// OpDelete removes the Find anchor (splice-with-empty).
-	OpDelete EditOp = "delete"
-	// OpBlank replaces the Find anchor with a tombstone comment, keeping the line
-	// (splice-with-tombstone: "<!-- md:deleted -->").
-	OpBlank EditOp = "blank"
 	// OpReplaceSection replaces the whole target section body; requires a fresh rev.
 	OpReplaceSection EditOp = "replace_section"
 	// OpCreateSection creates a new section (heading + body).

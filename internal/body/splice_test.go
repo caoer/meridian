@@ -121,11 +121,7 @@ func TestSpliceOps(t *testing.T) {
 		absent   []string
 	}{
 		{"append", Edit{Op: OpAppend, Target: "Beta", New: "zzz"}, "", []string{"# Beta\nccc\nzzz\n"}, nil},
-		{"prepend", Edit{Op: OpPrepend, Target: "Beta", New: "zzz"}, "", []string{"# Beta\nzzz\nccc\n"}, nil},
 		{"replace", Edit{Op: OpReplace, Target: "Beta", Find: "ccc", New: "CCC"}, "", []string{"# Beta\nCCC\n"}, []string{"ccc"}},
-		{"insert_after", Edit{Op: OpInsertAfter, Target: "Beta", Find: "ccc", New: " more"}, "", []string{"ccc more"}, nil},
-		{"delete", Edit{Op: OpDelete, Target: "Beta", Find: "ccc"}, "", []string{"# Beta\n\n# Gamma"}, []string{"ccc"}},
-		{"blank", Edit{Op: OpBlank, Target: "Beta", Find: "ccc"}, "", []string{"<!-- md:deleted -->"}, []string{"ccc"}},
 		{"create_section", Edit{Op: OpCreateSection, Target: "Delta", New: "dbody"}, "", []string{"# Delta\ndbody\n"}, nil},
 	}
 	for _, c := range cases {

@@ -49,10 +49,6 @@ type (
 const (
 	OpReplace        = ibody.OpReplace
 	OpAppend         = ibody.OpAppend
-	OpPrepend        = ibody.OpPrepend
-	OpInsertAfter    = ibody.OpInsertAfter
-	OpDelete         = ibody.OpDelete
-	OpBlank          = ibody.OpBlank
 	OpReplaceSection = ibody.OpReplaceSection
 	OpCreateSection  = ibody.OpCreateSection
 	OpSetProperty    = ibody.OpSetProperty

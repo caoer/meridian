@@ -505,21 +505,19 @@ func planEdit(doc *Document, e Edit, topRev, actor, target string, pendingNL map
 	switch e.Op {
 	case OpAppend:
 		return planAppend(doc, e, sec, section, actor, target, pendingNL)
-	case OpPrepend:
-		return planPrepend(doc, e, sec, section)
 	case OpReplaceSection:
 		return planReplaceSection(doc, e, sec, section, topRev)
 	case OpCreateSection:
 		return planCreateSection(doc, e, section)
 	case OpSetProperty:
 		return planSetProperty(doc, e)
-	case OpReplace, OpInsertAfter, OpDelete, OpBlank:
+	case OpReplace:
 		return planAnchored(doc, e, sec, section, topRev, actor, target)
 	default:
 		return editResult{}, &Error{
 			Code:    "E_FAIL_LOUD",
 			Message: "unknown edit op " + strconv.Quote(string(e.Op)),
-			Remedy:  "use one of: replace, append, prepend, insert_after, delete, blank, replace_section, create_section, set_property",
+			Remedy:  "use one of: replace, append, replace_section, create_section, set_property",
 		}
 	}
 }
@@ -554,32 +552,16 @@ func planAppend(doc *Document, e Edit, sec Section, section, actor, target strin
 	}, nil
 }
 
-// planPrepend inserts e.New at the section head (anchor-free, rev-free additive). A
-// block (^id) target is REFUSED for the same reason as append (MED-3): a block's
-// Start is inside its line, so prepending there splits the line rather than adding a
-// clean line at the section head.
-func planPrepend(doc *Document, e Edit, sec Section, section string) (editResult, *Error) {
-	if _, ok := blockRef(e.Target); ok {
-		return editResult{}, blockAddErr(e.Op, e.Target, section)
-	}
-	at := sec.Start
-	payload := ensureTrailingNL(e.New)
-	return editResult{
-		ops:     []spliceOp{{start: at, end: at, replacement: payload}},
-		journal: journalPlan{section: section, op: "prepend"},
-	}, nil
-}
-
-// blockAddErr refuses an append/prepend to a block anchor: those ops splice at the
+// blockAddErr refuses an append to a block anchor: append splices at the
 // section boundary, but a block's span ends mid-line before its " ^id" marker, so
 // the splice would orphan the marker and corrupt the line (MED-3). The remedy points
-// at the right tool — a section target for adding a line, or an anchored op to edit
-// the block's own line.
+// at the right tool — a section target for adding a line, or an anchored replace to
+// edit the block's own line.
 func blockAddErr(op EditOp, target, section string) *Error {
 	return &Error{
 		Code:    "E_FAIL_LOUD",
 		Message: string(op) + " to a block anchor " + strconv.Quote(target) + " is not supported: it would splice before the block's \" ^id\" marker and orphan it",
-		Remedy:  "append/prepend target a section (pass the containing heading path); to change the block's line use replace/insert_after with a Find anchor",
+		Remedy:  "append targets a section (pass the containing heading path); to change the block's line use replace with a Find anchor",
 		Context: map[string]string{"block": target, "section": section},
 	}
 }
@@ -735,7 +717,7 @@ func yamlSafeValue(val string) string {
 	return "'" + strings.ReplaceAll(val, "'", "''") + "'"
 }
 
-// planAnchored handles the anchored ops (replace / insert_after / delete / blank):
+// planAnchored handles the anchored op (replace):
 // I1 requires an exact byte anchor, I2 requires it be unique-in-scope unless All.
 // The rev ladder: fresh rev → proceed; stale → conflict; omitted → proceed IFF the
 // anchor is exact-and-unique (single, not All), emitting a foreign_changes warning
@@ -787,7 +769,7 @@ func planAnchored(doc *Document, e Edit, sec Section, section, topRev, actor, ta
 		}
 	}
 
-	if e.Op == OpReplace && e.Old != "" && e.Old != e.Find {
+	if e.Old != "" && e.Old != e.Find {
 		return editResult{}, &Error{
 			Code:    "E_NO_MATCH",
 			Message: "replace Old does not match the Find anchor",
@@ -798,17 +780,7 @@ func planAnchored(doc *Document, e Edit, sec Section, section, topRev, actor, ta
 
 	ops := make([]spliceOp, 0, len(starts))
 	for _, s := range starts {
-		end := s + len(e.Find)
-		switch e.Op {
-		case OpReplace:
-			ops = append(ops, spliceOp{start: s, end: end, replacement: []byte(e.New)})
-		case OpInsertAfter:
-			ops = append(ops, spliceOp{start: end, end: end, replacement: []byte(e.New)})
-		case OpDelete:
-			ops = append(ops, spliceOp{start: s, end: end, replacement: nil})
-		case OpBlank:
-			ops = append(ops, spliceOp{start: s, end: end, replacement: []byte("<!-- md:deleted -->")})
-		}
+		ops = append(ops, spliceOp{start: s, end: s + len(e.Find), replacement: []byte(e.New)})
 	}
 	return editResult{
 		ops:      ops,

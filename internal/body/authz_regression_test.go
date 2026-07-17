@@ -124,26 +124,24 @@ func TestCaseVariantPathDeniedEndToEnd(t *testing.T) {
 	}
 }
 
-// TestBlockAppendPrependRefused (MED-3): append/prepend to a block anchor is refused
+// TestBlockAppendRefused (MED-3): append to a block anchor is refused
 // (E_FAIL_LOUD) and leaves the file byte-identical. Pre-fix, `append ^b1 New`
 // spliced before the " ^b1" marker and orphaned it, splitting the line.
-func TestBlockAppendPrependRefused(t *testing.T) {
+func TestBlockAppendRefused(t *testing.T) {
 	src := "# S\nhello world ^b1\nmore\n"
-	for _, op := range []EditOp{OpAppend, OpPrepend} {
-		path := filepath.Join(t.TempDir(), "doc.md")
-		writeFile(t, path, src)
-		_, err := Splice(path, []Edit{{Op: op, Target: "^b1", New: "INJECT"}}, "", "worker")
-		be := asBodyErr(t, err)
-		if be.Code != "E_FAIL_LOUD" {
-			t.Fatalf("%s to a block should refuse E_FAIL_LOUD, got %s: %v", op, be.Code, be)
-		}
-		got := string(readFile(t, path))
-		if got != src {
-			t.Fatalf("%s to a block must leave the file byte-identical, got:\n%q", op, got)
-		}
-		if !strings.Contains(got, "hello world ^b1") {
-			t.Fatalf("%s corrupted the block line / marker:\n%q", op, got)
-		}
+	path := filepath.Join(t.TempDir(), "doc.md")
+	writeFile(t, path, src)
+	_, err := Splice(path, []Edit{{Op: OpAppend, Target: "^b1", New: "INJECT"}}, "", "worker")
+	be := asBodyErr(t, err)
+	if be.Code != "E_FAIL_LOUD" {
+		t.Fatalf("append to a block should refuse E_FAIL_LOUD, got %s: %v", be.Code, be)
+	}
+	got := string(readFile(t, path))
+	if got != src {
+		t.Fatalf("append to a block must leave the file byte-identical, got:\n%q", got)
+	}
+	if !strings.Contains(got, "hello world ^b1") {
+		t.Fatalf("append corrupted the block line / marker:\n%q", got)
 	}
 }
 

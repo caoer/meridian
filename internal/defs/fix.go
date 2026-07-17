@@ -190,9 +190,11 @@ func planMark(doc *body.Document, sec body.Section, raw, mark string, plan *FixP
 	plan.Actions = append(plan.Actions, fmt.Sprintf("mark legacy entry in # %s: %q + %s", sec.Title, trimmed, mark))
 }
 
-// planTodoMarker prepends the LegacyTodoMarker into a populated legacy `# Todo`
-// (a Todo section the def does not declare). Empty Todo sections and already-
-// marked ones are left alone; the marker never touches the section's content.
+// planTodoMarker inserts the LegacyTodoMarker at the head of a populated legacy
+// `# Todo` (a Todo section the def does not declare). Empty Todo sections and
+// already-marked ones are left alone. The edit anchors on the section's full
+// current content (unique by construction) and re-writes it byte-identically
+// with the marker line prepended, so the content itself never changes.
 func planTodoMarker(doc *body.Document, def *Def, plan *FixPlan) {
 	for _, sec := range doc.Toc().Sections {
 		if sec.Title != "Todo" {
@@ -205,7 +207,12 @@ func planTodoMarker(doc *body.Document, def *Def, plan *FixPlan) {
 		if strings.TrimSpace(content) == "" || strings.Contains(content, LegacyTodoMarker) {
 			continue
 		}
-		plan.Edits = append(plan.Edits, body.Edit{Op: body.OpPrepend, Target: sec.HPath, New: LegacyTodoMarker})
+		plan.Edits = append(plan.Edits, body.Edit{
+			Op:     body.OpReplace,
+			Target: sec.HPath,
+			Find:   content,
+			New:    LegacyTodoMarker + "\n" + content,
+		})
 		plan.Actions = append(plan.Actions, "insert legacy marker comment into populated # "+sec.HPath)
 	}
 }
