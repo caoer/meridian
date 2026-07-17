@@ -160,6 +160,18 @@ func TestBatchWriteBoundaryThroughEntry(t *testing.T) {
 		}
 	})
 
+	t.Run("set-prop colon-bearing value lands quoted (E2 finding 1)", func(t *testing.T) {
+		// The measured E2 failure: a colon-bearing status wrote invalid YAML and
+		// failed E_CONFORMANCE on this armed face. The engine now single-quotes
+		// the unsafe spelling at the OpSetProperty boundary.
+		p := mustWrite("colon.md", "---\nstatus: idle\ntype: note\n---\n# Body\nb\n")
+		runJSON(t, "set-prop", `{"target":"colon.md","properties":{"status":"aurora build: T1-T4 done; T5 review"},"format":"json"}`)
+		want := "---\nstatus: 'aurora build: T1-T4 done; T5 review'\ntype: note\n---\n# Body\nb\n"
+		if got := string(mustRead(t, p)); got != want {
+			t.Fatalf("want %q, got %q", want, got)
+		}
+	})
+
 	t.Run("set-prop refuses a #fragment target", func(t *testing.T) {
 		mustWrite("frag.md", "---\ntype: note\n---\n# S\nx\n")
 		var out bytes.Buffer

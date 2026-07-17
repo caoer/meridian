@@ -278,14 +278,26 @@ func TestI4UndefinedKindPasses(t *testing.T) {
 	}
 }
 
-func TestI4NestedFrontmatterRefusedEvenWithForce(t *testing.T) {
+func TestI4MapShapedPropertyLandsQuotedNeverNested(t *testing.T) {
+	// E2 finding 1 re-scoped this contract: a map-shaped value is single-quoted
+	// at the OpSetProperty boundary (the same conditional-quote rule as the
+	// colon class), so the sanctioned property verb CANNOT introduce nested
+	// frontmatter — the substrate law holds by construction at the boundary
+	// instead of by refusal at the gate. nestedDelta stays armed for any other
+	// write shape that would introduce nesting.
 	root := i4Session(t)
 	target := writeFile(t, filepath.Join(root, "n.md"), "---\ntype: recipe\n---\n\n# Steps\n")
-	_, err := body.Splice(target, []body.Edit{
+	if _, err := body.Splice(target, []body.Edit{
 		{Op: body.OpSetProperty, Target: "retry", New: "{max: 3}"},
-	}, "", "w1", body.Force())
-	if code := spliceErrCode(t, err); code != "E_CONFORMANCE" {
-		t.Fatalf("code = %s, want E_CONFORMANCE (nested frontmatter is an error always, from any writer)", code)
+	}, "", "w1"); err != nil {
+		t.Fatalf("map-shaped value must land quoted, not refused: %v", err)
+	}
+	after, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(after), "retry: '{max: 3}'\n") {
+		t.Fatalf("map-shaped value did not land as a quoted scalar:\n%s", after)
 	}
 }
 

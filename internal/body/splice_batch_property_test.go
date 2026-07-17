@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 // docFM is a frontmatter-carrying doc at a NON-agent path: property-plane
@@ -218,6 +220,93 @@ func TestSetPropertyBareEmptyKey(t *testing.T) {
 	want := "---\nclosed_at: 2026-07-16T11:00:00\ntype: note\n---\n# Alpha\naaa\n"
 	if got := string(readFile(t, path)); got != want {
 		t.Fatalf("want %q, got %q", want, got)
+	}
+}
+
+// TestSetPropertyConditionalQuoting is the E2 finding-1 regression: a plain value
+// that would corrupt the frontmatter line (the measured colon-bearing status) is
+// single-quoted at the OpSetProperty boundary, while every value that survives as
+// YAML — typed scalars, flow lists, caller-quoted strings — lands VERBATIM (never
+// re-quoted, so the daemon's interim boundary quote composes idempotently). The
+// assertions run with I4 unarmed, which IS the daemon's silent-corruption path:
+// pre-fix the colon value wrote invalid YAML to disk without an error.
+func TestSetPropertyConditionalQuoting(t *testing.T) {
+	// The measured E2 P1+P2 status value that failed E_CONFORMANCE on first contact.
+	const measured = "aurora build: T1-T4 done; T5 review, T7 doing, T6 blocked (B2)"
+	cases := []struct {
+		name     string
+		val      string
+		wantLine string // exact on-disk spelling of the status line
+		wantVal  any    // YAML round-trip value ("" → skip, line check suffices)
+	}{
+		{"measured colon value quoted", measured, "status: '" + measured + "'", measured},
+		{"colon plus single quotes doubled", "it's here: done", "status: 'it''s here: done'", "it's here: done"},
+		{"leading alias special quoted", "*ref", "status: '*ref'", "*ref"},
+		{"map-shaped reparse quoted", "{a: b}", "status: '{a: b}'", "{a: b}"},
+		{"plain string verbatim", "phase-b live", "status: phase-b live", "phase-b live"},
+		{"colon without space verbatim", "review:pending", "status: review:pending", "review:pending"},
+		{"pre-single-quoted not re-quoted", "'review: pending'", "status: 'review: pending'", "review: pending"},
+		{"pre-double-quoted not re-quoted", `"review: pending"`, `status: "review: pending"`, "review: pending"},
+		{"flow list stays typed", "[a, b]", "status: [a, b]", nil},
+		{"bool stays typed", "true", "status: true", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := fmDoc(t)
+			if _, err := Splice(path, []Edit{{Op: OpSetProperty, Target: "status", New: c.val}}, "", "worker"); err != nil {
+				t.Fatalf("set_property %q: %v", c.val, err)
+			}
+			got := string(readFile(t, path))
+			if !strings.Contains(got, c.wantLine+"\n") {
+				t.Fatalf("want line %q in:\n%s", c.wantLine, got)
+			}
+			// Silent path: the whole frontmatter must still parse as YAML and the
+			// value must round-trip.
+			doc, err := Load(path)
+			if err != nil {
+				t.Fatalf("re-load: %v", err)
+			}
+			var fm map[string]any
+			if err := yaml.Unmarshal(doc.Frontmatter(), &fm); err != nil {
+				t.Fatalf("frontmatter no longer valid YAML after %q: %v\n%s", c.val, err, got)
+			}
+			if c.wantVal != nil {
+				if fm["status"] != c.wantVal {
+					t.Fatalf("round-trip: want %#v, got %#v", c.wantVal, fm["status"])
+				}
+			} else if _, ok := fm["status"].([]any); !ok {
+				t.Fatalf("flow list did not stay a list: %#v", fm["status"])
+			}
+		})
+	}
+}
+
+// TestSetPropertyQuotedValueBatchRetryDeduped: the journal digest is of the RAW
+// caller value (not the quoted spelling), so an at-least-once retry of a batch
+// carrying a quote-needing property still matches the batch's coalesced dedupe
+// identity and is absorbed as a no-op ack.
+func TestSetPropertyQuotedValueBatchRetryDeduped(t *testing.T) {
+	path := fmDoc(t)
+	edits := []Edit{
+		{Op: OpSetProperty, Target: "status", New: "burst: live"},
+		{Op: OpAppend, Target: "Alpha", New: "milestone"},
+	}
+	if _, err := Splice(path, edits, "", "worker"); err != nil {
+		t.Fatal(err)
+	}
+	after := string(readFile(t, path))
+	res, err := Splice(path, edits, "", "worker")
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if got := string(readFile(t, path)); got != after {
+		t.Fatalf("retry changed the file:\n%s", got)
+	}
+	if !strings.Contains(strings.Join(res.Warnings, " "), "batch_deduped:") {
+		t.Fatalf("quoted-value batch retry not deduped: %v", res.Warnings)
+	}
+	if entries := journalEntries(t, path); len(entries) != 1 {
+		t.Fatalf("retry journaled again: %+v", entries)
 	}
 }
 

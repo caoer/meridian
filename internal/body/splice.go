@@ -12,6 +12,7 @@ import (
 
 	"github.com/caoer/meridian/internal/policy"
 	"github.com/gofrs/flock"
+	"go.yaml.in/yaml/v3"
 )
 
 // splice.go is THE one write path. Every face — the `md` CLI verbs, and later the
@@ -641,7 +642,10 @@ func planCreateSection(doc *Document, e Edit, section string) (editResult, *Erro
 // value legality against a def kind's declared shape is U6/U7's conformance hook;
 // the guards here are the structural injection walls: key and value are single-line
 // by construction, so a property write can never smuggle an extra frontmatter line,
-// close the block early, or spill into the body. Rev-free like append (the value
+// close the block early, or spill into the body. The value's SPELLING is
+// conditionally quoted (yamlSafeValue, E2 finding 1): a plain value that survives
+// as YAML lands verbatim; one that would corrupt the line is single-quoted at this
+// boundary. Rev-free like append (the value
 // splice is per-key, so concurrent writers of different keys never collide; the
 // same key is last-writer-wins under the sidecar lock). A duplicate key sets the
 // FIRST occurrence, matching the fm-set shim it retires.
@@ -673,10 +677,13 @@ func planSetProperty(doc *Document, e Edit) (editResult, *Error) {
 	}
 	// hash is the dedupe/audit digest of the (key, value) pair — it makes a
 	// property edit a full participant in the batch identity (coalesceJournal).
+	// It digests the RAW caller value, not the quoted spelling, so an
+	// at-least-once retry of the same logical write dedupes regardless of quoting.
 	plan := journalPlan{op: string(OpSetProperty), key: key, hash: rev8([]byte(key + ":" + val))}
+	safe := yamlSafeValue(val)
 	for _, k := range doc.fm {
 		if k.key == key {
-			repl := []byte(val)
+			repl := []byte(safe)
 			// An empty value on a bare "key:" line (no trailing space — the form
 			// def templates scaffold) has its span flush against the colon; writing
 			// a value there must insert the "key: value" separator or the spliced
@@ -690,7 +697,7 @@ func planSetProperty(doc *Document, e Edit) (editResult, *Error) {
 			}, nil
 		}
 	}
-	line := key + ": " + val + "\n"
+	line := key + ": " + safe + "\n"
 	if val == "" {
 		line = key + ":\n"
 	}
@@ -699,6 +706,33 @@ func planSetProperty(doc *Document, e Edit) (editResult, *Error) {
 		ops:     []spliceOp{{start: at, end: at, replacement: []byte(line)}},
 		journal: plan,
 	}, nil
+}
+
+// yamlSafeValue returns the spelling a property value lands with (E2 finding 1).
+// A plain value that survives a `key: <val>` YAML parse is written VERBATIM:
+// typed scalars (true, 3, timestamps), flow lists, and caller-quoted strings are
+// the caller's intentional YAML and must never be re-quoted — the daemon boundary
+// applies the same conditional rule, and the two layers compose idempotently only
+// if a safe value passes through unchanged. A value whose plain spelling would
+// NOT survive — a mid-value ": " that reads as a nested mapping (unmarshal error
+// in the value position), a leading alias/tag/directive special, an unbalanced
+// quote, or a map-shaped reparse — is single-quoted (any embedded single quote
+// doubled), so the
+// scalar lands as the exact string the caller passed instead of failing
+// E_CONFORMANCE on an I4-armed face or writing invalid YAML to disk on an
+// unarmed one (the silent-corruption path). The retired fm-set shim quoted at
+// its boundary; the sanctioned verb is at least as safe.
+func yamlSafeValue(val string) string {
+	if val == "" {
+		return val
+	}
+	var line map[string]any
+	if err := yaml.Unmarshal([]byte("k: "+val), &line); err == nil {
+		if _, isMap := line["k"].(map[string]any); !isMap {
+			return val
+		}
+	}
+	return "'" + strings.ReplaceAll(val, "'", "''") + "'"
 }
 
 // planAnchored handles the anchored ops (replace / insert_after / delete / blank):
