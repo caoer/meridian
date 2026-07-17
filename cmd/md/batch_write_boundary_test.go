@@ -82,7 +82,7 @@ func TestBatchWriteBoundaryThroughEntry(t *testing.T) {
 	t.Run("append 3-edit same-section batch: one journal entry, one rev bump", func(t *testing.T) {
 		p := mustWrite("burst.md", "---\ntype: note\n---\n# Log\nline one\n")
 		resp, _ := runJSON(t, "append",
-			`{"target":"burst.md","edits":[{"section":"Log","content":"l1"},{"section":"Log","content":"l2"},{"section":"Log","content":"l3"}],"format":"json"}`)
+			`{"target":"burst.md","edits":[{"at":"Log","content":"l1"},{"at":"Log","content":"l2"},{"at":"Log","content":"l3"}],"format":"json"}`)
 
 		raw, _ := json.Marshal(resp.Data)
 		var app cli.AppendData
@@ -116,7 +116,7 @@ func TestBatchWriteBoundaryThroughEntry(t *testing.T) {
 	t.Run("append dual-section + property in one call", func(t *testing.T) {
 		p := mustWrite("agents/worker1.md", "---\ntype: agent\nstatus: idle\n---\n# Notes\nn\n# Log\nl\n")
 		resp, _ := runJSON(t, "append",
-			`{"target":"agents/worker1.md","edits":[{"section":"Notes","content":"note-1"},{"section":"Log","content":"log-1"}],"properties":{"status":"active"},"format":"json"}`)
+			`{"target":"agents/worker1.md","edits":[{"at":"Notes","content":"note-1"},{"at":"Log","content":"log-1"}],"properties":{"status":"active"},"format":"json"}`)
 
 		raw, _ := json.Marshal(resp.Data)
 		var app cli.AppendData
@@ -160,6 +160,49 @@ func TestBatchWriteBoundaryThroughEntry(t *testing.T) {
 		}
 	})
 
+	t.Run("at selector harmonizes single-edit addressing (E2 finding 2)", func(t *testing.T) {
+		// The measured seam: single-edit demanded #Section in the ref while batch
+		// took per-entry section fields — ALL THREE blinded actors burned a failed
+		// op on it. The harmonized surface: at names the section on every shape.
+		p := mustWrite("board.md", "---\ntype: note\n---\n# Board\nrow-1\n# Log\nl\n")
+
+		// Single edit with a bare target + at (the shape every actor reached for).
+		runJSON(t, "edit-section", `{"target":"board.md","at":"Board","old":"row-1","new":"row-2","format":"json"}`)
+		if got := string(mustRead(t, p)); !strings.Contains(got, "row-2") {
+			t.Fatalf("at-addressed single edit missing:\n%s", got)
+		}
+
+		// Single append with at.
+		runJSON(t, "append", `{"target":"board.md","at":"Log","content":"l2","format":"json"}`)
+		if got := string(mustRead(t, p)); !strings.Contains(got, "l\nl2\n") {
+			t.Fatalf("at-addressed append missing:\n%s", got)
+		}
+
+		// at XOR #fragment: both is refused loudly, naming the conflict.
+		var out bytes.Buffer
+		if code := newEntryRouter(&out).Run([]string{"edit-section",
+			`{"target":"board.md#Board","at":"Log","old":"row-2","new":"x","format":"json"}`}, nil); code == 0 {
+			t.Fatalf("double section selector accepted: %s", out.String())
+		}
+		if s := out.String(); !strings.Contains(s, "INVALID_PARAMS") || !strings.Contains(s, "Board") || !strings.Contains(s, "Log") {
+			t.Fatalf("conflict refusal must name both selectors: %s", s)
+		}
+
+		// Top-level at is the batch default; a per-entry at overrides it.
+		runJSON(t, "edit-section",
+			`{"target":"board.md","at":"Board","edits":[{"old":"row-2","new":"row-3"},{"at":"Log","old":"l2","new":"l3"}],"format":"json"}`)
+		got := string(mustRead(t, p))
+		if !strings.Contains(got, "row-3") || !strings.Contains(got, "l\nl3\n") {
+			t.Fatalf("top-level at default / per-entry override wrong:\n%s", got)
+		}
+
+		// The #fragment spelling stays legal when it is the only selector.
+		runJSON(t, "edit-section", `{"target":"board.md#Board","old":"row-3","new":"row-4","format":"json"}`)
+		if got := string(mustRead(t, p)); !strings.Contains(got, "row-4") {
+			t.Fatalf("#fragment single edit regressed:\n%s", got)
+		}
+	})
+
 	t.Run("set-prop colon-bearing value lands quoted (E2 finding 1)", func(t *testing.T) {
 		// The measured E2 failure: a colon-bearing status wrote invalid YAML and
 		// failed E_CONFORMANCE on this armed face. The engine now single-quotes
@@ -183,7 +226,7 @@ func TestBatchWriteBoundaryThroughEntry(t *testing.T) {
 	t.Run("edit-section batch: two sections, one splice, all-or-nothing", func(t *testing.T) {
 		p := mustWrite("edits.md", "---\ntype: note\n---\n# A\nalpha-x\n# B\nbeta-y\n")
 		resp, _ := runJSON(t, "edit-section",
-			`{"target":"edits.md","edits":[{"section":"A","old":"alpha-x","new":"alpha-z"},{"section":"B","old":"beta-y","new":"beta-z"}],"format":"json"}`)
+			`{"target":"edits.md","edits":[{"at":"A","old":"alpha-x","new":"alpha-z"},{"at":"B","old":"beta-y","new":"beta-z"}],"format":"json"}`)
 
 		raw, _ := json.Marshal(resp.Data)
 		var ed cli.EditSectionData
@@ -203,7 +246,7 @@ func TestBatchWriteBoundaryThroughEntry(t *testing.T) {
 		before := got
 		var out bytes.Buffer
 		code := newEntryRouter(&out).Run([]string{"edit-section",
-			`{"target":"edits.md","edits":[{"section":"A","old":"alpha-z","new":"w1"},{"section":"B","old":"beta-z","new":"w2","hash":"deadbeef"}],"format":"json"}`}, nil)
+			`{"target":"edits.md","edits":[{"at":"A","old":"alpha-z","new":"w1"},{"at":"B","old":"beta-z","new":"w2","hash":"deadbeef"}],"format":"json"}`}, nil)
 		if code == 0 {
 			t.Fatalf("stale batch accepted: %s", out.String())
 		}

@@ -60,34 +60,39 @@ func shortID(s string) string {
 	return s
 }
 
-// resolveWriteFile splits a fragment target ("file#Section" or "[[note#Section]]")
-// into its on-disk path and the in-file fragment the edit addresses. The file is
-// resolved through the SAME resolver `md read` uses (expect-unique — a write names
-// exactly one file), then joined to base so body.Splice receives a real path.
-// A target with no #fragment is refused: the write verbs address a section, not a
-// whole file.
-func resolveWriteFile(fsys fs.FS, base, target string) (diskPath, frag string, errResp *cli.Response) {
-	fileRef, frag, ferr := splitFragment(target)
-	if ferr != nil {
-		return "", "", cli.ErrorResponseWithHint(cli.ErrInvalidParams, ferr.Error(),
-			"a write verb addresses a section: file#Heading, file#^block, or [[note#Heading]]")
+// resolveSectionSelector resolves a write verb's (target, at) pair to the target
+// file and the call-level section selector — the harmonized addressing surface
+// (E2 finding 2: single-edit demanded a #fragment while batch entries took
+// per-entry section fields; ALL THREE blinded actors burned a failed op on the
+// seam). The section is named exactly ONCE: a top-level at with a bare file
+// target, or a #fragment on the target — both at once is refused loudly, naming
+// the conflict, rather than silently preferring one (the same at-XOR-fragment
+// contract the daemon's MCP put freezes). An empty selector is legal here; the
+// caller decides whether a section is ultimately required (a single edit needs
+// one; batch entries may name their own per-entry at).
+func resolveSectionSelector(fsys fs.FS, base, target, at string) (diskPath, section string, errResp *cli.Response) {
+	diskPath, frag, errResp := resolveWriteFileBare(fsys, base, target)
+	if errResp != nil {
+		return "", "", errResp
 	}
-	result, err := run.Read(fsys, base, fileRef, true)
-	if err != nil {
-		return "", "", readResolveError(err)
+	if at != "" && frag != "" {
+		return "", "", cli.ErrorResponseWithHint(cli.ErrInvalidParams,
+			fmt.Sprintf("section named twice: target carries #%s and at names %q", frag, at),
+			`name the section once: at:"Section" with a bare file target, or file#Section with no at`)
 	}
-	if len(result.Matches) != 1 {
-		return "", "", cli.ErrorResponse(cli.ErrAmbiguousTarget,
-			target+" did not resolve to exactly one file")
+	if frag != "" {
+		return diskPath, frag, nil
 	}
-	return filepath.Join(base, result.Matches[0].Path), frag, nil
+	return diskPath, at, nil
 }
 
 // resolveWriteFileBare resolves a write target that MAY be a bare file (no
-// #fragment): the batch and property planes address the file once and name
-// sections per edit (or none at all — a property write belongs to the file), so —
-// unlike resolveWriteFile — a missing fragment is legal here and yields frag "".
-// Same expect-unique resolver, same error rendering.
+// #fragment): the write verbs address the file once and take the section from
+// the at selector or per-entry (or none at all — a property write belongs to the
+// file), so a missing fragment is legal here and yields frag "". The file is
+// resolved through the SAME resolver `md read` uses (expect-unique — a write
+// names exactly one file), then joined to base so body.Splice receives a real
+// path.
 func resolveWriteFileBare(fsys fs.FS, base, target string) (diskPath, frag string, errResp *cli.Response) {
 	t := strings.TrimSpace(target)
 	fileRef := t

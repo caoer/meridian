@@ -26,9 +26,10 @@ func appendHandler() cli.Handler {
 }
 
 // appendEditParam is one entry of the edits[] batch: one append of content to a
-// section. Section defaults to the top-level target's #fragment.
+// section. At names the entry's section, defaulting to the call-level selector
+// (top-level at, or the target's #fragment).
 type appendEditParam struct {
-	Section string `json:"section"`
+	At      string `json:"at"`
 	Content string `json:"content"`
 }
 
@@ -37,15 +38,17 @@ type appendEditParam struct {
 // directly; production binds it via sessionActor).
 //
 // Two modes share the ONE write path (body.Splice):
-//   - single: {target: file#Section, content} — the pre-batch verb, byte-identical
-//     behavior and JSON.
-//   - batch (U16 GO condition 1): edits[] carries multiple appends and/or
-//     properties carries frontmatter sets; ALL land in one Splice — one flock, one
-//     rev bump, one journal entry, all-or-nothing.
+//   - single: {target: file#Section, content} or {target: file, at: Section,
+//     content} — the section selector is at XOR #fragment (E2 finding 2).
+//   - batch (U16 GO condition 1): edits[] carries multiple appends (each with a
+//     per-entry at, defaulting to the call-level selector) and/or properties
+//     carries frontmatter sets; ALL land in one Splice — one flock, one rev bump,
+//     one journal entry, all-or-nothing.
 func appendHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 	return func(req *cli.Request) *cli.Response {
 		var params struct {
 			Target     string            `json:"target"`
+			At         string            `json:"at"`
 			Content    string            `json:"content"`
 			Edits      []appendEditParam `json:"edits"`
 			Properties map[string]string `json:"properties"`
@@ -58,7 +61,7 @@ func appendHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 			}
 		}
 		if params.Target == "" {
-			return cli.ErrorResponse(cli.ErrInvalidParams, "missing required param: target (file#Section)")
+			return cli.ErrorResponse(cli.ErrInvalidParams, "missing required param: target (file, with at or #Section)")
 		}
 		if params.Content != "" && len(params.Edits) > 0 {
 			return cli.ErrorResponseWithHint(cli.ErrInvalidParams, "content and edits are mutually exclusive",
@@ -72,14 +75,20 @@ func appendHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 			return cli.ErrorResponse(cli.ErrInvalidParams, "missing required param: content")
 		}
 
-		if len(params.Edits) == 0 && len(params.Properties) == 0 {
-			return appendSingle(fsys, base, actor, params.Target, params.Content, params.Force)
-		}
-
-		diskPath, defFrag, errResp := resolveWriteFileBare(fsys, base, params.Target)
+		diskPath, defSection, errResp := resolveSectionSelector(fsys, base, params.Target, params.At)
 		if errResp != nil {
 			return errResp
 		}
+
+		if len(params.Edits) == 0 && len(params.Properties) == 0 {
+			if defSection == "" {
+				return cli.ErrorResponseWithHint(cli.ErrInvalidParams,
+					"missing section: a single append addresses one section",
+					`name it once: at:"Section", or a #Section fragment on target`)
+			}
+			return appendSingle(diskPath, defSection, actor, params.Content, params.Force)
+		}
+
 		appends := params.Edits
 		if len(appends) == 0 {
 			appends = []appendEditParam{{Content: params.Content}}
@@ -87,14 +96,14 @@ func appendHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 		edits := propertyEdits(params.Properties)
 		var sections []string
 		for i, ae := range appends {
-			frag := ae.Section
+			frag := ae.At
 			if frag == "" {
-				frag = defFrag
+				frag = defSection
 			}
 			if frag == "" {
 				return cli.ErrorResponseWithHint(cli.ErrInvalidParams,
-					fmt.Sprintf("edits[%d] names no section and the target carries no #fragment default", i),
-					`give the edit a "section", or put a #Section fragment on target`)
+					fmt.Sprintf("edits[%d] names no section and the call sets no default", i),
+					`give the edit an at:"Section", or set the call-level default: top-level at (or #Section on target)`)
 			}
 			if ae.Content == "" {
 				return cli.ErrorResponse(cli.ErrInvalidParams, fmt.Sprintf("edits[%d]: missing content", i))
@@ -122,14 +131,11 @@ func appendHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 	}
 }
 
-// appendSingle is the pre-batch single-edit path, kept verbatim: same resolution
-// (fragment required), same Splice call, same JSON — the back-compat contract.
-func appendSingle(fsys fs.FS, base, actor, target, content string, force bool) *cli.Response {
-	diskPath, frag, errResp := resolveWriteFile(fsys, base, target)
-	if errResp != nil {
-		return errResp
-	}
-
+// appendSingle is the single-append path: one append to the already-resolved
+// (file, section) — resolution is the handler's shared at-XOR-fragment selector;
+// the Splice call and the JSON response shape are unchanged from the pre-batch
+// verb.
+func appendSingle(diskPath, frag, actor, content string, force bool) *cli.Response {
 	res, err := body.Splice(diskPath, []body.Edit{{
 		Op:     body.OpAppend,
 		Target: frag,

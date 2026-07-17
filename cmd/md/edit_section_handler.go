@@ -28,30 +28,32 @@ func editSectionHandler() cli.Handler {
 }
 
 // editEditParam is one entry of the edits[] batch: one anchored replace within a
-// section. Section defaults to the top-level target's #fragment; Hash is the
-// per-edit sec_rev CAS token (the top-level hash is the batch-wide default).
+// section. At names the entry's section, defaulting to the call-level selector
+// (top-level at, or the target's #fragment); Hash is the per-edit sec_rev CAS
+// token (the top-level hash is the batch-wide default).
 type editEditParam struct {
-	Section string `json:"section"`
-	Old     string `json:"old"`
-	New     string `json:"new"`
-	All     bool   `json:"all"`
-	Hash    string `json:"hash"`
+	At   string `json:"at"`
+	Old  string `json:"old"`
+	New  string `json:"new"`
+	All  bool   `json:"all"`
+	Hash string `json:"hash"`
 }
 
 // editSectionHandlerWith is the injectable core: fsys rooted at base resolves the
 // target file, actor is the authoritative session identity.
 //
 // Two modes share the ONE write path (body.Splice):
-//   - single: {target: file#Section, old, new} — the pre-batch verb, byte-identical
-//     behavior and JSON.
-//   - batch (U16 GO condition 1): edits[] carries multiple replaces and/or
-//     properties carries frontmatter sets; ALL land in one Splice — one flock, one
-//     rev bump, one journal entry, all-or-nothing (one stale hash refuses the
-//     whole batch).
+//   - single: {target: file#Section, old, new} or {target: file, at: Section,
+//     old, new} — the section selector is at XOR #fragment (E2 finding 2).
+//   - batch (U16 GO condition 1): edits[] carries multiple replaces (each with a
+//     per-entry at, defaulting to the call-level selector) and/or properties
+//     carries frontmatter sets; ALL land in one Splice — one flock, one rev bump,
+//     one journal entry, all-or-nothing (one stale hash refuses the whole batch).
 func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 	return func(req *cli.Request) *cli.Response {
 		var params struct {
 			Target     string            `json:"target"`
+			At         string            `json:"at"`
 			Hash       string            `json:"hash"`
 			Old        string            `json:"old"`
 			New        string            `json:"new"`
@@ -67,7 +69,7 @@ func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 			}
 		}
 		if params.Target == "" {
-			return cli.ErrorResponse(cli.ErrInvalidParams, "missing required param: target (file#Section)")
+			return cli.ErrorResponse(cli.ErrInvalidParams, "missing required param: target (file, with at or #Section)")
 		}
 		if params.Old != "" && len(params.Edits) > 0 {
 			return cli.ErrorResponseWithHint(cli.ErrInvalidParams, "old and edits are mutually exclusive",
@@ -82,14 +84,20 @@ func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 				"old is the exact bytes to replace within the section (byte-exact, no normalization)")
 		}
 
-		if len(params.Edits) == 0 && len(params.Properties) == 0 {
-			return editSectionSingle(fsys, base, actor, params.Target, params.Hash, params.Old, params.New, params.All, params.Force)
-		}
-
-		diskPath, defFrag, errResp := resolveWriteFileBare(fsys, base, params.Target)
+		diskPath, defSection, errResp := resolveSectionSelector(fsys, base, params.Target, params.At)
 		if errResp != nil {
 			return errResp
 		}
+
+		if len(params.Edits) == 0 && len(params.Properties) == 0 {
+			if defSection == "" {
+				return cli.ErrorResponseWithHint(cli.ErrInvalidParams,
+					"missing section: a single edit addresses one section",
+					`name it once: at:"Section", or a #Section fragment on target`)
+			}
+			return editSectionSingle(diskPath, defSection, actor, params.Hash, params.Old, params.New, params.All, params.Force)
+		}
+
 		replaces := params.Edits
 		if len(replaces) == 0 {
 			replaces = []editEditParam{{Old: params.Old, New: params.New, All: params.All}}
@@ -97,14 +105,14 @@ func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 		edits := propertyEdits(params.Properties)
 		var sections []string
 		for i, ee := range replaces {
-			frag := ee.Section
+			frag := ee.At
 			if frag == "" {
-				frag = defFrag
+				frag = defSection
 			}
 			if frag == "" {
 				return cli.ErrorResponseWithHint(cli.ErrInvalidParams,
-					fmt.Sprintf("edits[%d] names no section and the target carries no #fragment default", i),
-					`give the edit a "section", or put a #Section fragment on target`)
+					fmt.Sprintf("edits[%d] names no section and the call sets no default", i),
+					`give the edit an at:"Section", or set the call-level default: top-level at (or #Section on target)`)
 			}
 			if ee.Old == "" {
 				return cli.ErrorResponseWithHint(cli.ErrInvalidParams, fmt.Sprintf("edits[%d]: missing old", i),
@@ -141,15 +149,11 @@ func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 	}
 }
 
-// editSectionSingle is the pre-batch single-edit path, kept verbatim: same
-// resolution (fragment required), same Splice call, same JSON — the back-compat
-// contract.
-func editSectionSingle(fsys fs.FS, base, actor, target, hash, old, new string, all, force bool) *cli.Response {
-	diskPath, frag, errResp := resolveWriteFile(fsys, base, target)
-	if errResp != nil {
-		return errResp
-	}
-
+// editSectionSingle is the single-edit path: one anchored replace in the already-
+// resolved (file, section) — resolution is the handler's shared at-XOR-fragment
+// selector; the Splice call and the JSON response shape are unchanged from the
+// pre-batch verb.
+func editSectionSingle(diskPath, frag, actor, hash, old, new string, all, force bool) *cli.Response {
 	// hash is the section CAS token, threaded as the batch rev. Omitting it opts
 	// into U3's relaxation (a single exact-and-unique anchor proceeds with a
 	// foreign_changes warning); passing a stale hash conflicts loudly.
