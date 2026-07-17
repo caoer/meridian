@@ -157,16 +157,6 @@ func sortedKeys(m map[string]string) []string {
 	return keys
 }
 
-// appendDistinct appends s to list if absent, preserving first-seen order.
-func appendDistinct(list []string, s string) []string {
-	for _, v := range list {
-		if v == s {
-			return list
-		}
-	}
-	return append(list, s)
-}
-
 // spliceError renders a body.Splice failure into the CLI error envelope, carrying
 // the engine's structured error through verbatim: its stable Code (EPERM / ECAS /
 // E_NO_MATCH / E_AMBIGUOUS / E_WOULD_CORRUPT / E_FAIL_LOUD / …) as the error code,
@@ -179,42 +169,6 @@ func spliceError(err error) *cli.Response {
 		return cli.ErrorResponseWithHint(be.Code, be.Message, be.Remedy)
 	}
 	return cli.ErrorResponse(cli.ErrInvalidInput, err.Error())
-}
-
-// freshSecRevs re-reads path after a committed batch write and returns each named
-// section's current hash — the CAS anchors for chained edits. Best-effort like
-// freshSecRev; sections that fail to read back are simply absent.
-func freshSecRevs(path string, frags []string) map[string]string {
-	doc, err := body.Load(path)
-	if err != nil {
-		return nil
-	}
-	out := make(map[string]string, len(frags))
-	for _, f := range frags {
-		if sec, rerr := doc.Read(f); rerr == nil {
-			out[f] = sec.Rev
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-// freshSecRev re-reads path after a committed write and returns the target
-// section's current hash — the CAS anchor the caller chains their next edit
-// against. Best-effort: a read-back failure (e.g. the fragment addressed a block
-// whose line moved) simply yields "" rather than failing an already-durable write.
-func freshSecRev(path, frag string) string {
-	doc, err := body.Load(path)
-	if err != nil {
-		return ""
-	}
-	sec, rerr := doc.Read(frag)
-	if rerr != nil {
-		return ""
-	}
-	return sec.Rev
 }
 
 // forceOpts renders a verb's `"force": true` param into Splice options. Force

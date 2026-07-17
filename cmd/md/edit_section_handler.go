@@ -118,7 +118,6 @@ func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 			replaces = []editEditParam{{Old: params.Old, New: params.New, All: params.All}}
 		}
 		edits := propertyEdits(params.Properties)
-		var sections []string
 		for i, ee := range replaces {
 			frag := ee.At
 			if frag == "" {
@@ -145,7 +144,6 @@ func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 				All:    ee.All,
 				Rev:    ee.Hash,
 			})
-			sections = appendDistinct(sections, frag)
 		}
 
 		// The top-level hash is the batch rev (each edit's own hash wins when set);
@@ -155,14 +153,9 @@ func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 			return editSpliceError(diskPath, "", params.Hash, err)
 		}
 		data := cli.EditSectionData{
-			Path:       diskPath,
-			Op:         string(body.OpReplace),
-			FileRev:    res.NewRev,
-			Sections:   sections,
-			SecRevs:    freshSecRevs(diskPath, sections),
-			Properties: sortedKeys(params.Properties),
-			Changed:    changedHPaths(res.Changed),
-			Warnings:   res.Warnings,
+			Path:     diskPath,
+			FileRev:  res.NewRev,
+			Warnings: res.Warnings,
 		}
 		return &cli.Response{Version: cli.ResponseVersion, Data: data, Warnings: spliceWarnings(res.Warnings)}
 	}
@@ -170,8 +163,7 @@ func editSectionHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 
 // editSectionSingle is the single-edit path: one anchored replace in the already-
 // resolved (file, section) — resolution is the handler's shared at-XOR-fragment
-// selector; the Splice call and the JSON response shape are unchanged from the
-// pre-batch verb.
+// selector.
 func editSectionSingle(diskPath, frag, actor, hash, old, new string, all, force bool) *cli.Response {
 	// hash is the section CAS token, threaded as the batch rev. Omitting it opts
 	// into U3's relaxation (a single exact-and-unique anchor proceeds with a
@@ -189,11 +181,7 @@ func editSectionSingle(diskPath, frag, actor, hash, old, new string, all, force 
 
 	data := cli.EditSectionData{
 		Path:     diskPath,
-		Section:  frag,
-		Op:       string(body.OpReplace),
 		FileRev:  res.NewRev,
-		SecRev:   freshSecRev(diskPath, frag),
-		Changed:  changedHPaths(res.Changed),
 		Warnings: res.Warnings,
 	}
 	return &cli.Response{Version: cli.ResponseVersion, Data: data, Warnings: spliceWarnings(res.Warnings)}
@@ -226,17 +214,4 @@ func editSpliceError(diskPath, frag, expectedRev string, err error) *cli.Respons
 		return resp
 	}
 	return spliceError(err)
-}
-
-// changedHPaths projects the engine's per-section deltas to the changed section
-// paths — what the write touched, for the caller and the watch loop.
-func changedHPaths(deltas []body.SectionDelta) []string {
-	if len(deltas) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(deltas))
-	for _, d := range deltas {
-		out = append(out, d.HPath)
-	}
-	return out
 }

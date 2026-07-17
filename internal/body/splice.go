@@ -267,7 +267,11 @@ func Splice(target string, edits []Edit, rev, actor string, opts ...SpliceOption
 			return Result{}, verr
 		}
 		if res.dedupSkip {
-			continue // idempotent double-submit: this append already landed
+			// Idempotent double-submit: this append already landed. Its advisory
+			// (append_deduped) still surfaces — the warnings channel is the one
+			// place a caller learns the retry was absorbed.
+			warnings = append(warnings, res.warnings...)
+			continue
 		}
 		ops = append(ops, res.ops...)
 		for _, op := range res.ops {

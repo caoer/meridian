@@ -73,8 +73,6 @@ func setPropHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 		}
 		data := cli.SetPropData{
 			Path:     diskPath,
-			Op:       string(body.OpSetProperty),
-			Keys:     sortedKeys(params.Properties),
 			FileRev:  res.NewRev,
 			Warnings: res.Warnings,
 		}

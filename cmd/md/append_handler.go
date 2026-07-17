@@ -102,7 +102,6 @@ func appendHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 			appends = []appendEditParam{{Content: params.Content}}
 		}
 		edits := propertyEdits(params.Properties)
-		var sections []string
 		for i, ae := range appends {
 			frag := ae.At
 			if frag == "" {
@@ -117,7 +116,6 @@ func appendHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 				return cli.ErrorResponse(cli.ErrInvalidParams, fmt.Sprintf("edits[%d]: missing content", i))
 			}
 			edits = append(edits, body.Edit{Op: body.OpAppend, Target: frag, New: ae.Content})
-			sections = appendDistinct(sections, frag)
 		}
 
 		res, err := body.Splice(diskPath, edits, "", actor, forceOpts(params.Force)...)
@@ -125,24 +123,18 @@ func appendHandlerWith(fsys fs.FS, base, actor string) cli.Handler {
 			return spliceError(err)
 		}
 		data := cli.AppendData{
-			Path:       diskPath,
-			Op:         string(body.OpAppend),
-			FileRev:    res.NewRev,
-			Sections:   sections,
-			Properties: sortedKeys(params.Properties),
-			Warnings:   res.Warnings,
-		}
-		if len(res.Changed) > 0 {
-			data.SecRevs = freshSecRevs(diskPath, sections)
+			Path:     diskPath,
+			FileRev:  res.NewRev,
+			Warnings: res.Warnings,
 		}
 		return &cli.Response{Version: cli.ResponseVersion, Data: data, Warnings: spliceWarnings(res.Warnings)}
 	}
 }
 
 // appendSingle is the single-append path: one append to the already-resolved
-// (file, section) — resolution is the handler's shared at-XOR-fragment selector;
-// the Splice call and the JSON response shape are unchanged from the pre-batch
-// verb.
+// (file, section) — resolution is the handler's shared at-XOR-fragment selector.
+// A dedupe no-op surfaces on the warnings channel (the engine's append_deduped
+// advisory), never as a fabricated fresh write.
 func appendSingle(diskPath, frag, actor, content string, force bool) *cli.Response {
 	res, err := body.Splice(diskPath, []body.Edit{{
 		Op:     body.OpAppend,
@@ -155,19 +147,8 @@ func appendSingle(diskPath, frag, actor, content string, force bool) *cli.Respon
 
 	data := cli.AppendData{
 		Path:     diskPath,
-		Section:  frag,
-		Op:       string(body.OpAppend),
 		FileRev:  res.NewRev,
 		Warnings: res.Warnings,
-	}
-	// A dedupe no-op changes no section (Splice returns an empty Changed set and
-	// the unchanged file_rev); a real append modifies the target section. Surface
-	// the no-op honestly rather than as a fresh write, so an idempotent retry
-	// reads truthfully instead of implying a duplicate line landed.
-	if len(res.Changed) == 0 {
-		data.Deduped = true
-	} else {
-		data.SecRev = freshSecRev(diskPath, frag)
 	}
 	return &cli.Response{Version: cli.ResponseVersion, Data: data, Warnings: spliceWarnings(res.Warnings)}
 }

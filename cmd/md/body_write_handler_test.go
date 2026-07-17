@@ -83,20 +83,13 @@ func TestAppendRoundTripThroughCLI(t *testing.T) {
 	if resp.Error != nil {
 		t.Fatalf("unexpected error: %+v", resp.Error)
 	}
-	if data.Op != "append" || data.Section != "Log" {
-		t.Errorf("append data = %+v", data)
-	}
-	if data.FileRev == "" || data.SecRev == "" {
-		t.Errorf("append should report fresh file_rev + sec_rev: %+v", data)
+	if data.FileRev == "" {
+		t.Errorf("append should report the fresh file_rev: %+v", data)
 	}
 	// Read your write back off disk — the append landed at the section tail.
 	got, _ := os.ReadFile(p)
 	if !strings.Contains(string(got), "first line") || !strings.Contains(string(got), "second line") {
 		t.Errorf("appended content missing on disk:\n%s", got)
-	}
-	// The reported sec_rev is the section's fresh hash (a valid next-edit anchor).
-	if data.SecRev != secRev(t, p, "Log") {
-		t.Errorf("reported sec_rev %q != on-disk %q", data.SecRev, secRev(t, p, "Log"))
 	}
 }
 
@@ -115,8 +108,14 @@ func TestAppendDedupeThroughCLI(t *testing.T) {
 		t.Fatalf("second append exit = %d, out: %s", code, out.String())
 	}
 	_, data := decodeData[cli.AppendData](t, out)
-	if !data.Deduped {
-		t.Errorf("second identical append should be deduped: %+v", data)
+	deduped := false
+	for _, w := range data.Warnings {
+		if strings.HasPrefix(w, "append_deduped:") {
+			deduped = true
+		}
+	}
+	if !deduped {
+		t.Errorf("second identical append should surface the dedupe warning: %+v", data)
 	}
 	// The content appears exactly once (the dedupe absorbed the retry).
 	got, _ := os.ReadFile(p)
@@ -139,15 +138,15 @@ func TestEditSectionRoundTripThroughCLI(t *testing.T) {
 	if resp.Error != nil {
 		t.Fatalf("unexpected error: %+v", resp.Error)
 	}
-	if data.Op != "replace" || data.SecRev == "" {
+	if data.FileRev == "" {
 		t.Errorf("edit data = %+v", data)
 	}
 	got, _ := os.ReadFile(p)
 	if strings.Contains(string(got), "OLD") || !strings.Contains(string(got), "keep this and NEW too") {
 		t.Errorf("edit did not apply on disk:\n%s", got)
 	}
-	// A fresh CAS anchor (the section changed, so the hash moved).
-	if data.SecRev == hash {
+	// The section changed, so its on-disk hash moved.
+	if secRev(t, p, "Log") == hash {
 		t.Errorf("sec_rev should change after an edit, stayed %q", hash)
 	}
 }

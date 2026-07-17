@@ -87,9 +87,6 @@ func TestBatchWriteBoundaryThroughEntry(t *testing.T) {
 		raw, _ := json.Marshal(resp.Data)
 		var app cli.AppendData
 		json.Unmarshal(raw, &app)
-		if len(app.Sections) != 1 || app.Sections[0] != "Log" {
-			t.Fatalf("sections = %v", app.Sections)
-		}
 		if got := string(mustRead(t, p)); !strings.Contains(got, "line one\nl1\nl2\nl3\n") {
 			t.Fatalf("batch payloads wrong:\n%s", got)
 		}
@@ -115,15 +112,9 @@ func TestBatchWriteBoundaryThroughEntry(t *testing.T) {
 
 	t.Run("append dual-section + property in one call", func(t *testing.T) {
 		p := mustWrite("agents/worker1.md", "---\ntype: agent\nstatus: idle\n---\n# Notes\nn\n# Log\nl\n")
-		resp, _ := runJSON(t, "append",
+		runJSON(t, "append",
 			`{"target":"agents/worker1.md","edits":[{"at":"Notes","content":"note-1"},{"at":"Log","content":"log-1"}],"properties":{"status":"active"},"format":"json"}`)
 
-		raw, _ := json.Marshal(resp.Data)
-		var app cli.AppendData
-		json.Unmarshal(raw, &app)
-		if len(app.Properties) != 1 || app.Properties[0] != "status" {
-			t.Fatalf("properties = %v", app.Properties)
-		}
 		got := string(mustRead(t, p))
 		if !strings.Contains(got, "status: active\n") || !strings.Contains(got, "n\nnote-1\n") || !strings.Contains(got, "l\nlog-1\n") {
 			t.Fatalf("dual-plane batch incomplete:\n%s", got)
@@ -142,14 +133,8 @@ func TestBatchWriteBoundaryThroughEntry(t *testing.T) {
 
 	t.Run("set-prop updates frontmatter atomically", func(t *testing.T) {
 		p := mustWrite("state.md", "---\nstatus: booting\ntype: state\n---\n# Body\nb\n")
-		resp, _ := runJSON(t, "set-prop", `{"target":"state.md","properties":{"status":"phase-b live"},"format":"json"}`)
+		runJSON(t, "set-prop", `{"target":"state.md","properties":{"status":"phase-b live"},"format":"json"}`)
 
-		raw, _ := json.Marshal(resp.Data)
-		var sp cli.SetPropData
-		json.Unmarshal(raw, &sp)
-		if len(sp.Keys) != 1 || sp.Keys[0] != "status" || sp.Op != "set_property" {
-			t.Fatalf("set-prop data wrong: %+v", sp)
-		}
 		want := "---\nstatus: phase-b live\ntype: state\n---\n# Body\nb\n"
 		if got := string(mustRead(t, p)); got != want {
 			t.Fatalf("want %q, got %q", want, got)
@@ -231,7 +216,7 @@ func TestBatchWriteBoundaryThroughEntry(t *testing.T) {
 		raw, _ := json.Marshal(resp.Data)
 		var ed cli.EditSectionData
 		json.Unmarshal(raw, &ed)
-		if len(ed.Sections) != 2 || len(ed.SecRevs) != 2 {
+		if ed.FileRev == "" {
 			t.Fatalf("batch edit data wrong: %+v", ed)
 		}
 		got := string(mustRead(t, p))

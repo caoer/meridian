@@ -58,13 +58,14 @@ func TestBodyWriteVerbsBoundaryThroughEntry(t *testing.T) {
 		raw, _ := json.Marshal(resp.Data)
 		var app cli.AppendData
 		json.Unmarshal(raw, &app)
-		if app.SecRev == "" {
-			t.Fatalf("append through entry lost sec_rev: %+v", app)
+		if app.FileRev == "" {
+			t.Fatalf("append through entry lost file_rev: %+v", app)
 		}
 
-		// edit-section against the freshly reported sec_rev.
+		// edit-section against the section's fresh sec_rev (from a re-read —
+		// CAS tokens come from reads, not write receipts).
 		out.Reset()
-		params := `{"target":"notes.md#Log","hash":"` + app.SecRev + `","old":"line one","new":"LINE ONE","format":"json"}`
+		params := `{"target":"notes.md#Log","hash":"` + secRev(t, p, "Log") + `","old":"line one","new":"LINE ONE","format":"json"}`
 		if code := newEntryRouter(&out).Run([]string{"edit-section", params}, nil); code != 0 {
 			t.Fatalf("edit-section exit = %d, out: %s", code, out.String())
 		}
