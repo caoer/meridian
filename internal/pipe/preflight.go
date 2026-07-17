@@ -2,6 +2,7 @@ package pipe
 
 import (
 	"path"
+	"strconv"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -33,6 +34,7 @@ import (
 //	~user tilde            → 126 (real os/user.Lookup — F8; bare ~ and ~/ are fine)
 //	write-redirect any path→ 126 except /dev/null       (R3; U8 delta 2 carve-out)
 //	read of staged path    → 126 (R4 — reads serve T0; a read-back would be silently stale)
+//	brace expansion > cap  → 126 (eager, un-ctx'd, pre-output alloc — U12 DoS; see checkBraceExpansion)
 //	nested `md pipe`       → 126 + remedy               (R7)
 //	md verb off-allowlist  → 126 (R7 — run/rules/skill/fix are exec-capable; only MdVerbs exist in-pipe)
 //	md write to projection → 126 EROFS (R5 write-target model — see vetWriteTarget)
@@ -252,6 +254,9 @@ func Preflight(program string) (*syntax.File, *Error) {
 			if e := checkTildeUser(x); e != nil {
 				return reject(e)
 			}
+			if e := checkBraceExpansion(x); e != nil {
+				return reject(e)
+			}
 		case *syntax.CallExpr:
 			if e := checkCall(x, funcs, staged); e != nil {
 				return reject(e)
@@ -458,6 +463,157 @@ func checkTildeUser(w *syntax.Word) *Error {
 		"use ~ or ~/ (the curated HOME), or an explicit fabric path", w.Pos().String())
 }
 
+// braceCap bounds how many words a single word's brace expansion may produce.
+//
+// U12 DoS: mvdan's expand.Braces (expand/braces.go) materializes the ENTIRE
+// product of a word's brace groups into []*syntax.Word with no ctx parameter and
+// no size cap, on the normal arg path (expand/expand.go FieldsSeq → SplitBraces).
+// A single fully-whitelisted word — `echo {1..1000000000}` or the multiplicative
+// `echo {1..100000}{1..100000}` (1e10) — allocates ~1e9-1e10 Words BEFORE any
+// byte is written, so it is invisible to both the wall-clock timeout (Braces
+// takes no ctx) and the stdout cap (nothing is emitted yet), OOM-ing the shared
+// daemon. This gate rejects the word statically.
+//
+// 10000 is generous for every legitimate hand-written brace: lists ({a,b,c}),
+// small ranges ({1..20}), a byte range ({0..255}), a letter range ({a..z}) — all
+// far below it. 10000 Words materialize in microseconds and well under a
+// megabyte; a genuinely larger range belongs in a `for` loop (ctx-checked per
+// iteration), not an eager pre-output allocation.
+const braceCap = 10000
+
+// checkBraceExpansion rejects a word whose brace/sequence expansion would exceed
+// braceCap elements. It must run SplitBraces itself: the parser does NOT emit
+// [syntax.BraceExp] nodes (they "only appear as a result of SplitBraces", which
+// the interpreter runs at expansion time), so a raw AST walk never sees a brace
+// group. SplitBraces mutates in place, so it runs on a copy — the real AST the
+// engine later runs is untouched. Counting is multiplicative across the word's
+// brace groups (adjacent groups form a cartesian product, exactly as Braces
+// recurses) and saturates at braceCap+1, so a nested product like 1e27 cannot
+// overflow int.
+func checkBraceExpansion(w *syntax.Word) *Error {
+	wc := *w // SplitBraces replaces Parts in place; count on a copy
+	if !syntax.SplitBraces(&wc) {
+		return nil // no brace groups in this word
+	}
+	// Count saturates at braceCap+1, so past the cap the exact size is unknown.
+	if braceExpansionCount(wc.Parts) <= braceCap {
+		return nil
+	}
+	return posErr(ExitRefused, "E_BRACE_TOO_BIG",
+		"brace expansion exceeds the "+strconv.Itoa(braceCap)+"-element cap: the whole range is materialized in memory before any output, uninterruptible by the timeout and invisible to the output cap",
+		"use a loop for a large range (for i in ...; do ... done); small brace lists like {a,b,c} or {1..20} are fine",
+		w.Pos().String())
+}
+
+// braceExpansionCount returns how many words the fully brace-expanded parts
+// yield, mirroring expand.Braces' multiplicative model: adjacent brace groups
+// multiply, a comma-list's factor is the sum of its elements' own counts (nested
+// braces recurse), and a sequence's factor is its step count. Saturates at
+// braceCap+1 so an over-cap nested product cannot overflow int.
+func braceExpansionCount(parts []syntax.WordPart) int {
+	product := 1
+	for _, part := range parts {
+		br, ok := part.(*syntax.BraceExp)
+		if !ok {
+			continue // literal / other parts contribute a factor of 1
+		}
+		product = satMulCap(product, braceGroupFactor(br))
+		if product > braceCap {
+			return braceCap + 1
+		}
+	}
+	return product
+}
+
+// braceGroupFactor is one brace group's multiplier.
+func braceGroupFactor(br *syntax.BraceExp) int {
+	if br.Sequence {
+		return braceSeqSteps(br)
+	}
+	sum := 0
+	for _, elem := range br.Elems {
+		sum += braceExpansionCount(elem.Parts)
+		if sum > braceCap {
+			return braceCap + 1
+		}
+	}
+	return sum
+}
+
+// braceSeqSteps returns the number of elements a {from..to[..incr]} sequence
+// generates, replicating expand.Braces' arithmetic. After a successful
+// SplitBraces the endpoints of a Sequence group are always static (both integer
+// literals or both single ASCII letters — otherwise SplitBraces leaves the word
+// non-brace), so Lit() is well-defined here.
+//
+// The span is computed in uint64 because a full-int64-range sequence like
+// {-9223372036854775808..9223372036854775807} (both endpoints parse, so mvdan
+// treats it as a valid ~1.8e19-element sequence and loops effectively forever) —
+// a signed `to - from` there overflows and would UNDERCOUNT to ~1, silently
+// passing the cap. uint64 magnitude arithmetic is exact across the whole range,
+// and the quotient is compared to braceCap before the `+1` so nothing wraps.
+func braceSeqSteps(br *syntax.BraceExp) int {
+	if len(br.Elems) < 2 {
+		return 1
+	}
+	fromLit := br.Elems[0].Lit()
+	toLit := br.Elems[1].Lit()
+	from, err1 := strconv.Atoi(fromLit)
+	to, err2 := strconv.Atoi(toLit)
+	if err1 != nil || err2 != nil {
+		if fromLit == "" || toLit == "" {
+			return 1
+		}
+		from, to = int(fromLit[0]), int(toLit[0]) // char sequence
+	}
+	upward := from <= to
+	incr := 1
+	if !upward {
+		incr = -1
+	}
+	if len(br.Elems) > 2 {
+		if n, err := strconv.Atoi(br.Elems[2].Lit()); err == nil && n != 0 && (n > 0) == upward {
+			incr = n
+		}
+	}
+	// |to - from| as uint64 (exact even when the signed difference overflows).
+	var span uint64
+	if to >= from {
+		span = uint64(to) - uint64(from)
+	} else {
+		span = uint64(from) - uint64(to)
+	}
+	step := uint64(incr)
+	if incr < 0 {
+		step = -uint64(incr) // unsigned negation = exact magnitude, even for minint64
+	}
+	q := span / step // number of steps beyond the first element (step is never 0)
+	if q >= uint64(braceCap) {
+		return braceCap + 1 // over cap; avoid the +1 wrapping at uint64 max
+	}
+	return int(q) + 1
+}
+
+// satMulCap multiplies two non-negative factors, saturating at braceCap+1 so the
+// running product never overflows int (both inputs are first clamped to the
+// ceiling, so the multiply stays far below math.MaxInt).
+func satMulCap(a, b int) int {
+	const ceil = braceCap + 1
+	if a > ceil {
+		a = ceil
+	}
+	if b > ceil {
+		b = ceil
+	}
+	if a == 0 || b == 0 {
+		return 0
+	}
+	if a > ceil/b {
+		return ceil
+	}
+	return a * b
+}
+
 func stagedReadErr(path, writePos, readPos string) *Error {
 	return posErr(ExitRefused, "E_STAGED_READ",
 		"you staged a write to "+path+" (at "+writePos+") and then read it — v1 reads serve the PRE-program snapshot, so the read would silently miss your write",
@@ -466,7 +622,7 @@ func stagedReadErr(path, writePos, readPos string) *Error {
 
 // wordLit returns the word's literal value when statically known, or "" for a
 // computed (non-literal) word. Callers that must distinguish a literal empty
-// string ("" / '') from a computed word use wordLitOK.
+// string ("" / ”) from a computed word use wordLitOK.
 func wordLit(w *syntax.Word) string {
 	s, _ := wordLitOK(w)
 	return s

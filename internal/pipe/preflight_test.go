@@ -3,6 +3,8 @@ package pipe
 import (
 	"strings"
 	"testing"
+
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // TestPreflightRejectionMatrix is the full policy matrix: every banned
@@ -50,6 +52,11 @@ func TestPreflightRejectionMatrix(t *testing.T) {
 		{"staged read with fragment target", `md edit-section tasks/t1.md#Notes old new; wc -l tasks/t1.md`, "E_STAGED_READ", 126, "PRE-program snapshot"},
 		{"staged read via md read verb", `md append tasks/t1.md x; md read tasks/t1.md#Notes`, "E_STAGED_READ", 126, "PRE-program snapshot"},
 		{"nested md pipe", `md pipe 'echo hi'`, "E_BANNED", 126, "nested"},
+		{"brace sequence bomb", "echo {1..1000000000}", "E_BRACE_TOO_BIG", 126, "materialized in memory"},
+		{"brace nested multiplicative", "echo {1..100000}{1..100000}", "E_BRACE_TOO_BIG", 126, "cap"},
+		{"brace sequence just over cap", "echo {1..10001}", "E_BRACE_TOO_BIG", 126, "cap"},
+		{"brace product over cap", "echo {1..100}{1..100}{1..100}", "E_BRACE_TOO_BIG", 126, "cap"},
+		{"brace bomb in md target", "md read {1..1000000000}", "E_BRACE_TOO_BIG", 126, "cap"},
 		{"syntax error", "if then fi", "E_SYNTAX", 2, "does not parse"},
 	}
 	for _, tc := range cases {
@@ -115,6 +122,16 @@ func TestPreflightAccepts(t *testing.T) {
 		"md append tasks/t1.md done; grep open tasks/t2.md",
 		// echo of a staged path is not a read
 		"md append tasks/t1.md done; echo tasks/t1.md",
+		// small brace use stays legal — the cap targets pathological sizes only
+		"echo {a,b,c}",
+		"echo {1..20}",
+		"echo {0..255}",
+		"echo {z..a}",
+		"echo agents/{a1,a2,a3}.md",
+		"for f in agents/{a1,a2}.md; do wc -l $f; done",
+		"echo {1..10000}",              // exactly at the cap
+		"echo {1..100}{1..100}",        // 1e4 product, exactly at the cap
+		"echo pre{a,{1..3},{x,y}}post", // nested, small
 	}
 	for _, p := range programs {
 		if _, err := Preflight(p); err != nil {
@@ -140,4 +157,124 @@ func TestGrammarDiscoverySurface(t *testing.T) {
 	if !strings.Contains(g, "for f in agents/") {
 		t.Errorf("grammar misses the worked example")
 	}
+}
+
+// TestBraceExpansionCap is the U12 resource-DoS guard: brace/sequence expansion
+// is materialized in full before any output (mvdan expand.Braces — no ctx, no
+// size cap), so a single fully-whitelisted word can OOM the shared daemon. The
+// gate bounds it at braceCap. The reject cases FLIP at this commit: before the
+// guard they parsed clean (Preflight returned a nil error and a runnable file),
+// after it they are refused at preflight with exit 126.
+func TestBraceExpansionCap(t *testing.T) {
+	reject := []struct {
+		name    string
+		program string
+	}{
+		{"sequence bomb", "echo {1..1000000000}"},                // ~1e9 words in 15 bytes
+		{"nested multiplicative", "echo {1..100000}{1..100000}"}, // ~1e10 via the cartesian product
+		{"triple product", "echo {1..100}{1..100}{1..100}"},      // 1e6 > cap
+		{"char sequence bomb", "echo {A..Z}{A..Z}{A..Z}{A..Z}"},  // 26^4 > cap (char sequences too)
+		{"just over the cap", "echo {1..10001}"},
+		{"descending bomb", "echo {1000000000..1}"},
+		{"reached through md arg", "md read {1..1000000000}"},
+		{"array literal bomb", "arr=({1..1000000000})"},                  // array assignments DO brace-expand
+		{"declared array bomb", "declare -a a=({1..100000}{1..100000})"}, // via DeclClause too
+		{"prefixed sequence bomb", "echo pre{1..1000000000}post"},        // affix does not dodge the count
+		// int64-overflow spans: both endpoints parse, so mvdan treats these as
+		// valid (effectively unbounded) sequences; the count must not wrap to a
+		// small value and slip past the cap.
+		{"full int64 span", "echo {-9223372036854775808..9223372036854775807}"},
+		{"maxint64 upper bound", "echo {0..9223372036854775807}"},
+		{"minint64 lower bound", "echo {-9223372036854775807..0}"},
+	}
+	for _, tc := range reject {
+		t.Run("reject/"+tc.name, func(t *testing.T) {
+			file, err := Preflight(tc.program)
+			if err == nil {
+				t.Fatalf("Preflight(%q) passed; want E_BRACE_TOO_BIG (this is the un-guarded OOM path)", tc.program)
+			}
+			if err.Code != "E_BRACE_TOO_BIG" || err.Exit != ExitRefused {
+				t.Fatalf("Preflight(%q) = code %s exit %d; want E_BRACE_TOO_BIG / %d", tc.program, err.Code, err.Exit, ExitRefused)
+			}
+			if file != nil {
+				t.Fatalf("rejected program returned a non-nil file")
+			}
+		})
+	}
+
+	// The cap must not over-block legitimate small brace use.
+	accept := []string{
+		"echo {a,b,c}",
+		"echo {1..20}",
+		"echo {0..255}",
+		"echo {a..z}",
+		"echo {1..10000}",       // exactly at the cap
+		"echo {1..100}{1..100}", // 1e4 product, exactly at the cap
+		"echo {5..1..2}",        // stepped descending: 5,3,1
+		"echo pre{a,{1..3}}post",
+	}
+	for _, p := range accept {
+		t.Run("accept/"+p, func(t *testing.T) {
+			if _, err := Preflight(p); err != nil {
+				t.Fatalf("Preflight(%q) rejected legitimate small brace use: %v", p, err)
+			}
+		})
+	}
+}
+
+// TestBraceExpansionCount pins the multiplicative counting model directly, so a
+// future change to the walk can't silently drift the accounting the cap relies
+// on.
+func TestBraceExpansionCount(t *testing.T) {
+	cases := []struct {
+		program string
+		want    int
+	}{
+		{"echo {a,b,c}", 3},
+		{"echo {1..20}", 20},
+		{"echo {0..255}", 256},
+		{"echo {a..z}", 26},
+		{"echo {10..1}", 10},  // descending
+		{"echo {1..5..2}", 3}, // stepped: 1,3,5
+		{"echo {1..100}{1..100}", 10000},
+		{"echo x{1..5}y{a,b}z", 10},         // 5 * 2
+		{"echo pre{a,{1..3},{x,y}}post", 6}, // 1 + 3 + 2
+	}
+	for _, tc := range cases {
+		t.Run(tc.program, func(t *testing.T) {
+			w := firstBraceWord(t, tc.program)
+			got := braceExpansionCount(w.Parts)
+			if got != tc.want {
+				t.Fatalf("braceExpansionCount(%q) = %d, want %d", tc.program, got, tc.want)
+			}
+		})
+	}
+}
+
+// firstBraceWord parses program and returns the first word that carries a brace
+// group (after SplitBraces), for direct counting assertions.
+func firstBraceWord(t *testing.T, program string) *syntax.Word {
+	t.Helper()
+	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(program), "test")
+	if err != nil {
+		t.Fatalf("parse %q: %v", program, err)
+	}
+	var found *syntax.Word
+	syntax.Walk(file, func(n syntax.Node) bool {
+		if found != nil {
+			return false
+		}
+		if w, ok := n.(*syntax.Word); ok {
+			wc := *w
+			if syntax.SplitBraces(&wc) {
+				found = &wc
+				return false
+			}
+		}
+		return true
+	})
+	if found == nil {
+		t.Fatalf("no brace word in %q", program)
+	}
+	return found
 }
