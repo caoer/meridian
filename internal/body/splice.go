@@ -501,7 +501,19 @@ func planEdit(doc *Document, e Edit, topRev, actor, target string, pendingNL map
 		}
 	}
 
-	// Authorization passed — now a resolve failure is a real, teachable miss.
+	// Authorization passed — the rest is I3-independent, shared with the
+	// conformance-only apply path (ApplyForConformance) through planEditResolved.
+	return planEditResolved(doc, e, sec, section, resolveErr, topRev, actor, target, pendingNL)
+}
+
+// planEditResolved is planEdit MINUS the I3 authorization gate: it turns one
+// already-resolved edit into its byte plan (resolve-error surfacing + the op
+// switch). Splice reaches it through planEdit AFTER I3; ApplyForConformance calls
+// it directly, because I3 is the host's write-authorization policy — enforced by
+// the write engine, never re-run to compute a pure conformance verdict. A resolve
+// failure surfaces here, matching Splice's post-authz ordering (no oracle before
+// authz on the write path; on the conformance path there is no authz to precede).
+func planEditResolved(doc *Document, e Edit, sec Section, section string, resolveErr *Error, topRev, actor, target string, pendingNL map[int]bool) (editResult, *Error) {
 	if resolveErr != nil {
 		return editResult{}, resolveErr
 	}

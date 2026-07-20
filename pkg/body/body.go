@@ -43,6 +43,12 @@ type (
 	// ForceStat aggregates one actor's journaled writes and forced-warning
 	// overrides — the R-force audit surface.
 	ForceStat = ibody.ForceStat
+	// ConformanceRequest is what the I4 hook judges: the pre-write and candidate
+	// documents plus the invocation identity (used by defs.CheckWrite).
+	ConformanceRequest = ibody.ConformanceRequest
+	// ConformanceResult is the I4 verdict — Refuse / Forced / Repairs — the shape
+	// defs.CheckWrite returns to a host that owns the write engine.
+	ConformanceResult = ibody.ConformanceResult
 )
 
 // EditOp values, re-exported.
