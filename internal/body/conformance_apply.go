@@ -43,6 +43,16 @@ func ApplyForConformance(prev *Document, edits []Edit, target, actor string) (*D
 	for i := range edits {
 		e := edits[i]
 		sec, section, resolveErr := prev.resolveEditTarget(e)
+		// CAS is NOT conformance's concern: the host's write engine (e.g. the Rust
+		// sidecar) owns the rev ladder, in ITS OWN hash domain. A per-edit rev here is
+		// a foreign-domain token meridian's Go engine cannot — and must not — validate
+		// (validating it would spuriously reject every replace_section, whose rev is
+		// REQUIRED). Neutralize it to the CURRENT section rev so the rev ladder always
+		// passes and ONLY the content change is judged. The real CAS runs later, on the
+		// host's write path, against the host's rev.
+		if e.Rev != "" && resolveErr == nil {
+			e.Rev = sec.Rev
+		}
 		res, verr := planEditResolved(prev, e, sec, section, resolveErr, "", actor, target, pendingNL)
 		if verr != nil {
 			return nil, verr

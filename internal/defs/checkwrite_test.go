@@ -120,6 +120,28 @@ func TestCheckWriteRepairStampsClosedAt(t *testing.T) {
 	}
 }
 
+// CAS is the host/sidecar's concern, not conformance's: a replace_section carrying a
+// FOREIGN-domain rev (a sidecar blake3 token, not meridian's xxhash) must NOT be
+// rejected as a rev conflict by CheckWrite — it neutralizes the rev to the current
+// section rev and judges only the content change (the real CAS runs on the host path).
+func TestCheckWriteNeutralizesForeignRev(t *testing.T) {
+	root := i4Session(t)
+	target := agentFixture(t, root, "aa11bb22", "state transferred\n")
+	prev, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, cerr := CheckWrite(target, prev, []body.Edit{
+		{Op: body.OpReplaceSection, Target: "Notes", New: "replaced prose", Rev: "deadbeefdeadbeef"},
+	}, "aa11bb22", false)
+	if cerr != nil {
+		t.Fatalf("a foreign-domain rev must not error out CheckWrite (CAS is the host's): %v", cerr)
+	}
+	if res.Refuse != nil {
+		t.Fatalf("a foreign-domain rev must NOT be a conformance refusal: %+v", res.Refuse)
+	}
+}
+
 // A benign, conformant write passes with no refusal and no repair.
 func TestCheckWriteCleanPasses(t *testing.T) {
 	root := i4Session(t)
