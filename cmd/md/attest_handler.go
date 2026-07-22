@@ -282,3 +282,93 @@ func chainPromoteWithFS(fsys fs.FS, root string, opts engine.ScanOptions, mutate
 		Data:     report,
 	}
 }
+
+// chainDeclareHandler is the `md chain declare` verb: declare draw edges
+// page→each draws-from selector and merge them into the page's ^inputs chain
+// (results/chain-merge-proof.md — pure-writer composition). Unlike chain
+// promote (frontmatter-only scaffold, never merges), declare takes explicit
+// selectors and splices new edges into an existing chain, computing each new
+// edge's hash. Config-gated like attest.
+func chainDeclareHandler(cfg *config.Config, cfgErr error) cli.Handler {
+	return func(req *cli.Request) *cli.Response {
+		if cfgErr != nil {
+			return cli.ErrorResponseWithHint(cli.ErrNoConfig,
+				cfgErr.Error(),
+				"create meridian.yaml or set MERIDIAN_CONFIG env var")
+		}
+		opts := engine.ScanOptions{Skip: cfg.Scan.Skip, MaxFileSize: cfg.Scan.MaxFileSize}
+		return chainDeclareWithFS(os.DirFS(cfg.Scan.Root), cfg.Scan.Root, opts, nil, req)
+	}
+}
+
+// chainDeclareHandlerWith is the injectable core used by tests (the
+// chainPromoteHandlerWith pattern): scan fsys, reshape the engine's seams.
+func chainDeclareHandlerWith(fsys fs.FS, root string, opts engine.ScanOptions, mutate func(*attest.Engine)) cli.Handler {
+	return func(req *cli.Request) *cli.Response {
+		return chainDeclareWithFS(fsys, root, opts, mutate, req)
+	}
+}
+
+// chainDeclareParams is the strict-decoded param set — an unknown key is
+// INVALID_PARAMS, never silently dropped.
+type chainDeclareParams struct {
+	Page      string   `json:"page"`
+	DrawsFrom []string `json:"draws-from"`
+	DryRun    bool     `json:"dry_run"`
+	Format    string   `json:"format"` // router-consumed; listed so strict parse admits it
+}
+
+func chainDeclareWithFS(fsys fs.FS, root string, opts engine.ScanOptions, mutate func(*attest.Engine), req *cli.Request) *cli.Response {
+	var params chainDeclareParams
+	if req.Params != nil {
+		dec := json.NewDecoder(bytes.NewReader(req.Params))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&params); err != nil {
+			return cli.ErrorResponse(cli.ErrInvalidParams,
+				fmt.Sprintf("invalid params: %v — md chain declare accepts: page, draws-from, dry_run, format", err))
+		}
+	}
+	if params.Page == "" {
+		return cli.ErrorResponse(cli.ErrInvalidParams, "page is required")
+	}
+	if len(params.DrawsFrom) == 0 {
+		return cli.ErrorResponse(cli.ErrInvalidParams, "draws-from is required — at least one selector to declare")
+	}
+
+	eng, errResp := buildAttestEngine(fsys, root, opts)
+	if errResp != nil {
+		return errResp
+	}
+	if mutate != nil {
+		mutate(eng)
+	}
+
+	res, err := eng.ChainDeclare(attest.DeclareOptions{
+		Page:      params.Page,
+		DrawsFrom: params.DrawsFrom,
+		DryRun:    params.DryRun,
+	})
+	if err != nil {
+		return cli.ErrorResponse(cli.ErrInvalidParams, err.Error())
+	}
+
+	// A dead/ambiguous selector is a warn finding for the caller (exit 0); the
+	// resolvable edges still merge — judgment about the real dependency set stays
+	// with the human via the empty claim.
+	var findings []cli.Finding
+	for _, en := range res.Entries {
+		if en.Problem != "" {
+			findings = append(findings, cli.Finding{
+				RuleID:   "chain-declare",
+				Severity: "warn",
+				FilePath: res.Page,
+				Message:  "draws-from " + en.Ref + ": " + en.Problem,
+			})
+		}
+	}
+	return &cli.Response{
+		Version:  cli.ResponseVersion,
+		Findings: findings,
+		Data:     res,
+	}
+}

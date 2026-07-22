@@ -192,11 +192,12 @@ func (e *Engine) writeScaffold(rel string, doc *frontmatter.Doc, entries []Promo
 // nothing today but are non-canonical, and a hash-algo bump could not be detected.
 const scaffoldHashAlgo = "hash-algo: v1"
 
-// inputsScaffoldItems renders the ordered chain entries as YAML sequence lines,
-// `claim:` left empty for the migrating agent to fill, and closes with the
-// canonical trailing `hash-algo` scalar.
-func inputsScaffoldItems(entries []PromoteEntry) []string {
-	out := make([]string, 0, len(entries)*3+1)
+// inputsItemLines renders the ordered chain entries as YAML sequence lines,
+// `claim:` left empty for the migrating agent to fill — WITHOUT the trailing
+// `hash-algo` scalar. The merge splice (declare.go) inserts these lines above an
+// existing block's trailer; the scaffold path appends the trailer itself.
+func inputsItemLines(entries []PromoteEntry) []string {
+	out := make([]string, 0, len(entries)*3)
 	for _, en := range entries {
 		out = append(out,
 			"- ref: "+yamlQuote(en.Ref),
@@ -204,7 +205,14 @@ func inputsScaffoldItems(entries []PromoteEntry) []string {
 			"  hash: "+yamlQuote(en.Hash),
 		)
 	}
-	return append(out, scaffoldHashAlgo)
+	return out
+}
+
+// inputsScaffoldItems renders the ordered chain entries as YAML sequence lines
+// and closes with the canonical trailing `hash-algo` scalar — the full scaffold
+// body for a page with no chain yet.
+func inputsScaffoldItems(entries []PromoteEntry) []string {
+	return append(inputsItemLines(entries), scaffoldHashAlgo)
 }
 
 // renderInputsScaffold is the paste-ready ^inputs YAML body for the report.

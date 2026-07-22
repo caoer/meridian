@@ -225,6 +225,10 @@ func main() {
 	// chain promote is the migration scaffold verb (§6.2): draws-from → inputs.
 	// Two-token verb (the `rules ls` precedent); config-gated like attest.
 	router.Handle("chain promote", chainPromoteHandler(cfg, cfgErr))
+	// chain declare merges explicit draw edges into a page's ^inputs chain
+	// (pure-writer composition, results/chain-merge-proof.md) — the merge path
+	// promote refuses. Two-token verb; config-gated like attest.
+	router.Handle("chain declare", chainDeclareHandler(cfg, cfgErr))
 	// encode is deliberately NOT config-gated: the encoder is pure grammar.
 	router.Handle("encode", encodeHandler())
 	router.Handle("schema", schemaHandler(cfg, cfgErr))
