@@ -352,10 +352,16 @@ func (e *Engine) attestPage(rel string, opts Options, rep *Report) PageResult {
 		return fail("^check: " + cr.Err.Error())
 	}
 	if cr.ExitCode != 0 {
+		// A ^check-gate failure is a stale observation upstream — the world
+		// drifted from the recorded claim. Attest proves what is; it never
+		// repairs (folding repair in would be an attestation-law change). Name
+		// the claim (the check detail) and point at the repair verb — red, not
+		// a silent fail-closed.
 		reason := fmt.Sprintf("^check failed (exit %d)", cr.ExitCode)
 		if cr.Detail != "" {
 			reason += ": " + cr.Detail
 		}
+		reason += fmt.Sprintf(" — run: md realise %s", rel)
 		return fail(reason)
 	}
 

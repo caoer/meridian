@@ -555,6 +555,11 @@ func TestFailedCheckWritesNothing(t *testing.T) {
 	if pr.Status != StatusFailed || !strings.Contains(pr.Reason, "gate says no") {
 		t.Fatalf("want failed with detail, got %+v", pr)
 	}
+	// A stale observation reports red and points at the repair verb — the
+	// claim is named (the check detail) and the hint is copy-pasteable.
+	if !strings.Contains(pr.Reason, "run: md realise "+rel) {
+		t.Errorf("want realise hint naming the page, got reason %q", pr.Reason)
+	}
 	if diskContent(t, f, rel) != before {
 		t.Error("failed check wrote bytes")
 	}
