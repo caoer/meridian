@@ -266,6 +266,182 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 				"format": {Type: "string", Required: false},
 			},
 		},
+		"resolve": {
+			Description: "Resolve wikilinks into slice nodes and report the merkle-v1 chain hash of each node's embed closure (the attestation chain's input-hash semantics). hash mode (default) folds embeds into each node's hash, never expands reference links, and fails closed — an unresolved ref, dangling anchor, or node-cap overflow is an error finding, never a guessed hash; read mode expands reference links as child nodes up to depth and warns-and-continues. Exactly one of links or page. Config-gated: resolution needs the corpus index built from the scan root",
+			Usage:       "md resolve '{\"page\":\"<page | [[note]]>\"}'  |  md resolve '{\"links\":[\"[[a]]\",\"[[b]]\"]}'",
+			Params: map[string]paramHelp{
+				"links":     {Type: "array", Required: false},
+				"page":      {Type: "string", Required: false},
+				"mode":      {Type: "string", Required: false},
+				"depth":     {Type: "number", Required: false},
+				"content":   {Type: "bool", Required: false},
+				"max_nodes": {Type: "number", Required: false},
+				"format":    {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "resolved (read mode, or clean hash)", "1": "hash-mode failure (unresolved ref, dangling anchor, node-cap overflow)", "2": "invalid params or scan error"},
+			Examples: []string{
+				`md resolve '{"page":"wiki/meridian/development.md"}'`,
+				`md resolve '{"links":["[[development#Testing]]"],"mode":"read","depth":2}'`,
+			},
+		},
+		"toc": {
+			Description: "Render a document's shape — its heading table with per-section words, sec_rev, byte spans and line ranges — through the body engine. Config-free like read: a whole-file shape query, no meridian.yaml, no #fragment (use md read for one section)",
+			Usage:       "md toc <path>  |  md toc '{\"target\":\"<path | [[note]]>\"}'",
+			Params: map[string]paramHelp{
+				"target": {Type: "string", Required: true},
+				"format": {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "shape rendered", "2": "not found, ambiguous, or a #fragment target"},
+			Examples: []string{
+				`md toc wiki/meridian/development.md`,
+				`md toc '{"target":"[[development]]"}'`,
+			},
+		},
+		"append": {
+			Description: "Add content to the tail of a section through the ONE write path (body.Splice, append rung): anchor-free and rev-free, with a 10-minute content-hash dedupe absorbing an at-least-once retry as a no-op ack. The actor is the invoking session (never a flag). Single: target file#Section (or target + at) + content; batch: edits[] (each with its own at) and/or properties, all in one atomic splice",
+			Usage:       "md append '{\"target\":\"<file#Section>\",\"content\":\"<text>\"}'",
+			Params: map[string]paramHelp{
+				"target":     {Type: "string", Required: true},
+				"at":         {Type: "string", Required: false},
+				"content":    {Type: "string", Required: false},
+				"edits":      {Type: "array", Required: false},
+				"properties": {Type: "object", Required: false},
+				"force":      {Type: "bool", Required: false},
+				"format":     {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "appended (or dedupe no-op)", "2": "invalid params, target not found, or write conflict"},
+			Examples: []string{
+				`md append '{"target":"notes.md#Log","content":"- new entry"}'`,
+				`md append '{"target":"notes.md","at":"Log","content":"- new entry"}'`,
+			},
+		},
+		"edit-section": {
+			Description: "Replace an exact old span with new inside a section, guarded by the section's hash (sec_rev) as a compare-and-swap, through the ONE write path (body.Splice, replace rung). Omitting new is never an empty replacement — deleting the old span must be explicit (new:\"\"). On a CAS conflict the refusal carries the section's current content + fresh sec_rev for a one-round-trip retry. Single: target + old + new; batch: edits[] and/or properties in one atomic splice",
+			Usage:       "md edit-section '{\"target\":\"<file#Section>\",\"old\":\"<bytes>\",\"new\":\"<bytes>\"}'",
+			Params: map[string]paramHelp{
+				"target":     {Type: "string", Required: true},
+				"at":         {Type: "string", Required: false},
+				"hash":       {Type: "string", Required: false},
+				"old":        {Type: "string", Required: false},
+				"new":        {Type: "string", Required: false},
+				"all":        {Type: "bool", Required: false},
+				"edits":      {Type: "array", Required: false},
+				"properties": {Type: "object", Required: false},
+				"force":      {Type: "bool", Required: false},
+				"format":     {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "replaced", "2": "invalid params, no match, or CAS conflict"},
+			Examples: []string{
+				`md edit-section '{"target":"notes.md#Log","old":"draft","new":"final"}'`,
+			},
+		},
+		"set-prop": {
+			Description: "Set one or more frontmatter properties through the ONE write path (body.Splice, property plane), so a property write gets the same lock, journal, atomicity, and authorization as a body write — one flock, one rev bump, one journal entry. Writes frontmatter, not a section — no #fragment. The actor is the invoking session (never a flag)",
+			Usage:       "md set-prop '{\"target\":\"<file | [[note]]>\",\"properties\":{\"<key>\":\"<value>\"}}'",
+			Params: map[string]paramHelp{
+				"target":     {Type: "string", Required: true},
+				"properties": {Type: "object", Required: true},
+				"force":      {Type: "bool", Required: false},
+				"format":     {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "properties set", "2": "invalid params, target not found, or write conflict"},
+			Examples: []string{
+				`md set-prop '{"target":"notes.md","properties":{"status":"done"}}'`,
+			},
+		},
+		"def check": {
+			Description: "Validate a record against its resolved def (session → preset → builtin cascade, or an explicit defs layer list) and surface the tri-state verdict + findings. A malformed or missing def fails closed: findings only, no verdict, never writes. Config-free — the cascade resolves from the record's own directory upward plus $UCC_HOME/defs",
+			Usage:       "md def check <path>  |  md def check '{\"target\":\"<path>\"}'",
+			Params: map[string]paramHelp{
+				"target": {Type: "string", Required: true},
+				"defs":   {Type: "array", Required: false},
+				"format": {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "clean", "1": "error findings", "2": "invalid params or unreadable record"},
+			Examples: []string{
+				`md def check agents/7533cd60.md`,
+			},
+		},
+		"def fix": {
+			Description: "Repair a record against its def — stamp derived fields, fill default tags, apply legacy marks — through ONE body.Splice batch (authorization applies; fixing another agent's file is refused naming the owner). Check-mostly in v1: missing sections are reported, never scaffolded. A malformed or missing def fails closed (findings only, nothing written); idempotent — a second run plans nothing",
+			Usage:       "md def fix <path>  |  md def fix '{\"target\":\"<path>\"}'",
+			Params: map[string]paramHelp{
+				"target": {Type: "string", Required: true},
+				"defs":   {Type: "array", Required: false},
+				"format": {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "fixed or already clean", "1": "reported findings", "2": "invalid params or unreadable record"},
+			Examples: []string{
+				`md def fix agents/7533cd60.md`,
+			},
+		},
+		"def census": {
+			Description: "Fleet-WARN census over a directory tree: warn counts per rule, off-suggest vocabulary accretion, populated legacy Todo files, and per-actor forced-warning stats from the journals. Reports only — never writes, never rejects. root defaults to cwd",
+			Usage:       "md def census [<root>]  |  md def census '{\"root\":\"<dir>\"}'",
+			Params: map[string]paramHelp{
+				"root":   {Type: "string", Required: false},
+				"defs":   {Type: "array", Required: false},
+				"format": {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "census reported"},
+			Examples: []string{
+				`md def census`,
+				`md def census wiki/`,
+			},
+		},
+		// The three chain/attest verbs: catalog one-liner is the mechanism (this
+		// card); the full --help body (usage/params/exit_codes/examples) is
+		// spec-verbatim, owned by the surface-spec verb card. The one-liner keeps
+		// the catalog honest and answers `md <verb> --help` today; the body
+		// enriches it in place under the shared dispatcher mutex.
+		"attest": {
+			Description: "Mint or refresh a v1 attestation receipt for a page — the strict sole receipt writer: check gate, input + procedure hashing, four-case idempotency (an unchanged page reports a no-op, never a fresh mint), CAS + ancestry guards, atomic working-tree write (never git add/commit/push). Exactly one of page or scope. Config-gated: hashing resolves against the corpus index built from the scan root",
+			Usage:       "md attest <page>  |  md attest '{\"page\":\"<page>\"}'",
+			Params: map[string]paramHelp{
+				"page":          {Type: "string", Required: false},
+				"scope":         {Type: "string", Required: false},
+				"dry_run":       {Type: "bool", Required: false},
+				"verdict":       {Type: "string", Required: false},
+				"commit":        {Type: "string", Required: false},
+				"bulk_reattest": {Type: "object", Required: false},
+				"format":        {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "attested (or unchanged no-op)", "1": "a page failed or was refused", "2": "invalid params or tool failure"},
+			Examples: []string{
+				`md attest domains/correct-context/substrate.md`,
+				`md attest '{"page":"domains/correct-context/substrate.md"}'`,
+			},
+		},
+		"chain promote": {
+			Description: "Scaffold an effect page's inputs: chain from its draws-from provenance — resolve and hash each entry. format:json emits the ready-to-paste ^inputs scaffold with no write; {\"write\":true} persists it to pages with no chain yet (never merges into an existing chain — that is md chain declare). Exactly one of page or scope. Config-gated like attest",
+			Usage:       "md chain promote '{\"page\":\"<page>\"}'",
+			Params: map[string]paramHelp{
+				"page":    {Type: "string", Required: false},
+				"scope":   {Type: "string", Required: false},
+				"write":   {Type: "bool", Required: false},
+				"dry_run": {Type: "bool", Required: false},
+				"format":  {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "scaffolded (dead/ambiguous draws-from are warnings)", "2": "invalid params or tool failure"},
+			Examples: []string{
+				`md chain promote '{"page":"effects/skills/build-correct-context.md"}'`,
+				`md chain promote '{"page":"effects/skills/build-correct-context.md","write":true}'`,
+			},
+		},
+		"chain declare": {
+			Description: "Declare explicit draw edges page→each draws-from selector and merge them into the page's ^inputs chain (pure-writer composition) — the merge path chain promote refuses. Computes each new edge's hash and splices it into an existing chain. Config-gated like attest",
+			Usage:       "md chain declare '{\"page\":\"<page>\",\"draws-from\":[\"<selector>\"]}'",
+			Params: map[string]paramHelp{
+				"page":       {Type: "string", Required: true},
+				"draws-from": {Type: "array", Required: true},
+				"dry_run":    {Type: "bool", Required: false},
+				"format":     {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "declared (dead/ambiguous selectors are warnings)", "2": "invalid params or tool failure"},
+			Examples: []string{
+				`md chain declare '{"page":"results/report.md","draws-from":["[[substrate#^b1]]","6becbd2c#seq-234"]}'`,
+			},
+		},
 	}
 
 	return func(req *Request) *Response {

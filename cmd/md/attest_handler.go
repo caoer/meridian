@@ -75,6 +75,9 @@ type bulkReattest struct {
 func attestWithFS(fsys fs.FS, root string, opts engine.ScanOptions, mutate func(*attest.Engine), req *cli.Request) *cli.Response {
 	var params attestParams
 	if req.Params != nil {
+		if resp := rejectFileKey(req.Params); resp != nil {
+			return resp
+		}
 		dec := json.NewDecoder(bytes.NewReader(req.Params))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&params); err != nil {
@@ -230,6 +233,9 @@ type chainPromoteParams struct {
 func chainPromoteWithFS(fsys fs.FS, root string, opts engine.ScanOptions, mutate func(*attest.Engine), req *cli.Request) *cli.Response {
 	var params chainPromoteParams
 	if req.Params != nil {
+		if resp := rejectFileKey(req.Params); resp != nil {
+			return resp
+		}
 		dec := json.NewDecoder(bytes.NewReader(req.Params))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&params); err != nil {
@@ -321,6 +327,9 @@ type chainDeclareParams struct {
 func chainDeclareWithFS(fsys fs.FS, root string, opts engine.ScanOptions, mutate func(*attest.Engine), req *cli.Request) *cli.Response {
 	var params chainDeclareParams
 	if req.Params != nil {
+		if resp := rejectFileKey(req.Params); resp != nil {
+			return resp
+		}
 		dec := json.NewDecoder(bytes.NewReader(req.Params))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&params); err != nil {

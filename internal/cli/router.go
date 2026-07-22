@@ -90,8 +90,10 @@ func (r *Router) Run(args []string, stdin io.Reader) int {
 
 	// `md <cmd> --help` routes to the help registry before param parsing —
 	// otherwise the flag hits the JSON parser (malformed JSON) or a
-	// positional adapter (path must exist) instead of answering.
-	if command != "help" && len(args) > paramIdx && (args[paramIdx] == "--help" || args[paramIdx] == "-h") {
+	// positional adapter (path must exist) instead of answering. `help` is not
+	// exempt: `md help --help` answers with help's own registry entry, never
+	// the malformed-JSON error.
+	if len(args) > paramIdx && (args[paramIdx] == "--help" || args[paramIdx] == "-h") {
 		if h, found := r.handlers["help"]; found {
 			params, _ := json.Marshal(map[string]string{"command": command})
 			resp := h(&Request{Command: "help", Params: params})

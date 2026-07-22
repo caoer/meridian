@@ -185,6 +185,12 @@ func main() {
 
 	// Register commands
 	router.Handle("help", cli.NewHelpHandler(router.Commands, searchFn))
+	// `md help <command>` — positional sugar for {"command":"<command>"}: the
+	// natural discovery invocation answers instead of erroring on malformed
+	// JSON. Search stays the JSON form: md help '{"search":"<query>"}'.
+	router.HandlePositional("help", func(arg string) (json.RawMessage, error) {
+		return json.Marshal(map[string]string{"command": arg})
+	})
 	router.Handle("rules ls", requireConfig(cfgErr, cli.RulesLsHandler(loadedRules)))
 	router.Handle("rules check", requireConfig(cfgErr, cli.RulesCheckHandler(allRules, profiles)))
 	router.Handle("debug", requireConfig(cfgErr, cli.DebugHandler(loadedRules, registeredChecks)))
@@ -222,6 +228,11 @@ func main() {
 	// against the corpus index built from the scan root. Strict sole writer —
 	// working-tree bytes only, never git add/commit/push.
 	router.Handle("attest", attestHandler(cfg, cfgErr))
+	// `md attest <page>` — positional sugar for {"page":"<page>"} via the shared
+	// page adapter: pure passthrough, no stat (a page selector is an address,
+	// page#^block / session-id#seq-N, not a file). The JSON form stays canonical;
+	// this only kills the raw-blob pain on the most natural invocation.
+	router.HandlePositional("attest", pagePositional)
 	// chain promote is the migration scaffold verb (§6.2): draws-from → inputs.
 	// Two-token verb (the `rules ls` precedent); config-gated like attest.
 	router.Handle("chain promote", chainPromoteHandler(cfg, cfgErr))
