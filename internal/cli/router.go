@@ -74,8 +74,15 @@ func (r *Router) Run(args []string, stdin io.Reader) int {
 
 	command := args[0]
 	paramIdx := 1
-	handler, ok := r.handlers[command]
-	if !ok && len(args) > 1 {
+	var handler Handler
+	var ok bool
+	// Prefer a registered two-word verb (`watch status`) over a one-word handler
+	// that shares its first token (`watch`): a single-word handler must not
+	// shadow a two-word verb, or the two-word spelling would route to the
+	// one-word handler with an unparseable positional. Every other two-word verb
+	// (rules ls, chain promote, …) has no one-word handler for its first token,
+	// so this only changes the shadowed case.
+	if len(args) > 1 {
 		twoWord := args[0] + " " + args[1]
 		if h, found := r.handlers[twoWord]; found {
 			handler = h
@@ -83,6 +90,9 @@ func (r *Router) Run(args []string, stdin io.Reader) int {
 			command = twoWord
 			paramIdx = 2
 		}
+	}
+	if !ok {
+		handler, ok = r.handlers[command]
 	}
 	if !ok {
 		return r.respond(ErrorResponse(ErrUnknownCommand, "unknown command: "+command))

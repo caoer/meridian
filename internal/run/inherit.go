@@ -1,6 +1,7 @@
 package run
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -9,6 +10,13 @@ import (
 
 	"github.com/caoer/meridian/internal/frontmatter"
 )
+
+// ErrTaskNotFound is wrapped by inherited resolution when md-<name> is declared
+// neither on the leaf nor on any probed ancestor blurb. It lets a caller (md
+// realise) treat a genuinely-absent OPTIONAL phase as "skip" via errors.Is,
+// while a real read/parse error (unreadable page, malformed blurb) still
+// surfaces distinctly.
+var ErrTaskNotFound = errors.New("task not found via inherit")
 
 // ReservedPageParam is the engine-injected identity param for inherited runs:
 // MD_PARAM_PAGE carries the originating leaf page's repo-relative path so a base
@@ -130,8 +138,8 @@ func resolveInherited(name, mdPath, top string, leaf *runSource, sources map[str
 	if err != nil {
 		return nil, err
 	}
-	return nil, fmt.Errorf("task %q not found via inherit — no md-%s in %s or any ancestor blurb: %s",
-		name, name, leafRel, strings.Join(probed, ", "))
+	return nil, fmt.Errorf("task %q not found via inherit — no md-%s in %s or any ancestor blurb: %s: %w",
+		name, name, leafRel, strings.Join(probed, ", "), ErrTaskNotFound)
 }
 
 // blurbCandidates lists the blurb pages an inherited task probes, nearest

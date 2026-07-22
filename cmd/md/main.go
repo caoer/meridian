@@ -216,8 +216,34 @@ func main() {
 	router.Handle("fix", fixHandler(eng, loadedRules, cfg, cfgErr))
 	router.Handle("mv", mvHandler(eng, loadedRules, cfg, cfgErr))
 	router.Handle("watch", watchHandler(cfg, cfgErr, cfgPath))
-	router.Handle("status", statusHandler(cfgPath, cfgErr))
+	// `md watch status` — canonical home for the watch-daemon query the bare
+	// `md status` alias forwards to (surface-spec/status: no silent rename).
+	router.Handle("watch status", watchStatusHandler(cfgPath, cfgErr))
+	// `md status` carries two behaviours: `md status <page>` → the three-color
+	// drift view (pure read); bare `md status` → the legacy daemon query,
+	// unchanged. The bare-form cutover to a whole-corpus roll-up collides with
+	// the legacy shape and is deferred to its own gated card.
+	router.Handle("status", statusHandler(cfg, cfgErr, cfgPath))
+	router.HandlePositional("status", pagePositional)
 	router.Handle("run", runHandler())
+	// realise is the reconciliation loop as one verb: observe → check → apply
+	// (only on drift) → re-check, pure sequencing over `md run` with inherit.
+	// NOT config-gated — like run, the markdown file is the unit of
+	// configuration and inheritance walks the git toplevel.
+	router.Handle("realise", realiseHandler())
+	// `md realise <page>` — positional sugar for {"page":"<page>"} via the shared
+	// page adapter (no stat: a page is an address the run engine reads directly).
+	router.HandlePositional("realise", pagePositional)
+	// walk is the context-assembly verb (surface-spec/walk): up (default) = the
+	// context pack of attested draw-graph hops; down = the forward blast-radius
+	// dry-run. Pure read over the draw edges — no cap, never executes a claim.
+	// Config-gated like resolve: it resolves refs against the corpus index built
+	// from the scan root.
+	router.Handle("walk", walkHandler(cfg, cfgErr))
+	// `md walk <page>` — positional sugar for {"page":"<page>"} via the shared
+	// page adapter: no stat (a page selector is an address, page#^block /
+	// session-id#seq-N, not a file on disk).
+	router.HandlePositional("walk", pagePositional)
 	registerBodyVerbs(router)
 	registerDefVerbs(router)
 	registerPipeVerb(router)
@@ -541,34 +567,6 @@ func watchHandler(cfg *config.Config, cfgErr error, cfgPath string) cli.Handler 
 		srv.Close()
 		d.Stop()
 		return &cli.Response{Version: cli.ResponseVersion}
-	}
-}
-
-func statusHandler(cfgPath string, cfgErr error) cli.Handler {
-	return func(req *cli.Request) *cli.Response {
-		if cfgErr != nil {
-			return cli.ErrorResponseWithHint(cli.ErrNoConfig,
-				cfgErr.Error(),
-				"create meridian.yaml or set MERIDIAN_CONFIG env var")
-		}
-		sockPath := watch.SocketPath(cfgPath)
-		data, err := watch.QueryStatus(sockPath)
-		if err != nil {
-			return cli.ErrorResponseWithHint(cli.ErrNoDaemon,
-				"no running daemon found",
-				"start with: md watch")
-		}
-
-		// Socket returns bare stats — wrap in standard envelope
-		var raw json.RawMessage
-		if err := json.Unmarshal(data, &raw); err != nil {
-			return cli.ErrorResponse(cli.ErrStatusFailed, fmt.Sprintf("invalid status response: %v", err))
-		}
-
-		return &cli.Response{
-			Version: cli.ResponseVersion,
-			Data:    raw,
-		}
 	}
 }
 

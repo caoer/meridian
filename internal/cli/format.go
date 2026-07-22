@@ -296,6 +296,15 @@ func formatData(w io.Writer, data any) {
 	case TocData:
 		d.renderText(w)
 
+	case WalkData:
+		d.renderText(w)
+
+	case StatusData:
+		d.renderText(w)
+
+	case RealiseData:
+		d.renderText(w)
+
 	case DefCheckData:
 		d.renderText(w)
 

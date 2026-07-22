@@ -255,9 +255,24 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 			Description: "Start filesystem watcher daemon",
 			Usage:       "md watch",
 		},
+		"watch status": {
+			Description: "Query running watch daemon status — the canonical home for the daemon query. Bare `md status` forwards here as a working alias (no silent rename). Reads the daemon's stats socket; NO_DAEMON when none is running",
+			Usage:       "md watch status",
+			ExitCodes:   map[string]string{"0": "daemon answered", "2": "no running daemon, or no config"},
+		},
 		"status": {
-			Description: "Query running watch daemon status",
-			Usage:       "md status",
+			Description: "Three-color drift view over the vault: green (declared, checked, true), red (drifted — recorded rev != live rev, with the classifier case), grey (unmanaged — the edge of the ledger's sight, never dressed as attested). Includes the origin tip-compare freshness line (behind origin/<branch> by N + ref age, local refs, no network). Pure read, no cap; fetch:true refreshes origin refs first (net.git). Exec-facts are sourced from the run record, never re-derived. Positional sugar: `md status <page>`. Bare `md status` (no page) queries the running watch daemon (canonical home: md watch status)",
+			Usage:       "md status <page>  |  md status '{\"page\":\"<page>\",\"fetch\":true}'  |  md status  (watch daemon query)",
+			Params: map[string]paramHelp{
+				"page":   {Type: "string", Required: false},
+				"fetch":  {Type: "bool", Required: false},
+				"format": {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "green/grey (or daemon answered)", "1": "red — a drifted page", "2": "invalid params, scan error, or (bare form) no daemon"},
+			Examples: []string{
+				`md status domains/correct-context/honesty.md`,
+				`md status '{"page":"effects/skills/caveman.md","fetch":true}'`,
+			},
 		},
 		"schema": {
 			Description: "Print the effective frontmatter schema: contract defaults merged with the nearest SCHEMA.md overlay (searched from cwd up to git toplevel, or scan.root when config is loaded)",
@@ -410,6 +425,38 @@ func NewHelpHandler(commands func() []string, searchFn SearchFunc) Handler {
 			Examples: []string{
 				`md attest domains/correct-context/substrate.md`,
 				`md attest '{"page":"domains/correct-context/substrate.md"}'`,
+			},
+		},
+		"realise": {
+			Description: "Converge a page's claims: observe (read caps) → check (pure) → apply (mutation caps, only on check-fail) → re-check. Pure sequencing over md run with inherit — no new execution semantics; CAS-skips unchanged work (check clean → apply never fires). Reports one terminal state per page: converged / drifted-fixed / non-convergent / pending-agent. Every apply it fires is recorded to the run-record sidecar (no receipt-less apply). dry_run:true previews which phases would run and their caps, executing nothing (zero caps). Positional sugar: md realise <page>. Not config-gated — like run, the markdown file is the unit of configuration",
+			Usage:       "md realise <page>  |  md realise '{\"page\":\"<page>\",\"dry_run\":true}'",
+			Params: map[string]paramHelp{
+				"page":    {Type: "string", Required: true},
+				"dry_run": {Type: "bool", Required: false},
+				"timeout": {Type: "string", Required: false},
+				"format":  {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "converged or drifted-fixed (dry-run: preview)", "1": "non-convergent or pending-agent", "2": "invalid params or tool failure (incl. an unrecorded apply)"},
+			Examples: []string{
+				`md realise tools/ucc-install.md`,
+				`md realise tools/ucc-install.md --dry-run` + "  (via {\"dry_run\":true})",
+				`md realise '{"page":"tools/ucc-install.md","dry_run":true}'`,
+			},
+		},
+		"walk": {
+			Description: "Walk the draw graph from a page. Default: upstream (\"what does this rest on?\") — emits a context pack of ordered attested hops (selector, rev, color) down to transcript spans (session-id#seq-N), grey rendered. down:true: forward dry-run — the blast radius of a flip (blast radius zero = provably safe to remove). Every hop carries its color — green (attested, fresh), red (drifted or a dead/ambiguous ref), grey (unattested provenance, or a transcript span outside the ledger) — never dropped, never dressed as green. Claim hops carry run-record-sourced exec-facts (never re-derived). Budget with depth. Pure read over the draw edges (draws-from ∪ ^inputs), no cap. Config-gated: resolves refs against the corpus index built from the scan root. Positional sugar: md walk <page>",
+			Usage:       "md walk <page>  |  md walk '{\"page\":\"<page>\",\"depth\":3}'  |  md walk '{\"page\":\"<page>\",\"down\":true}'",
+			Params: map[string]paramHelp{
+				"page":   {Type: "string", Required: true},
+				"depth":  {Type: "number", Required: false},
+				"down":   {Type: "bool", Required: false},
+				"format": {Type: "string", Required: false},
+			},
+			ExitCodes: map[string]string{"0": "walked (a pure read never fails on graph shape)", "2": "invalid params, unknown page, or scan error"},
+			Examples: []string{
+				`md walk domains/correct-context/substrate.md`,
+				`md walk '{"page":"results/report.md","depth":3}'`,
+				`md walk '{"page":"domains/x/page.md","down":true}'`,
 			},
 		},
 		"chain promote": {
