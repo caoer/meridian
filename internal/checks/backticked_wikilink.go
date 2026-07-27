@@ -105,6 +105,16 @@ func backtickWikilinkCheck(doc *engine.Document, params map[string]any) []engine
 			continue
 		}
 
+		// Byte prefilter (gate ⊆ regex prerequisite): a finding is a wikilink
+		// (wikilinkRe = `\[\[...\]\]`) sitting inside an inline-code span, so a
+		// line with no '[' can produce no finding regardless of its code spans.
+		// Gating here (on the raw line the regex runs on) is exact. Placed AFTER
+		// fence-state handling so fence open/close lines (no '[') still toggle the
+		// state machine. SIMD IndexByte replaces the span scan + wikilink scan.
+		if strings.IndexByte(line, '[') == -1 {
+			continue
+		}
+
 		spans := inlineCodeSpans(line)
 		if len(spans) == 0 {
 			continue
@@ -113,7 +123,7 @@ func backtickWikilinkCheck(doc *engine.Document, params map[string]any) []engine
 		for _, loc := range wikilinkRe.FindAllStringIndex(line, -1) {
 			if insideAnySpan(spans, loc[0], loc[1]) {
 				out = append(out, engine.RawFinding{
-					Line: doc.BodyOffset + i + 1,
+					Line: doc.BodyOffset + i,
 					TemplateData: map[string]string{
 						"Match": line[loc[0]:loc[1]],
 						"Line":  line,

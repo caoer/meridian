@@ -16,7 +16,18 @@ import (
 //   - skip-prefixes ([]string): link targets to skip (e.g. "foreign/", "http")
 //   - __scanned_paths ([]string): injected by engine, all vault file paths
 func wikilinkCanonicalizeCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
-	if doc.Body == "" {
+	// Phase-2 consumer. canonicalize uses its OWN link grammar (WikilinkInnerRe +
+	// canon.ParseLink capture display), which diverges from wikilinkRe on
+	// pathological nested-bracket tokens — so it cannot trust facts.Target. It
+	// consumes facts.Links only for the shared token set and true line numbers
+	// (fenced/inline-code already excluded), then re-parses each token's exact
+	// source (lf.Original, lossless) with its own grammar. Running WikilinkInnerRe
+	// over each Original reproduces the former WikilinkInnerRe-over-stripped-line
+	// scan token-for-token: every inner match is self-contained within one
+	// wikilinkRe token, and any token the two grammars disagree on parses to an
+	// empty target and is skipped either way.
+	facts := docFacts(doc, params)
+	if len(facts.Links) == 0 {
 		return nil
 	}
 
@@ -27,37 +38,10 @@ func wikilinkCanonicalizeCheck(doc *engine.Document, params map[string]any) []en
 	skipPrefixes := toStringSlice(params["skip-prefixes"])
 
 	re := canon.WikilinkInnerRe()
-	lines := strings.Split(doc.Body, "\n")
 	var out []engine.RawFinding
-	inFence := false
-	var fenceMarker string
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		if m := fencedOpenRe.FindStringSubmatch(line); m != nil {
-			marker := string(m[1][0])
-			count := len(m[1])
-			if !inFence {
-				inFence = true
-				fenceMarker = strings.Repeat(marker, count)
-			} else if strings.HasPrefix(trimmed, fenceMarker) && marker == string(fenceMarker[0]) {
-				inFence = false
-				fenceMarker = ""
-			}
-			continue
-		}
-
-		if inFence {
-			continue
-		}
-
-		// Strip inline code before scanning for wikilinks.
-		stripped := inlineCodeRe.ReplaceAllString(line, "")
-		matches := re.FindAllStringSubmatch(stripped, -1)
-		for _, match := range matches {
-			inner := match[1]
-			lp := canon.ParseLink(inner)
+	for _, lf := range facts.Links {
+		for _, match := range re.FindAllStringSubmatch(lf.Original, -1) {
+			lp := canon.ParseLink(match[1])
 
 			if lp.Target == "" {
 				continue
@@ -74,7 +58,7 @@ func wikilinkCanonicalizeCheck(doc *engine.Document, params map[string]any) []en
 			canonical := idx.ShortestUnique(resolved)
 			if canonical != lp.Target {
 				out = append(out, engine.RawFinding{
-					Line: doc.BodyOffset + i + 1,
+					Line: lf.Line,
 					TemplateData: map[string]string{
 						"Target":    lp.Target,
 						"Canonical": canonical,
@@ -98,21 +82,14 @@ func buildCanonIndex(params map[string]any) *canon.Index {
 	rootsRaw := toStringSlice(params["roots"])
 	paths, _ := params["__scanned_paths"].([]string)
 
-	cache, cacheOK := params["__index_cache"].(map[string]any)
 	cacheKey := "canon\x00" + strings.Join(rootsRaw, "\x00")
-	if cacheOK {
-		if cached, ok := cache[cacheKey]; ok {
-			idx, _ := cached.(*canon.Index)
-			return idx
+	v := indexCacheGetOrBuild(params, cacheKey, func() any {
+		var idx *canon.Index
+		if filtered := canon.FilterPathsByRoots(paths, rootsRaw); len(filtered) > 0 {
+			idx = canon.BuildIndex(filtered)
 		}
-	}
-
-	var idx *canon.Index
-	if filtered := canon.FilterPathsByRoots(paths, rootsRaw); len(filtered) > 0 {
-		idx = canon.BuildIndex(filtered)
-	}
-	if cacheOK {
-		cache[cacheKey] = idx
-	}
+		return idx
+	})
+	idx, _ := v.(*canon.Index)
 	return idx
 }

@@ -15,7 +15,7 @@ import (
 // under params: arrive nil). Execution is then verified through the same
 // loaded rule with severity flipped, against a real temp repo.
 func TestYAMLPipeline_Probe(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "probe")
 	if r.Check != "probe" {
 		t.Fatalf("Check = %q", r.Check)

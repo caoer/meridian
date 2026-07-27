@@ -62,6 +62,15 @@ func tableWikilinkPipeCheck(doc *engine.Document, params map[string]any) []engin
 			}
 
 			line := lines[row]
+			// Byte prefilter (gate ⊆ regex prerequisite): tableWikilinkPipeRe =
+			// `\[\[([^\]\\]+)\|([^\]]+)\]\]` cannot match without a '['. Gated ONLY
+			// here at the per-cell regex call — NOT as line-skipping: header and
+			// separator rows without '[' carry no wikilink pipe but still
+			// participate in the table row-grouping above, so skipping them earlier
+			// would fracture the group. SIMD IndexByte replaces the regex scan.
+			if strings.IndexByte(line, '[') == -1 {
+				continue
+			}
 			if !tableWikilinkPipeRe.MatchString(line) {
 				continue
 			}
@@ -70,7 +79,7 @@ func tableWikilinkPipeCheck(doc *engine.Document, params map[string]any) []engin
 			actualCols := countColumns(line)
 
 			out = append(out, engine.RawFinding{
-				Line: doc.BodyOffset + row + 1,
+				Line: doc.BodyOffset + row,
 				TemplateData: map[string]string{
 					"Expected":  strconv.Itoa(headerCols),
 					"Actual":    strconv.Itoa(actualCols),

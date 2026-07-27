@@ -79,16 +79,11 @@ func linkResolveCheck(doc *engine.Document, params map[string]any) []engine.RawF
 // Without the scratchpad (e.g. direct check calls in tests) it falls back to
 // building each time.
 func cachedGlobIndex(params map[string]any, globs, paths []string) map[string]bool {
-	cache, ok := params["__index_cache"].(map[string]any)
-	if !ok {
-		return buildGlobIndex(globs, paths)
-	}
 	key := "glob\x00" + strings.Join(globs, "\x00")
-	if idx, ok := cache[key].(map[string]bool); ok {
-		return idx
-	}
-	idx := buildGlobIndex(globs, paths)
-	cache[key] = idx
+	v := indexCacheGetOrBuild(params, key, func() any {
+		return buildGlobIndex(globs, paths)
+	})
+	idx, _ := v.(map[string]bool)
 	return idx
 }
 
@@ -164,6 +159,19 @@ func isForeignPath(path string, foreignRoots []string) bool {
 		}
 	}
 	return false
+}
+
+// docFacts returns the phase-1 facts for doc: the engine-injected __facts on a
+// full/scoped engine run, or a fresh extraction when a caller omits it (direct
+// check-call tests, and any path that did not pre-extract). Both branches yield
+// the identical set — the engine injects exactly engine.ExtractFacts(doc) — so a
+// fact-consuming check behaves the same whether or not __facts was primed. That
+// equivalence is what keeps the existing per-check test suites unchanged.
+func docFacts(doc *engine.Document, params map[string]any) engine.Facts {
+	if f, ok := params["__facts"].(engine.Facts); ok {
+		return f
+	}
+	return engine.ExtractFacts(doc)
 }
 
 // toStringSlice converts []any, []string, or a bare string (from YAML) to []string.

@@ -24,6 +24,7 @@ func RenderText(w io.Writer, resp *Response) {
 		errCount := 0
 		warnCount := 0
 		infoCount := 0
+		ruleCounts := map[string]int{}
 
 		for _, f := range resp.Findings {
 			level := strings.ToUpper(f.Severity)
@@ -32,6 +33,7 @@ func RenderText(w io.Writer, resp *Response) {
 				loc = fmt.Sprintf("%s:%d", f.FilePath, f.Line)
 			}
 			fmt.Fprintf(w, "%-5s %s  [%s] %s\n", level, loc, f.RuleID, f.Message)
+			ruleCounts[f.RuleID]++
 
 			switch f.Severity {
 			case "error":
@@ -52,12 +54,40 @@ func RenderText(w io.Writer, resp *Response) {
 			}
 			parts = append(parts, fmt.Sprintf("%d errors", errCount))
 			parts = append(parts, fmt.Sprintf("%d warnings", warnCount))
+			// Engine warnings (rendered as NOTE lines below) are a routine class —
+			// cache-unavailable, effect-pin batch-infra failures (U6) — distinct from
+			// warn-severity findings. Surface their count so a run that quietly
+			// degraded (e.g. pins unverified this run) is visible in the summary, not
+			// only buried in the trailing NOTE lines. Omitted when zero to keep the
+			// clean-run summary unchanged.
+			if n := len(resp.Warnings); n > 0 {
+				parts = append(parts, fmt.Sprintf("%d notes", n))
+			}
 			if resp.Stats.DurationMs > 0 {
 				parts = append(parts, fmt.Sprintf("%dms", resp.Stats.DurationMs))
 			}
 			fmt.Fprintln(w, strings.Join(parts, ", "))
 		} else if len(resp.Findings) == 0 {
 			fmt.Fprintln(w, "clean")
+		}
+
+		// Per-rule breakdown: one line, descending count (ties by ID)
+		if len(ruleCounts) > 0 {
+			ids := make([]string, 0, len(ruleCounts))
+			for id := range ruleCounts {
+				ids = append(ids, id)
+			}
+			sort.Slice(ids, func(i, j int) bool {
+				if ruleCounts[ids[i]] != ruleCounts[ids[j]] {
+					return ruleCounts[ids[i]] > ruleCounts[ids[j]]
+				}
+				return ids[i] < ids[j]
+			})
+			perRule := make([]string, len(ids))
+			for i, id := range ids {
+				perRule[i] = fmt.Sprintf("%s=%d", id, ruleCounts[id])
+			}
+			fmt.Fprintf(w, "by rule: %s\n", strings.Join(perRule, " · "))
 		}
 
 		// Warnings (engine warnings, not findings)
@@ -129,12 +159,23 @@ func formatData(w io.Writer, data any) {
 		for _, c := range d.Commands {
 			fmt.Fprintf(w, "  %-15s %s\n", c.Command, c.Description)
 		}
+		fmt.Fprintln(w, "\nParams are JSON: md <command> '{\"key\":\"value\"}'  (or `md <command> - < params.json`)")
+		fmt.Fprintln(w, "Per-command help: md <command> --help")
 
 	case HelpCommandData:
 		fmt.Fprintf(w, "%s: %s\n", d.Command, d.Description)
+		if d.Usage != "" {
+			fmt.Fprintf(w, "\nUsage:\n  %s\n", d.Usage)
+		}
 		if len(d.Params) > 0 {
 			fmt.Fprintln(w, "\nParameters:")
-			for name, p := range d.Params {
+			names := make([]string, 0, len(d.Params))
+			for name := range d.Params {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				p := d.Params[name]
 				req := ""
 				if p.Required {
 					req = " (required)"
@@ -144,8 +185,19 @@ func formatData(w io.Writer, data any) {
 		}
 		if len(d.ExitCodes) > 0 {
 			fmt.Fprintln(w, "\nExit codes:")
-			for code, desc := range d.ExitCodes {
-				fmt.Fprintf(w, "  %s  %s\n", code, desc)
+			codes := make([]string, 0, len(d.ExitCodes))
+			for code := range d.ExitCodes {
+				codes = append(codes, code)
+			}
+			sort.Strings(codes)
+			for _, code := range codes {
+				fmt.Fprintf(w, "  %s  %s\n", code, d.ExitCodes[code])
+			}
+		}
+		if len(d.Examples) > 0 {
+			fmt.Fprintln(w, "\nExamples:")
+			for _, ex := range d.Examples {
+				fmt.Fprintf(w, "  %s\n", ex)
 			}
 		}
 
@@ -251,6 +303,11 @@ func formatData(w io.Writer, data any) {
 			io.WriteString(w, m.Content)
 		}
 
+	case SkillRenderData:
+		// stdout carries the rendered body only — a harness injects it
+		// verbatim; skill/directive metadata goes to stderr from the handler.
+		io.WriteString(w, d.Content)
+
 	case RunData:
 		// Task rows follow the silence-is-ok law: success prints nothing
 		// (harness fenced-! blocks merge stderr into the capture, so even
@@ -281,6 +338,31 @@ func formatData(w io.Writer, data any) {
 			}
 		}
 
+	case CacheStatsData:
+		fmt.Fprintf(w, "path:         %s\n", d.Path)
+		fmt.Fprintf(w, "version dirs: %d\n", d.VersionDirs)
+		fmt.Fprintf(w, "shards:       %d\n", d.Shards)
+		fmt.Fprintf(w, "entries:      %d\n", d.Entries)
+		fmt.Fprintf(w, "bytes:        %d\n", d.Bytes)
+
+	case CacheCleanData:
+		fmt.Fprintf(w, "removed %d entries / %d bytes\n", d.Entries, d.Bytes)
+		fmt.Fprintf(w, "path: %s\n", d.Path)
+
+	case CacheVerifyData:
+		if d.Verified {
+			fmt.Fprintf(w, "cache verified: %d entries checked, no divergence\n", d.EntriesChecked)
+			return
+		}
+		fmt.Fprintf(w, "CACHE DIVERGENCE: %d entries checked, %d divergent findings\n", d.EntriesChecked, len(d.Divergences))
+		for _, dv := range d.Divergences {
+			loc := dv.FilePath
+			if dv.Line > 0 {
+				loc = fmt.Sprintf("%s:%d", dv.FilePath, dv.Line)
+			}
+			fmt.Fprintf(w, "  %-14s %s  [%s] %s\n", dv.Kind, loc, dv.RuleID, dv.Message)
+		}
+
 	case RunListData:
 		for _, task := range d.Tasks {
 			target := task.Ref
@@ -293,6 +375,9 @@ func formatData(w io.Writer, data any) {
 			}
 			if len(task.Env) > 0 {
 				fmt.Fprintf(w, "    requires env: %s\n", strings.Join(task.Env, ", "))
+			}
+			if len(task.Params) > 0 {
+				fmt.Fprintf(w, "    accepts params: %s\n", strings.Join(task.Params, ", "))
 			}
 			if task.Error != "" {
 				fmt.Fprintf(w, "    ERROR: %s\n", task.Error)

@@ -29,8 +29,8 @@ func TestHeadingStructure_MultipleH1(t *testing.T) {
 	if findings[0].TemplateData["Issue"] != "multiple H1" {
 		t.Errorf("Issue = %q, want 'multiple H1'", findings[0].TemplateData["Issue"])
 	}
-	if findings[0].Line != 4 { // BodyOffset 1 + lineIndex 2 + 1
-		t.Errorf("Line = %d, want 4", findings[0].Line)
+	if findings[0].Line != 3 { // BodyOffset 1 (first body line) + lineIndex 2
+		t.Errorf("Line = %d, want 3", findings[0].Line)
 	}
 }
 

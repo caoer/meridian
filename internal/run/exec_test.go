@@ -46,7 +46,7 @@ func TestExecBlockBashArgv(t *testing.T) {
 	b := Block{ID: "t", Fence: true, Lang: "bash", Code: "echo \"argv: $*\"\npwd\n"}
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	code, _, err := ExecBlock(b, []string{"x", "y"}, dir, 0, &stdout, &stderr)
+	code, _, err := ExecBlock(b, []string{"x", "y"}, nil, dir, 0, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("ExecBlock: %v (stderr: %s)", err, stderr.String())
 	}
@@ -67,7 +67,7 @@ func TestExecBlockFailFast(t *testing.T) {
 	// -e: failing first command aborts before echo.
 	b := Block{ID: "t", Fence: true, Lang: "bash", Code: "false\necho should-not-print\n"}
 	var stdout, stderr bytes.Buffer
-	code, _, err := ExecBlock(b, nil, t.TempDir(), 0, &stdout, &stderr)
+	code, _, err := ExecBlock(b, nil, nil, t.TempDir(), 0, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("ExecBlock: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestExecBlockPythonArgv(t *testing.T) {
 	b := Block{ID: "py", Fence: true, Lang: "python",
 		Code: "import sys\nprint(\"argv:\", \" \".join(sys.argv[1:]))\nsys.exit(7)\n"}
 	var stdout, stderr bytes.Buffer
-	code, _, err := ExecBlock(b, []string{"a", "b"}, t.TempDir(), 0, &stdout, &stderr)
+	code, _, err := ExecBlock(b, []string{"a", "b"}, nil, t.TempDir(), 0, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("ExecBlock: %v (stderr: %s)", err, stderr.String())
 	}
@@ -157,7 +157,7 @@ func TestExecBlockTimeoutKillsWedgedBlock(t *testing.T) {
 	b := Block{ID: "wedge", Fence: true, Lang: "bash", Code: "sleep 30\necho survived\n"}
 	var stdout, stderr bytes.Buffer
 	start := time.Now()
-	code, timedOut, err := ExecBlock(b, nil, t.TempDir(), 300*time.Millisecond, &stdout, &stderr)
+	code, timedOut, err := ExecBlock(b, nil, nil, t.TempDir(), 300*time.Millisecond, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("ExecBlock: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestExecBlockTimeoutKillsGrandchildHoldingPipe(t *testing.T) {
 	b := Block{ID: "gp", Fence: true, Lang: "bash", Code: "sleep 30 &\nwait\n"}
 	var stdout, stderr bytes.Buffer
 	start := time.Now()
-	code, timedOut, err := ExecBlock(b, nil, t.TempDir(), 300*time.Millisecond, &stdout, &stderr)
+	code, timedOut, err := ExecBlock(b, nil, nil, t.TempDir(), 300*time.Millisecond, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("ExecBlock: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestExecBlockTimeoutKillsGrandchildHoldingPipe(t *testing.T) {
 func TestExecBlockNoTimeoutUnbounded(t *testing.T) {
 	b := Block{ID: "ok", Fence: true, Lang: "bash", Code: "echo done\n"}
 	var stdout, stderr bytes.Buffer
-	code, timedOut, err := ExecBlock(b, nil, t.TempDir(), 0, &stdout, &stderr)
+	code, timedOut, err := ExecBlock(b, nil, nil, t.TempDir(), 0, &stdout, &stderr)
 	if err != nil || code != 0 || timedOut {
 		t.Fatalf("code=%d timedOut=%v err=%v, want 0/false/nil", code, timedOut, err)
 	}

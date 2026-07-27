@@ -18,7 +18,12 @@ import (
 //
 // Report-only by design: enable at severity=warn. Mirrors brokenWikilinkCheck.
 func ambiguousWikilinkCheck(doc *engine.Document, params map[string]any) []engine.RawFinding {
-	if doc.Body == "" {
+	// Phase-2 consumer: same shared link set as broken_wikilink (facts.Links),
+	// with the same normalization already applied. Iterating it — skip empty
+	// target, skip-prefixes, then the path-qualified and basename-collision
+	// tests — is line-for-line identical to the former per-line scan.
+	facts := docFacts(doc, params)
+	if len(facts.Links) == 0 {
 		return nil
 	}
 
@@ -28,69 +33,28 @@ func ambiguousWikilinkCheck(doc *engine.Document, params map[string]any) []engin
 	}
 	skipPrefixes := toStringSlice(params["skip-prefixes"])
 
-	lines := strings.Split(doc.Body, "\n")
 	var out []engine.RawFinding
-	inFence := false
-	var fenceMarker string
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		if m := fencedOpenRe.FindStringSubmatch(line); m != nil {
-			marker := string(m[1][0])
-			count := len(m[1])
-			if !inFence {
-				inFence = true
-				fenceMarker = strings.Repeat(marker, count)
-			} else if strings.HasPrefix(trimmed, fenceMarker) && marker == string(fenceMarker[0]) {
-				inFence = false
-				fenceMarker = ""
-			}
+	for _, lf := range facts.Links {
+		if lf.Target == "" {
 			continue
 		}
-
-		if inFence {
+		if shouldSkip(lf.Target, skipPrefixes) {
 			continue
 		}
-
-		stripped := inlineCodeRe.ReplaceAllString(line, "")
-		matches := wikilinkRe.FindAllStringSubmatch(stripped, -1)
-		for _, match := range matches {
-			target := strings.TrimSpace(match[1])
-			if target == "" {
-				continue
-			}
-
-			if idx := strings.IndexByte(target, '#'); idx != -1 {
-				target = target[:idx]
-				if target == "" {
-					continue
-				}
-			}
-
-			target = strings.TrimRight(target, "\\")
-			target = strings.TrimRight(target, "/")
-
-			if shouldSkip(target, skipPrefixes) {
-				continue
-			}
-
-			// Path-qualified links resolve by full path, not basename — disambiguated.
-			if strings.Contains(target, "/") {
-				continue
-			}
-
-			paths := index[strings.ToLower(target)]
-			if len(paths) > 1 {
-				out = append(out, engine.RawFinding{
-					Line: doc.BodyOffset + i + 1,
-					TemplateData: map[string]string{
-						"Target": target,
-						"Count":  strconv.Itoa(len(paths)),
-						"Paths":  strings.Join(paths, ", "),
-					},
-				})
-			}
+		// Path-qualified links resolve by full path, not basename — disambiguated.
+		if strings.Contains(lf.Target, "/") {
+			continue
+		}
+		paths := index[strings.ToLower(lf.Target)]
+		if len(paths) > 1 {
+			out = append(out, engine.RawFinding{
+				Line: lf.Line,
+				TemplateData: map[string]string{
+					"Target": lf.Target,
+					"Count":  strconv.Itoa(len(paths)),
+					"Paths":  strings.Join(paths, ", "),
+				},
+			})
 		}
 	}
 	return out
@@ -113,49 +77,42 @@ func buildBasenameIndex(params map[string]any) map[string][]string {
 
 	// Memoize in the run-scoped scratchpad: identical for every doc under a
 	// rule (see cachedGlobIndex). Falls back to rebuilding without a cache.
-	cache, cacheOK := params["__index_cache"].(map[string]any)
 	cacheKey := "basename\x00" + strings.Join(rootsRaw, "\x00")
-	if cacheOK {
-		if idx, ok := cache[cacheKey].(map[string][]string); ok {
-			return idx
+	v := indexCacheGetOrBuild(params, cacheKey, func() any {
+		var includes, excludes []string
+		for _, g := range rootsRaw {
+			if strings.HasPrefix(g, "!") {
+				excludes = append(excludes, g[1:])
+			} else {
+				includes = append(includes, g)
+			}
 		}
-	}
-
-	var includes, excludes []string
-	for _, g := range rootsRaw {
-		if strings.HasPrefix(g, "!") {
-			excludes = append(excludes, g[1:])
-		} else {
-			includes = append(includes, g)
+		if len(includes) == 0 {
+			return map[string][]string(nil)
 		}
-	}
-	if len(includes) == 0 {
-		return nil
-	}
 
-	foreignRoots := toStringSlice(params["__foreign_roots"])
+		foreignRoots := toStringSlice(params["__foreign_roots"])
 
-	idx := make(map[string][]string)
-	for _, p := range paths {
-		// Foreign-root files never enter the uniqueness universe (D6).
-		if isForeignPath(p, foreignRoots) {
-			continue
+		idx := make(map[string][]string)
+		for _, p := range paths {
+			// Foreign-root files never enter the uniqueness universe (D6).
+			if isForeignPath(p, foreignRoots) {
+				continue
+			}
+			if !matchAnyGlob(includes, p) || matchAnyGlob(excludes, p) {
+				continue
+			}
+			stem := strings.ToLower(strings.TrimSuffix(filepath.Base(p), ".md"))
+			idx[stem] = append(idx[stem], p)
 		}
-		if !matchAnyGlob(includes, p) || matchAnyGlob(excludes, p) {
-			continue
+
+		for k, v := range idx {
+			sort.Strings(v)
+			idx[k] = dedupSortedStrings(v)
 		}
-		stem := strings.ToLower(strings.TrimSuffix(filepath.Base(p), ".md"))
-		idx[stem] = append(idx[stem], p)
-	}
-
-	for k, v := range idx {
-		sort.Strings(v)
-		idx[k] = dedupSortedStrings(v)
-	}
-
-	if cacheOK {
-		cache[cacheKey] = idx
-	}
+		return idx
+	})
+	idx, _ := v.(map[string][]string)
 	return idx
 }
 

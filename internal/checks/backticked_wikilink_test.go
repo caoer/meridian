@@ -18,8 +18,8 @@ func TestBacktickedWikilink_InlineCode(t *testing.T) {
 	if findings[0].TemplateData["Match"] != "[[link]]" {
 		t.Errorf("Match = %q, want [[link]]", findings[0].TemplateData["Match"])
 	}
-	if findings[0].Line != 3 { // BodyOffset 2 + lineIndex 0 + 1
-		t.Errorf("Line = %d, want 3", findings[0].Line)
+	if findings[0].Line != 2 { // BodyOffset 2 (first body line) + lineIndex 0
+		t.Errorf("Line = %d, want 2", findings[0].Line)
 	}
 }
 
@@ -93,9 +93,9 @@ func TestBacktickedWikilink_LineNumberAccuracy(t *testing.T) {
 	if len(findings) != 1 {
 		t.Fatalf("want 1 finding, got %d", len(findings))
 	}
-	// BodyOffset 10 + lineIndex 2 + 1 = 13
-	if findings[0].Line != 13 {
-		t.Errorf("Line = %d, want 13", findings[0].Line)
+	// BodyOffset 10 (first body line) + lineIndex 2 = 12.
+	if findings[0].Line != 12 {
+		t.Errorf("Line = %d, want 12", findings[0].Line)
 	}
 }
 

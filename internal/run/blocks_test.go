@@ -299,6 +299,46 @@ func TestFindBlockMarkerAtFileStart(t *testing.T) {
 	}
 }
 
+func TestFindBlockFenceFirstAfterFrontmatter(t *testing.T) {
+	// Fenced ^id block as the FIRST body element right after the frontmatter
+	// close: no heading, no blank paragraph before the fence opener. The opener
+	// sits at body-start (fmEnd+1), so blockAbove walks up from the marker and
+	// hits the fence opener bounded by the frontmatter, never leaking into it.
+	doc := "---\ntitle: test\n---\n```bash\necho hi \"$@\"\n```\n\n^inputs\n"
+	b, err := FindBlock(doc, "inputs")
+	if err != nil {
+		t.Fatalf("FindBlock(inputs): %v", err)
+	}
+	if !b.Fence {
+		t.Error("inputs block should be a fence")
+	}
+	if b.Lang != "bash" {
+		t.Errorf("Lang = %q, want bash", b.Lang)
+	}
+	if want := "echo hi \"$@\"\n"; b.Code != want {
+		t.Errorf("Code = %q, want %q", b.Code, want)
+	}
+	if strings.Contains(b.Raw, "---") || strings.Contains(b.Raw, "title:") {
+		t.Errorf("Raw leaked frontmatter: %q", b.Raw)
+	}
+}
+
+func TestFindBlockFenceFirstAfterFrontmatterMarkerAdjacent(t *testing.T) {
+	// Sibling of the above: same fence-at-body-start shape, but the ^id marker
+	// sits on the line immediately after the closing fence (no blank between).
+	doc := "---\ntitle: test\n---\n```python\nprint(\"hi\")\n```\n^inputs\n"
+	b, err := FindBlock(doc, "inputs")
+	if err != nil {
+		t.Fatalf("FindBlock(inputs): %v", err)
+	}
+	if !b.Fence || b.Lang != "python" {
+		t.Errorf("block = %+v, want python fence", b)
+	}
+	if want := "print(\"hi\")\n"; b.Code != want {
+		t.Errorf("Code = %q, want %q", b.Code, want)
+	}
+}
+
 func TestSectionCaseInsensitiveFallback(t *testing.T) {
 	got, err := Section("## Prompt\n\nbody\n", "prompt")
 	if err != nil {

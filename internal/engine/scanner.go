@@ -45,12 +45,23 @@ func parseInlineSuppress(body string, bodyOffset int) (map[int]map[string]bool, 
 	var fileIgnores []string
 
 	for i, line := range strings.Split(body, "\n") {
+		// Byte prefilter (gate ⊆ regex prerequisite): all 6 directive regexes
+		// below anchor on either `<!--` (the three HTML forms) or `%%` (the three
+		// Obsidian forms). Every match therefore requires a '<' or a '%' in the
+		// line, so a line containing neither cannot match any of them — skipping
+		// it is exact, not a heuristic. SIMD strings.IndexByte replaces 6 regex
+		// scans on the overwhelming majority of prose lines. No state machine
+		// precedes this loop, so skipping a line never desyncs later lines.
+		if strings.IndexByte(line, '<') == -1 && strings.IndexByte(line, '%') == -1 {
+			continue
+		}
+
 		// Legacy md-disable-next-line — always next-line.
 		var legacyMatches [][]string
 		legacyMatches = append(legacyMatches, inlineSuppressHTMLRe.FindAllStringSubmatch(line, -1)...)
 		legacyMatches = append(legacyMatches, inlineSuppressObsidianRe.FindAllStringSubmatch(line, -1)...)
 		for _, m := range legacyMatches {
-			addRulesByCSV(out, bodyOffset+i+2, m[1])
+			addRulesByCSV(out, bodyOffset+i+1, m[1])
 		}
 
 		// md:ignore-file — whole-file suppression.
@@ -82,9 +93,9 @@ func parseInlineSuppress(body string, bodyOffset int) (map[int]map[string]bool, 
 		ignoreMatches = append(ignoreMatches, mdIgnoreObsidianRe.FindAllStringSubmatch(line, -1)...)
 		if len(ignoreMatches) > 0 {
 			standalone := isMdIgnoreStandalone(line)
-			targetLine := bodyOffset + i + 1
+			targetLine := bodyOffset + i
 			if standalone {
-				targetLine = bodyOffset + i + 2
+				targetLine = bodyOffset + i + 1
 			}
 
 			for _, m := range ignoreMatches {
@@ -279,11 +290,16 @@ func scanImpl(fsys fs.FS, skip []string, maxFileSize int64) ([]*Document, error)
 			return nil
 		}
 
-		// Skip files exceeding max size to avoid OOM on giant artifacts.
-		if maxFileSize > 0 {
-			if info, statErr := d.Info(); statErr == nil && info.Size() > maxFileSize {
-				return nil
+		// One stat serves both the oversized-file guard and the cache stat
+		// signature (size + mtime). On a stat error we neither skip nor record a
+		// signature — a zero StatSig simply never engages the fast path.
+		var sizeBytes, mtimeNs int64
+		if info, statErr := d.Info(); statErr == nil {
+			if maxFileSize > 0 && info.Size() > maxFileSize {
+				return nil // skip oversized artifacts to avoid OOM
 			}
+			sizeBytes = info.Size()
+			mtimeNs = info.ModTime().UnixNano()
 		}
 
 		data, err := fs.ReadFile(fsys, path)
@@ -294,6 +310,8 @@ func scanImpl(fsys fs.FS, skip []string, maxFileSize int64) ([]*Document, error)
 		doc := &Document{
 			Path:        path,
 			RawContent:  data,
+			Size:        sizeBytes,
+			MtimeNs:     mtimeNs,
 			Frontmatter: make(map[string]any),
 		}
 

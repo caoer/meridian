@@ -291,12 +291,13 @@ func TestEngine_LintIgnore_PartialSuppress(t *testing.T) {
 }
 
 // perLineCheck reports one finding per body line, using the same
-// `BodyOffset + i + 1` line formula as production checks (e.g. backticked-wikilink).
+// `BodyOffset + i` true-file-line formula as production checks: BodyOffset IS
+// the 1-indexed file line of body index 0.
 func perLineCheck(doc *Document, params map[string]any) []RawFinding {
 	var out []RawFinding
 	for i := range splitLines(doc.Body) {
 		out = append(out, RawFinding{
-			Line:         doc.BodyOffset + i + 1,
+			Line:         doc.BodyOffset + i,
 			TemplateData: map[string]string{},
 		})
 	}
@@ -321,23 +322,23 @@ func TestEngine_InlineSuppress_HTMLComment(t *testing.T) {
 
 	results := eng.Run(fs, []rules.Rule{rule})
 
-	// BodyOffset = 4. Body lines: i=0 "fine" → reported line 5,
-	// i=1 directive → reported line 6, i=2 "bad" → reported line 7.
-	// Directive at i=1 suppresses i=2 → suppresses reported line 7.
+	// BodyOffset = 4 (first body line). i=0 "fine" → line 4,
+	// i=1 directive → line 5, i=2 "bad" → line 6.
+	// Directive at i=1 suppresses i=2 → suppresses line 6.
 	for _, f := range results {
-		if f.Line == 7 {
-			t.Errorf("finding on reported line 7 should be suppressed, got %+v", f)
+		if f.Line == 6 {
+			t.Errorf("finding on reported line 6 should be suppressed, got %+v", f)
 		}
 	}
 	// Other lines still fire.
 	var sawOther bool
 	for _, f := range results {
-		if f.Line == 5 {
+		if f.Line == 4 {
 			sawOther = true
 		}
 	}
 	if !sawOther {
-		t.Error("expected non-suppressed finding on line 5")
+		t.Error("expected non-suppressed finding on line 4")
 	}
 }
 
@@ -357,11 +358,11 @@ func TestEngine_InlineSuppress_ObsidianComment(t *testing.T) {
 	}
 
 	results := eng.Run(fs, []rules.Rule{rule})
-	// BodyOffset=4. Directive at i=0 → reported line 5.
-	// Suppresses i=1 "bad line" → reported line 6.
+	// BodyOffset=4. Directive at i=0 → line 4.
+	// Suppresses i=1 "bad line" → line 5.
 	for _, f := range results {
-		if f.Line == 6 {
-			t.Errorf("Obsidian-style suppress should hide reported line 6, got %+v", f)
+		if f.Line == 5 {
+			t.Errorf("Obsidian-style suppress should hide reported line 5, got %+v", f)
 		}
 	}
 }
@@ -381,18 +382,18 @@ func TestEngine_InlineSuppress_OnlySuppressesNamedRule(t *testing.T) {
 	results := eng.Run(fs, []rules.Rule{ruleA, ruleB})
 
 	for _, f := range results {
-		if f.Line == 6 && f.RuleID == "rule-a" {
-			t.Error("rule-a on reported line 6 should be suppressed")
+		if f.Line == 5 && f.RuleID == "rule-a" {
+			t.Error("rule-a on reported line 5 should be suppressed")
 		}
 	}
 	var sawB bool
 	for _, f := range results {
-		if f.Line == 6 && f.RuleID == "rule-b" {
+		if f.Line == 5 && f.RuleID == "rule-b" {
 			sawB = true
 		}
 	}
 	if !sawB {
-		t.Error("rule-b should still fire on reported line 6")
+		t.Error("rule-b should still fire on reported line 5")
 	}
 }
 
@@ -410,8 +411,8 @@ func TestEngine_InlineSuppress_MultipleRules(t *testing.T) {
 
 	results := eng.Run(fs, []rules.Rule{ruleA, ruleB})
 	for _, f := range results {
-		if f.Line == 6 {
-			t.Errorf("both rules on reported line 6 should be suppressed, got %+v", f)
+		if f.Line == 5 {
+			t.Errorf("both rules on reported line 5 should be suppressed, got %+v", f)
 		}
 	}
 }
@@ -551,21 +552,21 @@ func TestEngine_MdIgnore_NextLine(t *testing.T) {
 	}
 
 	results := eng.Run(fs, []rules.Rule{rule})
-	// BodyOffset=4. fine=i0→line5, directive=i1→line6, bad=i2→line7.
-	// Standalone directive at i1 suppresses next line → line 7.
+	// BodyOffset=4. fine=i0→line4, directive=i1→line5, bad=i2→line6.
+	// Standalone directive at i1 suppresses next line → line 6.
 	for _, f := range results {
-		if f.Line == 7 {
-			t.Errorf("md:ignore should suppress line 7, got %+v", f)
+		if f.Line == 6 {
+			t.Errorf("md:ignore should suppress line 6, got %+v", f)
 		}
 	}
-	var sawLine5 bool
+	var sawLine4 bool
 	for _, f := range results {
-		if f.Line == 5 {
-			sawLine5 = true
+		if f.Line == 4 {
+			sawLine4 = true
 		}
 	}
-	if !sawLine5 {
-		t.Error("line 5 should still have finding")
+	if !sawLine4 {
+		t.Error("line 4 should still have finding")
 	}
 }
 
@@ -584,20 +585,20 @@ func TestEngine_MdIgnore_SameLine(t *testing.T) {
 	}
 
 	results := eng.Run(fs, []rules.Rule{rule})
-	// Inline at i0 → suppress same line 5.
+	// Inline at i0 → suppress same line 4.
+	for _, f := range results {
+		if f.Line == 4 {
+			t.Errorf("same-line md:ignore should suppress line 4, got %+v", f)
+		}
+	}
+	var sawLine5 bool
 	for _, f := range results {
 		if f.Line == 5 {
-			t.Errorf("same-line md:ignore should suppress line 5, got %+v", f)
+			sawLine5 = true
 		}
 	}
-	var sawLine6 bool
-	for _, f := range results {
-		if f.Line == 6 {
-			sawLine6 = true
-		}
-	}
-	if !sawLine6 {
-		t.Error("line 6 should still have finding")
+	if !sawLine5 {
+		t.Error("line 5 should still have finding")
 	}
 }
 
@@ -614,8 +615,8 @@ func TestEngine_MdIgnore_Wildcard(t *testing.T) {
 
 	results := eng.Run(fs, []rules.Rule{ruleA, ruleB})
 	for _, f := range results {
-		if f.Line == 6 {
-			t.Errorf("wildcard md:ignore should suppress all rules on line 6, got %+v", f)
+		if f.Line == 5 {
+			t.Errorf("wildcard md:ignore should suppress all rules on line 5, got %+v", f)
 		}
 	}
 }
@@ -633,18 +634,18 @@ func TestEngine_MdIgnore_SameLine_Wildcard(t *testing.T) {
 
 	results := eng.Run(fs, []rules.Rule{ruleA, ruleB})
 	for _, f := range results {
-		if f.Line == 5 {
-			t.Errorf("same-line wildcard should suppress line 5, got %+v", f)
+		if f.Line == 4 {
+			t.Errorf("same-line wildcard should suppress line 4, got %+v", f)
 		}
 	}
-	var sawLine6 bool
+	var sawLine5 bool
 	for _, f := range results {
-		if f.Line == 6 {
-			sawLine6 = true
+		if f.Line == 5 {
+			sawLine5 = true
 		}
 	}
-	if !sawLine6 {
-		t.Error("line 6 should still have findings")
+	if !sawLine5 {
+		t.Error("line 5 should still have findings")
 	}
 }
 
@@ -661,18 +662,18 @@ func TestEngine_MdIgnore_OnlyNamedRule(t *testing.T) {
 
 	results := eng.Run(fs, []rules.Rule{ruleA, ruleB})
 	for _, f := range results {
-		if f.Line == 6 && f.RuleID == "rule-a" {
-			t.Error("rule-a on line 6 should be suppressed")
+		if f.Line == 5 && f.RuleID == "rule-a" {
+			t.Error("rule-a on line 5 should be suppressed")
 		}
 	}
 	var sawB bool
 	for _, f := range results {
-		if f.Line == 6 && f.RuleID == "rule-b" {
+		if f.Line == 5 && f.RuleID == "rule-b" {
 			sawB = true
 		}
 	}
 	if !sawB {
-		t.Error("rule-b on line 6 should still fire")
+		t.Error("rule-b on line 5 should still fire")
 	}
 }
 
@@ -736,8 +737,8 @@ func TestEngine_MdIgnore_ObsidianComment(t *testing.T) {
 
 	results := eng.Run(fs, []rules.Rule{rule})
 	for _, f := range results {
-		if f.Line == 6 {
-			t.Errorf("Obsidian md:ignore should suppress line 6, got %+v", f)
+		if f.Line == 5 {
+			t.Errorf("Obsidian md:ignore should suppress line 5, got %+v", f)
 		}
 	}
 }
@@ -755,8 +756,8 @@ func TestEngine_MdIgnore_MultipleRulesCSV(t *testing.T) {
 
 	results := eng.Run(fs, []rules.Rule{ruleA, ruleB})
 	for _, f := range results {
-		if f.Line == 6 {
-			t.Errorf("both rules on line 6 should be suppressed, got %+v", f)
+		if f.Line == 5 {
+			t.Errorf("both rules on line 5 should be suppressed, got %+v", f)
 		}
 	}
 }
@@ -772,25 +773,25 @@ func TestEngine_MdIgnore_CoexistsWithLegacy(t *testing.T) {
 	rule := rules.Rule{ID: "rule-a", Check: "per-line", Message: "a", Severity: rules.SeverityWarn, On: rules.ParseOnFilter([]string{"wiki/**"}), Params: map[string]any{}}
 
 	results := eng.Run(fs, []rules.Rule{rule})
-	// BodyOffset=4. Body lines: i0=legacy-directive→5, i1=legacy-suppressed→6,
-	// i2=new-directive→7, i3=new-suppressed→8, i4=not-suppressed→9.
-	// Legacy suppresses line 6. New suppresses line 8.
+	// BodyOffset=4. Body lines: i0=legacy-directive→4, i1=legacy-suppressed→5,
+	// i2=new-directive→6, i3=new-suppressed→7, i4=not-suppressed→8.
+	// Legacy suppresses line 5. New suppresses line 7.
 	for _, f := range results {
-		if f.Line == 6 {
-			t.Error("legacy suppression on line 6 should work")
+		if f.Line == 5 {
+			t.Error("legacy suppression on line 5 should work")
 		}
+		if f.Line == 7 {
+			t.Error("md:ignore suppression on line 7 should work")
+		}
+	}
+	var sawLine8 bool
+	for _, f := range results {
 		if f.Line == 8 {
-			t.Error("md:ignore suppression on line 8 should work")
+			sawLine8 = true
 		}
 	}
-	var sawLine9 bool
-	for _, f := range results {
-		if f.Line == 9 {
-			sawLine9 = true
-		}
-	}
-	if !sawLine9 {
-		t.Error("line 9 should not be suppressed")
+	if !sawLine8 {
+		t.Error("line 8 should not be suppressed")
 	}
 }
 

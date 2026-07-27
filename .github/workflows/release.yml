@@ -1,0 +1,250 @@
+name: release
+
+# Version-tag release + rolling `latest` + niks3 cache push.
+#
+# Fires on a `v*` tag push (and workflow_dispatch for a cache-only rebuild).
+# Three jobs:
+#
+#   1. release — single ubuntu runner. `make release` cross-builds every shipped
+#      Go binary into dist/*.tar.gz. Go with CGO disabled cross-compiles cleanly,
+#      so one runner covers all platforms: a build matrix here would 4x the
+#      runners for zero benefit. Artifacts are published to the tag's Release.
+#      The release surface (Makefile PLATFORMS: darwin/arm64, linux/arm64,
+#      linux/amd64) is kept identical to the cache job's system matrix — no
+#      darwin/amd64, because the fleet has no Intel Macs and an x86_64-darwin
+#      tarball would ship with no niks3 closure behind it (cache miss on
+#      substitute). Every shipped platform therefore has a cached closure.
+#   2. latest — re-points the rolling `latest` release/tag at this build. Split
+#      into its own job with a FIXED (not per-ref) concurrency group so the
+#      shared mutable `latest` resource is mutated by only one run at a time:
+#      two tags pushed close together land in different per-ref workflow groups
+#      and run in parallel, and both would otherwise race `gh release delete
+#      latest` + `create latest`. cancel-in-progress:false so an in-flight
+#      earlier release is never dropped. A newest-commit-wins guard stops an
+#      older tag whose build finishes last from clobbering a newer one.
+#   3. cache — native runner matrix. A nix closure is per-system and cannot be
+#      cross-built, so `nix build .#packages.<system>.default` must run on a
+#      native runner (mirrors cnixvim's build-and-cache.yml). Each closure is
+#      pushed to the fleet niks3 cache (public read at cache.0xtau.com) with
+#      `niks3 push --pin` so downstream substitutes instead of rebuilding.
+#
+# Release/latest publishing uses `gh` scripting rather than a marketplace action:
+# no third-party supply chain, full control over the rolling-tag repoint.
+# Prerelease is inferred from the tag (a hyphen => semver prerelease, e.g.
+# v1.2.3-rc1 or the v0.0.0-ciN CI test tags).
+#
+# KNOWN LIMITATION (deferred — would need an engine/flake change, out of scope):
+# release binaries carry the tag as their version (make release VERSION=<tag> ->
+# ldflags), while nix closures carry the commit SHA (flake version = self.rev),
+# both into internal/version.version. So `md --version` differs between a Release
+# download and a cache-installed build of the same commit. Reconciling means
+# changing flake version semantics; left as a recorded decision.
+#
+# NOTE: the cache job has no `needs:` on release — a release can go green while a
+# cache push fails (and vice-versa). Deliberate: publishing artifacts and warming
+# the cache are independent outcomes; neither should block the other.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: false
+
+permissions:
+  contents: "read"
+
+jobs:
+  release:
+    # Tag-triggered only: workflow_dispatch runs on a branch with no tag to
+    # release against, so it exercises the cache job alone.
+    if: "github.ref_type == 'tag'"
+    runs-on: "ubuntu-latest"
+    permissions:
+      contents: "write"
+    steps:
+      - uses: "actions/checkout@v6"
+        with:
+          # Full history + tags so `git describe` in the Makefile resolves.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: "actions/setup-go@v6"
+        with:
+          go-version-file: "go.mod"
+
+      - name: "Build release artifacts"
+        run: "make release VERSION=${{ github.ref_name }}"
+
+      - name: "Publish tag release"
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          REPO: "${{ github.repository }}"
+          TAG: "${{ github.ref_name }}"
+          SHA: "${{ github.sha }}"
+        run: |
+          set -euo pipefail
+
+          # Semver prerelease convention: a hyphen in the tag => prerelease.
+          prerelease=""
+          case "$TAG" in
+            *-*) prerelease="--prerelease" ;;
+          esac
+
+          # Best-effort release notes. Auto-generation can fail or be empty on
+          # the first tag or right after a prior release was deleted; run it in
+          # an `if` (set -e ignores failures in a condition) so a notes hiccup
+          # never reddens a build whose artifacts already succeeded.
+          notes="Release $TAG."
+          if gen="$(gh api "repos/$REPO/releases/generate-notes" \
+                      -f tag_name="$TAG" -f target_commitish="$SHA" \
+                      -q .body 2>/dev/null)" && [ -n "$gen" ]; then
+            notes="$gen"
+          fi
+
+          # Idempotent across re-runs: replace an existing release for this tag.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --yes
+          fi
+          gh release create "$TAG" dist/*.tar.gz \
+            --title "$TAG" \
+            --notes "$notes" \
+            --target "$SHA" \
+            $prerelease
+
+  latest:
+    if: "github.ref_type == 'tag'"
+    needs: "release"
+    runs-on: "ubuntu-latest"
+    permissions:
+      contents: "write"
+    # Serialize the rolling-`latest` mutation across ALL tag runs (fixed group,
+    # not per-ref) so concurrent releases never race the shared `latest`
+    # resource; cancel-in-progress:false so no in-flight release is dropped.
+    concurrency:
+      group: "${{ github.workflow }}-latest"
+      cancel-in-progress: false
+    steps:
+      - uses: "actions/checkout@v6"
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: "actions/setup-go@v6"
+        with:
+          go-version-file: "go.mod"
+
+      - name: "Build release artifacts"
+        run: "make release VERSION=${{ github.ref_name }}"
+
+      - name: "Re-point rolling latest"
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          REPO: "${{ github.repository }}"
+          TAG: "${{ github.ref_name }}"
+          SHA: "${{ github.sha }}"
+        run: |
+          set -euo pipefail
+
+          # Committer date (epoch) for a commitish, resolved via the GitHub API
+          # — NOT local git. `fetch-depth: 0` on a tag checkout only fetches
+          # history reachable from THIS tag, so a newer commit on a divergent
+          # line (hotfix off an older base; GA after rc on a side branch) is
+          # unresolvable locally — exactly the case this guard exists for. The
+          # API sees every commit. Empty output => unresolvable.
+          commit_epoch() {
+            local d
+            d="$(gh api "repos/$REPO/commits/$1" -q .commit.committer.date 2>/dev/null || true)"
+            [ -n "$d" ] && date -u -d "$d" +%s 2>/dev/null || true
+          }
+
+          # Read what `latest` currently tracks, distinguishing genuinely-absent
+          # (HTTP 404 => create fresh) from a transient API error (=> fail
+          # closed: leave `latest` untouched, never redden a legit release).
+          cur=""
+          if cur="$(gh api "repos/$REPO/releases/tags/latest" -q .target_commitish 2>/dev/null)"; then
+            :
+          else
+            # Genuinely absent (404) => create fresh; any other error => fail
+            # closed. Classify by matching the captured error TEXT with a shell
+            # `case` — deliberately NOT `... | awk '{exit}'`/`| head`, whose
+            # early pipe close trips SIGPIPE (exit 141) under `set -o pipefail`.
+            err="$(gh api "repos/$REPO/releases/tags/latest" 2>&1 >/dev/null || true)"
+            case "$err" in
+              *"HTTP 404"*)
+                cur="" ;;
+              *)
+                echo "::notice::could not read current latest release; leaving it untouched. ($err)"
+                exit 0 ;;
+            esac
+          fi
+
+          if [ -n "$cur" ] && [ "$cur" != "null" ]; then
+            cur_ts="$(commit_epoch "$cur")"
+            new_ts="$(commit_epoch "$SHA")"
+            # Fail CLOSED: if either committer date is unresolvable, do NOT
+            # overwrite. A stale `latest` is recoverable next run; a silently
+            # regressed one is a lie.
+            if [ -z "$cur_ts" ] || [ -z "$new_ts" ]; then
+              echo "::notice::cannot resolve committer date(s) (cur=$cur); leaving latest untouched."
+              exit 0
+            fi
+            # Newest-commit-wins; equal => skip (no churn). Overwrite only when
+            # THIS build is strictly newer than what `latest` already tracks —
+            # serialization (fixed concurrency group) makes this read-modify-
+            # write atomic w.r.t. other `latest` jobs.
+            if [ "$new_ts" -le "$cur_ts" ]; then
+              echo "::notice::latest already tracks an equal-or-newer commit ($cur); leaving it."
+              exit 0
+            fi
+            gh release delete latest --cleanup-tag --yes
+          fi
+
+          # --latest=false keeps `latest` from stealing GitHub's "Latest" badge
+          # from real semver releases; it is a moving dev pointer.
+          gh release create latest dist/*.tar.gz \
+            --title "latest (rolling)" \
+            --notes "Rolling latest build — tracks $TAG ($SHA)." \
+            --target "$SHA" \
+            --latest=false \
+            --prerelease
+
+  cache:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: "x86_64-linux"
+            runner: "ubuntu-latest"
+          - system: "aarch64-linux"
+            runner: "ubuntu-24.04-arm"
+          - system: "aarch64-darwin"
+            runner: "macos-latest"
+    runs-on: "${{ matrix.runner }}"
+    steps:
+      - uses: "actions/checkout@v6"
+        with:
+          persist-credentials: false
+      - uses: "DeterminateSystems/determinate-nix-action@v3"
+        with:
+          extra-conf: |
+            accept-flake-config = true
+      - name: "Build"
+        run: "nix build .#packages.${{ matrix.system }}.default -L"
+      - name: "Push closure to niks3 cache"
+        env:
+          NIKS3_TOKEN: "${{ secrets.NIKS3_TOKEN }}"
+        run: |
+          umask 077
+          printf '%s' "$NIKS3_TOKEN" > "$RUNNER_TEMP/niks3-token"
+          export NIKS3_AUTH_TOKEN_FILE="$RUNNER_TEMP/niks3-token"
+          export NIKS3_SERVER_URL="https://niks3.0xtau.com"
+          # Pinned to the same rev osfiles locks (nixpkgs' niks3 lags — 1.6.1
+          # lacks --pin). Bump alongside the osfiles niks3 flake input.
+          nix profile install github:Mic92/niks3/780939adecefc2f84be700a6f9ae1cc9385ad240#niks3
+          # --pin takes exactly one store path; pins are upserts that shield the
+          # latest closure from the server's 30-day GC even when this repo idles.
+          niks3 push --pin "meridian-${{ matrix.system }}" ./result

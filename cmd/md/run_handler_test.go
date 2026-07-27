@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/caoer/meridian/internal/cli"
+	"github.com/caoer/meridian/internal/run"
 )
 
 const runHandlerDoc = `---
@@ -87,6 +89,43 @@ func TestRunHandlerComposite(t *testing.T) {
 	}
 	if !strings.Contains(data.Stdout, "check ok") || !strings.Contains(data.Stdout, "demo argv: x") {
 		t.Errorf("captured stdout = %q", data.Stdout)
+	}
+}
+
+// TestRunHandlerInherit wires inherit:true end-to-end through the router: a leaf
+// carrying zero md-* machinery resolves its ^check from an ancestor blurb, and
+// the block sees MD_PARAM_PAGE = the leaf's repo-relative path.
+func TestRunHandlerInherit(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	blurb := "---\nmd-check: \"[[#^check]]\"\n---\n\n" +
+		"```bash\necho \"page=$MD_PARAM_PAGE\"\n```\n\n^check\n"
+	write := func(rel, content string) {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("effects/skills/SKILLS.md", blurb)
+	write("effects/skills/caveman.md", "# Caveman\n")
+
+	r, out := newRunRouter()
+	leaf := filepath.Join(root, "effects/skills/caveman.md")
+	params := `{"file":"` + leaf + `","name":"check","inherit":true,"format":"json"}`
+	if code := r.Run([]string{"run", params}, nil); code != 0 {
+		t.Fatalf("inherit run exit = %d, out: %s", code, out.String())
+	}
+	_, data := decodeRunData(t, out)
+	if len(data.Tasks) != 1 {
+		t.Fatalf("tasks = %+v", data.Tasks)
+	}
+	if !strings.Contains(data.Stdout, "page=effects/skills/caveman.md") {
+		t.Errorf("MD_PARAM_PAGE not projected via the router: %q", data.Stdout)
 	}
 }
 
@@ -317,5 +356,257 @@ func TestRunHandlerNoRecordByDefault(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(md), "note.runs.md")); !os.IsNotExist(err) {
 		t.Fatal("sidecar written without record param")
+	}
+}
+
+const runHandlerParamsDoc = `---
+md-sweep: "[[params-note#^sweep]]"
+md-sweep-params: "include_untracked, limit, label"
+---
+
+` + "```bash" + `
+echo "u=${MD_PARAM_INCLUDE_UNTRACKED:-unset} n=${MD_PARAM_LIMIT:-unset} l=${MD_PARAM_LABEL:-unset}"
+` + "```" + `
+
+^sweep
+`
+
+func writeParamsRepo(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	full := filepath.Join(root, "params-note.md")
+	if err := os.WriteFile(full, []byte(runHandlerParamsDoc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return full
+}
+
+func TestRunHandlerNamedParams(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"sweep","format":"json","include_untracked":true,"limit":3,"label":"x y"}`
+	if code := r.Run([]string{"run", params}, nil); code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	_, data := decodeRunData(t, out)
+	if !strings.Contains(data.Stdout, "u=1 n=3 l=x y") {
+		t.Errorf("param conversion/projection wrong: %q", data.Stdout)
+	}
+}
+
+func TestRunHandlerNamedParamFalseIsAbsent(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"sweep","format":"json","include_untracked":false}`
+	if code := r.Run([]string{"run", params}, nil); code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	_, data := decodeRunData(t, out)
+	if !strings.Contains(data.Stdout, "u=unset") {
+		t.Errorf("false must project as absent (opt-in semantics): %q", data.Stdout)
+	}
+}
+
+func TestRunHandlerUndeclaredParamExitsTwo(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"sweep","format":"json","include_untraked":true}`
+	if code := r.Run([]string{"run", params}, nil); code != 2 {
+		t.Fatalf("undeclared param must exit 2, got %d: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "include_untracked, label, limit") {
+		t.Errorf("error must list accepted params: %s", out.String())
+	}
+}
+
+func TestRunHandlerParamBadValueType(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"sweep","format":"json","label":["a"]}`
+	if code := r.Run([]string{"run", params}, nil); code != 2 {
+		t.Fatalf("array param value must exit 2, got %d: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "string, number, or bool") {
+		t.Errorf("error must name allowed value types: %s", out.String())
+	}
+}
+
+// A null param value is a mistake, not the default — projecting it as an empty
+// env var is exactly what let {"paths":null} widen the asset sweep to the whole
+// repo. It must fail loud before anything runs.
+func TestRunHandlerNullParamRejected(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"sweep","format":"json","label":null}`
+	if code := r.Run([]string{"run", params}, nil); code != 2 {
+		t.Fatalf("null param value must exit 2, got %d: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "null is not a value") {
+		t.Errorf("error must explain null is not a value: %s", out.String())
+	}
+}
+
+func TestRunHandlerEmptyStringParamRejected(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"sweep","format":"json","label":""}`
+	if code := r.Run([]string{"run", params}, nil); code != 2 {
+		t.Fatalf("empty-string param value must exit 2, got %d: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "not a value") {
+		t.Errorf("error must explain empty string is not a value: %s", out.String())
+	}
+}
+
+// A whitespace-only value is the same mistake as "" — it must not project a
+// semantically-empty MD_PARAM_* (the null check trims, the empty check must too).
+func TestRunHandlerWhitespaceOnlyParamRejected(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"sweep","format":"json","label":"   "}`
+	if code := r.Run([]string{"run", params}, nil); code != 2 {
+		t.Fatalf("whitespace-only param value must exit 2, got %d: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "not a value") {
+		t.Errorf("error must reject the whitespace-only value: %s", out.String())
+	}
+}
+
+// A NUL (or other control char) in a value passes JSON decode but can never be
+// an env var — Go's exec rejects it. Catch it at resolution, before any task in
+// a chain runs, not as a mid-chain crash after earlier tasks mutated state.
+func TestRunHandlerControlCharParamRejected(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	// json.Marshal encodes the NUL rune as a \u0000 escape — valid JSON, no raw
+	// NUL byte in this source file.
+	raw, _ := json.Marshal(map[string]any{"file": md, "name": "sweep", "format": "json", "label": "a\x00b"})
+	if code := r.Run([]string{"run", string(raw)}, nil); code != 2 {
+		t.Fatalf("control-char param value must exit 2, got %d: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "control byte") {
+		t.Errorf("error must name the control byte: %s", out.String())
+	}
+}
+
+// The core of the fail-loud contract: a typo'd/undeclared key must fail loud
+// REGARDLESS of its value. A false value previously projected nothing and so
+// slipped past validation — {"include_untraked":false} silently ran the default.
+func TestRunHandlerFalseValuedTypoFailsLoud(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","name":"sweep","format":"json","include_untraked":false}`
+	if code := r.Run([]string{"run", params}, nil); code != 2 {
+		t.Fatalf("false-valued undeclared param must still exit 2, got %d: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "include_untracked, label, limit") {
+		t.Errorf("error must list accepted params: %s", out.String())
+	}
+}
+
+// The three reserved-key sites (this struct, run.ReservedParams, and the help
+// map) must not drift. Cross-check the two that decide BEHAVIOR: a struct field
+// missing from ReservedParams would be misread as a task param, and vice versa.
+func TestReservedParamsMatchRequestStruct(t *testing.T) {
+	tags := map[string]bool{}
+	rt := reflect.TypeOf(runRequest{})
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		// An embedded field promotes ITS json keys into the request surface, but
+		// this walk only sees direct fields — so an embedded field would silently
+		// evade the cross-check (the very drift this test guards). Refuse it.
+		if f.Anonymous {
+			t.Fatalf("runRequest has an embedded field %q — its promoted json keys join the unmarshal surface but this cross-check only walks direct fields; flatten it or extend this test", f.Name)
+		}
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		tags[name] = true
+	}
+	reserved := map[string]bool{}
+	for _, k := range run.ReservedParams {
+		reserved[k] = true
+	}
+	for name := range tags {
+		if !reserved[name] {
+			t.Errorf("runRequest field %q is not in run.ReservedParams — a real md run key would be misread as a task param", name)
+		}
+	}
+	for _, k := range run.ReservedParams {
+		if !tags[k] {
+			t.Errorf("run.ReservedParams has %q but runRequest has no matching json field — partition/help would drift", k)
+		}
+	}
+}
+
+func TestRunHandlerParamsWithListRejected(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","list":true,"include_untracked":true}`
+	if code := r.Run([]string{"run", params}, nil); code != 2 {
+		t.Fatalf("params with list must exit 2, got %d: %s", code, out.String())
+	}
+}
+
+func TestRunHandlerListShowsParams(t *testing.T) {
+	md := writeParamsRepo(t)
+	r, out := newRunRouter()
+	params := `{"file":"` + md + `","list":true,"format":"json"}`
+	if code := r.Run([]string{"run", params}, nil); code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	var resp cli.Response
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(resp.Data)
+	var data cli.RunListData
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Tasks) != 1 || len(data.Tasks[0].Params) != 3 {
+		t.Errorf("list must carry the params contract: %+v", data.Tasks)
+	}
+}
+
+func TestRunHandlerTildeFileExpands(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, "repo", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "repo", "note.md"), []byte(runHandlerDoc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, out := newRunRouter()
+	params := `{"file":"~/repo/note.md","name":"demo","format":"json"}`
+	if code := r.Run([]string{"run", params}, nil); code != 0 {
+		t.Fatalf("exit = %d, out: %s", code, out.String())
+	}
+	_, data := decodeRunData(t, out)
+	if !strings.Contains(data.Stdout, "demo argv:") {
+		t.Errorf("captured stdout = %q", data.Stdout)
+	}
+}
+
+func TestExpandTilde(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cases := []struct{ in, want string }{
+		{"~", home},
+		{"~/x/y.md", filepath.Join(home, "x", "y.md")},
+		{"~user/x.md", "~user/x.md"},
+		{"/abs/x.md", "/abs/x.md"},
+		{"rel/x.md", "rel/x.md"},
+		{"x~y.md", "x~y.md"},
+	}
+	for _, c := range cases {
+		if got := expandTilde(c.in); got != c.want {
+			t.Errorf("expandTilde(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }

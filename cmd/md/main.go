@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -167,6 +168,9 @@ func main() {
 		eng.RegisterCheck(name, fn)
 		registeredChecks[name] = true
 	}
+	// Phase-2 checks (link family; U6 adds effect-pin) run over per-run snapshots
+	// and are never cached — see checks.Phase2 / engine.MarkPhase2.
+	eng.MarkPhase2(checks.Phase2...)
 
 	// Build search function for help — calls search logic directly
 	searchFn := func(query string) cli.HelpSearchData {
@@ -199,6 +203,8 @@ func main() {
 		return params, nil
 	})
 	router.Handle("debt", debtHandler(cfg, cfgErr))
+	router.Handle("cache stats", cacheStatsHandler(cfg, cfgErr))
+	router.Handle("cache clean", cacheCleanHandler(cfg, cfgErr))
 	router.Handle("domains tree", domainsTreeHandler(cfg, cfgErr))
 	router.Handle("domains show", domainsShowHandler(cfg, cfgErr))
 	router.Handle("fix", fixHandler(eng, loadedRules, cfg, cfgErr))
@@ -207,12 +213,39 @@ func main() {
 	router.Handle("status", statusHandler(cfgPath, cfgErr))
 	router.Handle("run", runHandler())
 	router.Handle("read", readHandler())
+	// resolve is config-gated: hashing resolves wikilinks against the corpus
+	// index built from the scan root, exactly as check does.
+	router.Handle("resolve", resolveHandler(cfg, cfgErr))
+	// attest is config-gated like resolve: the receipt writer hashes inputs
+	// against the corpus index built from the scan root. Strict sole writer —
+	// working-tree bytes only, never git add/commit/push.
+	router.Handle("attest", attestHandler(cfg, cfgErr))
+	// chain promote is the migration scaffold verb (§6.2): draws-from → inputs.
+	// Two-token verb (the `rules ls` precedent); config-gated like attest.
+	router.Handle("chain promote", chainPromoteHandler(cfg, cfgErr))
 	// encode is deliberately NOT config-gated: the encoder is pure grammar.
 	router.Handle("encode", encodeHandler())
 	router.Handle("schema", schemaHandler(cfg, cfgErr))
 	// llm-wiki check is deliberately NOT config-gated: it is the environment
 	// doctor that must run on a machine with nothing set up yet.
 	router.Handle("llm-wiki check", llmWikiCheckHandler())
+	// skill render is deliberately NOT config-gated: it renders a shipped
+	// skill folder anywhere, standing in for a harness's load-time
+	// pre-resolution.
+	router.Handle("skill render", skillRenderHandler())
+	// `md skill render <dir>` — positional sugar for {"skill": "<dir>"}. The
+	// bare path must exist, otherwise fail loud: a typo'd folder must never
+	// read as an empty render.
+	router.HandlePositional("skill render", func(arg string) (json.RawMessage, error) {
+		if _, err := os.Stat(arg); err != nil {
+			return nil, fmt.Errorf("skill render: %q is neither JSON params nor an existing skill folder", arg)
+		}
+		params, err := json.Marshal(map[string]string{"skill": arg})
+		if err != nil {
+			return nil, err
+		}
+		return params, nil
+	})
 
 	os.Exit(router.Run(os.Args[1:], stdinIfPiped()))
 }
@@ -603,6 +636,7 @@ func skillTreeCheck(dir string) *cli.Response {
 	for name, fn := range checks.All {
 		eng.RegisterCheck(name, fn)
 	}
+	eng.MarkPhase2(checks.Phase2...)
 
 	start := time.Now()
 	findings := eng.Run(os.DirFS(dir), packRules)
@@ -624,8 +658,166 @@ func skillTreeCheck(dir string) *cli.Response {
 	}
 }
 
+// cacheStatsHandler wraps the read-only cache inventory with the standard config
+// gate: the store location is derived from the scan root, so a broken config has
+// no root to resolve.
+func cacheStatsHandler(cfg *config.Config, cfgErr error) cli.Handler {
+	return func(req *cli.Request) *cli.Response {
+		if cfgErr != nil {
+			return cli.ErrorResponseWithHint(cli.ErrNoConfig,
+				cfgErr.Error(),
+				"create meridian.yaml or set MERIDIAN_CONFIG env var")
+		}
+		return cli.CacheStatsHandler(cfg.Scan.Root)(req)
+	}
+}
+
+// cacheCleanHandler wraps the destructive cache removal with the config gate. The
+// refuse-unless-under-UserCacheDir/meridian safety check lives in cache.CleanForRoot.
+func cacheCleanHandler(cfg *config.Config, cfgErr error) cli.Handler {
+	return func(req *cli.Request) *cli.Response {
+		if cfgErr != nil {
+			return cli.ErrorResponseWithHint(cli.ErrNoConfig,
+				cfgErr.Error(),
+				"create meridian.yaml or set MERIDIAN_CONFIG env var")
+		}
+		return cli.CacheCleanHandler(cfg.Scan.Root)(req)
+	}
+}
+
+// cacheVerifyEnabled reports whether MD_CACHE_VERIFY requests the recompute-on-hit
+// honesty gate (accepts "1" or "true", case-insensitive).
+func cacheVerifyEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("MD_CACHE_VERIFY")))
+	return v == "1" || v == "true"
+}
+
+// runCacheVerify implements MD_CACHE_VERIFY: it serves a run from the warm
+// persistent cache, recomputes the same corpus with no cache (the authority), and
+// reports every finding that differs. EntriesChecked is the number of cache hits
+// the served run actually consumed — 0 means the cache was cold (the check is
+// trivially clean; CI must warm it first). It never writes the cache (no
+// Prune/Save), so verifying is side-effect-free.
+func runCacheVerify(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config, fsys fs.FS) *cli.Response {
+	store, _ := cache.OpenForRoot(cfg.Scan.Root)
+	store.ResetStats()
+	cached := eng.RunCached(fsys, loadedRules, store)
+	if ferr := eng.FatalErr(); ferr != nil {
+		// The stale-binary floor holds even under the cache-verify honesty gate:
+		// a required unregistered check fails loud rather than reporting a
+		// divergence verdict computed with the rule silently skipped.
+		return cli.ErrorResponseWithHint(cli.ErrCheckNotRegistered, ferr.Error(),
+			"the rule pack requires a check this binary lacks — reinstall md (just install) or rebuild from the pinned commit")
+	}
+	hits := store.Stats().Hits
+	warnings := eng.Warnings()
+
+	fresh := eng.RunCached(fsys, loadedRules, nil)
+
+	divergences := diffFindings(cached, fresh)
+
+	// Facts-level coverage: the finding diff above sees only phase-2 consumers of
+	// facts. The persistent cache also carries phase-1 fact fields with no consumer
+	// yet (SliceHashes, anchored Embeds, repo scalars); recompute them fresh and
+	// compare so a stale slice hash can't ride the cache silently until U-B2b wires
+	// chain-fresh/repo-cataloged. Reported as facts_diverge divergences so the same
+	// verified==true CI gate catches them.
+	for _, p := range eng.VerifyFactsAgainstStore(fsys, store) {
+		divergences = append(divergences, cli.CacheDivergence{
+			FilePath: p,
+			Kind:     "facts_diverge",
+			Message:  "cached facts differ from a fresh extraction (SliceHashes/Embeds/repo scalars)",
+		})
+	}
+
+	cliWarnings := make([]cli.Warning, 0, len(warnings))
+	for _, w := range warnings {
+		cliWarnings = append(cliWarnings, cli.Warning(w))
+	}
+
+	return &cli.Response{
+		Version: cli.ResponseVersion,
+		Data: cli.CacheVerifyData{
+			Verified:       len(divergences) == 0,
+			EntriesChecked: hits,
+			Divergences:    divergences,
+		},
+		Warnings: cliWarnings,
+	}
+}
+
+// diffFindings is the multiset symmetric difference between the cache-served and
+// freshly-recomputed finding sets. A finding the cache served but a fresh run does
+// not produce is "only_in_cache" (stale); one a fresh run produces but the cache
+// dropped is "only_in_fresh". Output is sorted for deterministic (CI-parseable)
+// reports.
+func diffFindings(cached, fresh []cli.Finding) []cli.CacheDivergence {
+	type fkey struct {
+		FilePath string
+		RuleID   string
+		Message  string
+		Line     int
+		Column   int
+	}
+	key := func(f cli.Finding) fkey {
+		return fkey{f.FilePath, f.RuleID, f.Message, f.Line, f.Column}
+	}
+	count := func(list []cli.Finding) map[fkey]int {
+		m := make(map[fkey]int, len(list))
+		for _, f := range list {
+			m[key(f)]++
+		}
+		return m
+	}
+	cachedC := count(cached)
+	freshC := count(fresh)
+
+	var divs []cli.CacheDivergence
+	add := func(k fkey, kind string, n int) {
+		for i := 0; i < n; i++ {
+			divs = append(divs, cli.CacheDivergence{
+				FilePath: k.FilePath,
+				RuleID:   k.RuleID,
+				Line:     k.Line,
+				Column:   k.Column,
+				Kind:     kind,
+				Message:  k.Message,
+			})
+		}
+	}
+	for k, c := range cachedC {
+		if extra := c - freshC[k]; extra > 0 {
+			add(k, "only_in_cache", extra)
+		}
+	}
+	for k, c := range freshC {
+		if missing := c - cachedC[k]; missing > 0 {
+			add(k, "only_in_fresh", missing)
+		}
+	}
+	sort.Slice(divs, func(i, j int) bool {
+		a, b := divs[i], divs[j]
+		if a.FilePath != b.FilePath {
+			return a.FilePath < b.FilePath
+		}
+		if a.RuleID != b.RuleID {
+			return a.RuleID < b.RuleID
+		}
+		if a.Line != b.Line {
+			return a.Line < b.Line
+		}
+		if a.Column != b.Column {
+			return a.Column < b.Column
+		}
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		return a.Message < b.Message
+	})
+	return divs
+}
+
 func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Config, cfgErr error) cli.Handler {
-	store := cache.NewStore("") // in-memory; persists across handler calls within same process
 	return func(req *cli.Request) *cli.Response {
 		// Parse params — strict: an unknown key is rejected, never silently
 		// ignored. A stale binary that drops a param it doesn't know
@@ -634,14 +826,16 @@ func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Conf
 		var params struct {
 			Scope     string `json:"scope"`
 			SkillTree string `json:"skill_tree"`
-			Format    string `json:"format"` // router-consumed (output rendering); listed so strict parse admits it
+			Strict    *bool  `json:"strict"`   // per-run override of config strict; nil = config default
+			NoCache   bool   `json:"no_cache"` // per-run opt-out of the persistent fact cache (Decision 13: no bare-flag mechanism)
+			Format    string `json:"format"`   // router-consumed (output rendering); listed so strict parse admits it
 		}
 		if req.Params != nil {
 			dec := json.NewDecoder(bytes.NewReader(req.Params))
 			dec.DisallowUnknownFields()
 			if err := dec.Decode(&params); err != nil {
 				return cli.ErrorResponse(cli.ErrInvalidParams,
-					fmt.Sprintf("invalid params: %v — md check accepts: scope, skill_tree, format (assert the binary with `md version`)", err))
+					fmt.Sprintf("invalid params: %v — md check accepts: scope, skill_tree, strict, no_cache, format (assert the binary with `md version`)", err))
 			}
 		}
 
@@ -653,7 +847,12 @@ func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Conf
 			if params.Scope != "" {
 				return cli.ErrorResponse(cli.ErrInvalidParams, "skill_tree and scope are mutually exclusive — skill_tree already scopes the run")
 			}
-			return skillTreeCheck(params.SkillTree)
+			resp := skillTreeCheck(params.SkillTree)
+			// Config-less path: strict comes only from the param.
+			if params.Strict != nil {
+				resp.Strict = *params.Strict
+			}
+			return resp
 		}
 
 		if cfgErr != nil {
@@ -665,8 +864,63 @@ func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Conf
 		start := time.Now()
 		fsys := os.DirFS(cfg.Scan.Root)
 
+		// MD_CACHE_VERIFY: recompute-on-hit honesty gate. Serve from the warm
+		// cache, recompute everything fresh, and report any finding that differs
+		// (nonzero exit on divergence). A pure check — it never mutates the
+		// on-disk cache. Structurally cannot observe cross-run git staleness:
+		// phase-2 findings are never cached (see internal/cli/cmd_cache.go).
+		if cacheVerifyEnabled() {
+			return runCacheVerify(eng, loadedRules, cfg, fsys)
+		}
+
+		// Open the store this run uses. The persistent store lives under
+		// UserCacheDir (OpenForRoot); {"no_cache":true} or config cache.enabled:
+		// false selects the in-memory NewStore("") — always cold, never persisted.
+		// A user-cache-dir failure degrades to in-memory with a surfaced warning,
+		// never a failed run.
+		useCache := !params.NoCache && cfg.CacheEnabled()
+		var cacheWarnings []cli.Warning
+		var store *cache.Store
+		if useCache {
+			s, w := cache.OpenForRoot(cfg.Scan.Root)
+			store = s
+			if w != nil {
+				cacheWarnings = append(cacheWarnings, *w)
+			}
+		} else {
+			store = cache.NewStore("")
+		}
+
 		store.ResetStats() // per-invocation stats, not cumulative
 		findings := eng.RunCached(fsys, loadedRules, store)
+
+		// A `required:true` rule whose check the binary does not register is a tool
+		// failure (exit 2), not a warn-and-continue: fail loud before persisting a
+		// cache or reporting a green gate. This is the stale-binary floor — an old
+		// build against an evolved pack must never pass emptily.
+		if ferr := eng.FatalErr(); ferr != nil {
+			return cli.ErrorResponseWithHint(cli.ErrCheckNotRegistered, ferr.Error(),
+				"the rule pack requires a check this binary lacks — reinstall md (just install) or rebuild from the pinned commit")
+		}
+
+		// Persist after a full run: evict entries for vanished documents, then
+		// write dirty shards. checkHandler always scans the whole corpus (scope is
+		// a post-filter below), so pruning is safe here — but only when the run
+		// actually completed a full scan. A nil/empty universe (no active rules, a
+		// scan error) must skip Prune, or Prune(nil) would wipe a still-valid
+		// cache. Save failure is a single non-fatal warning (results are correct;
+		// the next run is merely colder).
+		if useCache {
+			if universe := eng.ScannedPaths(); len(universe) > 0 {
+				store.Prune(universe)
+				if err := store.Save(); err != nil {
+					cacheWarnings = append(cacheWarnings, cli.Warning{
+						Code:    "CACHE_SAVE_FAILED",
+						Message: "cache save failed (results are correct, next run is colder): " + err.Error(),
+					})
+				}
+			}
+		}
 
 		// Normalize scope: findings carry scan-root-relative paths with no
 		// "./" prefix, so "." (and "./x" forms) must be cleaned or the filter
@@ -700,10 +954,14 @@ func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Conf
 		warnings := eng.Warnings()
 		dur := time.Since(start)
 
-		cliWarnings := make([]cli.Warning, len(warnings))
-		for i, w := range warnings {
-			cliWarnings[i] = cli.Warning(w)
+		// Engine warnings first, then the run's cache warnings (CACHE_UNAVAILABLE
+		// on open, CACHE_SAVE_FAILED on persist) — both surface as NOTE lines and
+		// are counted in the check summary.
+		cliWarnings := make([]cli.Warning, 0, len(warnings)+len(cacheWarnings))
+		for _, w := range warnings {
+			cliWarnings = append(cliWarnings, cli.Warning(w))
 		}
+		cliWarnings = append(cliWarnings, cacheWarnings...)
 
 		// Populate cache stats
 		cs := store.Stats()
@@ -712,8 +970,14 @@ func checkHandler(eng *engine.Engine, loadedRules []rules.Rule, cfg *config.Conf
 			hitRate = float64(cs.Hits) / float64(cs.Total)
 		}
 
+		strict := cfg.Strict
+		if params.Strict != nil {
+			strict = *params.Strict
+		}
+
 		return &cli.Response{
 			Version:  cli.ResponseVersion,
+			Strict:   strict,
 			Findings: findings,
 			Stats: &cli.Stats{
 				FilesScanned:  cs.Total,

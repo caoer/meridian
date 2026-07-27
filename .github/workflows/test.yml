@@ -1,0 +1,38 @@
+name: test
+
+# Build, vet, unit tests, and the race detector.
+#
+# The race job exists because phase-1 evaluation runs across a worker pool
+# (internal/engine RunCached): `go test -race ./...` is the standing guard that
+# the shared index cache, the result store, and warning assembly stay
+# concurrency-safe as checks and the engine evolve.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Race
+        run: go test -race ./...

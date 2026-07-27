@@ -46,6 +46,48 @@ func TestResponse_ExitCode_WarnOnly(t *testing.T) {
 	}
 }
 
+func TestResponse_ExitCode_StrictPromotesWarn(t *testing.T) {
+	r := &Response{
+		Version: ResponseVersion,
+		Strict:  true,
+		Findings: []Finding{
+			{RuleID: "r1", Severity: "warn", FilePath: "a.md", Message: "meh"},
+		},
+	}
+
+	if got := r.ExitCode(); got != 1 {
+		t.Fatalf("expected exit code 1 for warn findings under strict, got %d", got)
+	}
+}
+
+func TestResponse_ExitCode_StrictIgnoresInfo(t *testing.T) {
+	r := &Response{
+		Version: ResponseVersion,
+		Strict:  true,
+		Findings: []Finding{
+			{RuleID: "r1", Severity: "info", FilePath: "a.md", Message: "fyi"},
+		},
+	}
+
+	if got := r.ExitCode(); got != 0 {
+		t.Fatalf("expected exit code 0 for info-only findings under strict, got %d", got)
+	}
+}
+
+func TestResponse_ExitCode_ErrorFailsWithoutStrict(t *testing.T) {
+	r := &Response{
+		Version: ResponseVersion,
+		Strict:  false,
+		Findings: []Finding{
+			{RuleID: "r1", Severity: "error", FilePath: "a.md", Message: "bad"},
+		},
+	}
+
+	if got := r.ExitCode(); got != 1 {
+		t.Fatalf("expected exit code 1 for error findings with strict off, got %d", got)
+	}
+}
+
 func TestResponse_ExitCode_ToolFailure(t *testing.T) {
 	r := &Response{
 		Version: ResponseVersion,

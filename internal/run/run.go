@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,6 +41,13 @@ type RunOpt func(*runConfig)
 
 type runConfig struct {
 	record bool
+	// inherit resolves each requested task by walking ancestor blurbs when the
+	// leaf itself does not define it, and injects MD_PARAM_PAGE (§ inherit.go).
+	inherit bool
+	// named params, one map so presence and value can't drift: a key's presence
+	// means the caller supplied it (validated against declarations regardless of
+	// value); a non-nil value is what projects to the leaf's env.
+	params map[string]*string
 }
 
 // Record enables per-task output capture for a sidecar run record: each task's
@@ -48,6 +56,25 @@ type runConfig struct {
 // Pair with WriteRecord to persist. The source document is never mutated.
 func Record() RunOpt {
 	return func(c *runConfig) { c.record = true }
+}
+
+// Params supplies named task parameters (md run's non-reserved top-level JSON
+// keys) as one map so presence and value can't drift. A key's presence means the
+// caller supplied it — validated against md-<name>-params regardless of value,
+// so an undeclared or typo'd key fails loud before anything executes even when
+// its value is false. A non-nil value is what projects to the leaf's env; a nil
+// value is an opt-in false (present, but MD_PARAM_* stays unset). Each leaf
+// receives only the params IT declares.
+func Params(p map[string]*string) RunOpt {
+	return func(c *runConfig) { c.params = p }
+}
+
+// Inherit resolves any requested task the leaf file does not itself declare by
+// walking its ancestor blurb pages (nearest first, up to LLM_WIKI.md) and
+// projects MD_PARAM_PAGE = the leaf's repo-relative path into every task's env.
+// A leaf-defined task replaces the inherited one wholesale — no merging.
+func Inherit() RunOpt {
+	return func(c *runConfig) { c.inherit = true }
 }
 
 // stderrTailMax bounds how much of a failing task's stderr is retained — enough
@@ -89,6 +116,7 @@ type TaskInfo struct {
 	Composition []string
 	Args        []string // required positional arg names (md-<name>-args contract)
 	Env         []string // required env var names (md-<name>-env contract)
+	Params      []string // optional named param names (md-<name>-params contract)
 	Language    string
 	Error       string
 }
@@ -214,6 +242,75 @@ func resolveTaskBlock(mdPath, content string, task Task, res *noteResolver) (Blo
 	return b, targetPath, nil
 }
 
+// checkPlanParams gates named params at resolution time: every supplied key
+// must be declared by at least one resolved leaf's md-<name>-params contract,
+// across every source the plan draws from (a leaf task and an inherited blurb
+// task may each declare their own). It keys off PRESENCE (every key the caller
+// supplied, whatever its value) so a typo'd key still fails loud even when its
+// value is false — value-carrying and key-existence are separate questions. The
+// error lists what the requested tasks accept, so a blind JSON caller can
+// self-correct.
+func checkPlanParams(plan []planLeaf, params map[string]*string) error {
+	if len(params) == 0 {
+		return nil
+	}
+	declared := make(map[string]bool)
+	var accepted []string
+	for _, e := range plan {
+		for _, p := range e.src.tasks[e.name].Params {
+			if !declared[p] {
+				declared[p] = true
+				accepted = append(accepted, p)
+			}
+		}
+	}
+	var unknown []string
+	for k := range params {
+		if !declared[k] {
+			unknown = append(unknown, k)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	sort.Strings(accepted)
+	accepts := "none"
+	if len(accepted) > 0 {
+		accepts = strings.Join(accepted, ", ")
+	}
+	return fmt.Errorf("unknown param(s): %s — the requested task(s) accept: %s (declared via md-<task>-params)",
+		strings.Join(unknown, ", "), accepts)
+}
+
+// taskEnv builds a leaf's execution environment: the process environment with
+// every ambient MD_PARAM_* scrubbed, plus this run's projections of the params
+// the leaf DECLARES. Scrubbing keeps the parameter surface per-invocation —
+// a default-off guard must not flip on because a parent process (e.g. a task
+// that itself calls md run) had a param set. On an inherited run, page is the
+// originating leaf's repo-relative path, projected as MD_PARAM_PAGE after the
+// scrub: engine-injected leaf identity, present regardless of what the task
+// declares (the base ^check reads it to locate the page it attests).
+func taskEnv(task Task, params map[string]*string, page string) []string {
+	environ := os.Environ()
+	env := make([]string, 0, len(environ)+len(task.Params)+1)
+	for _, kv := range environ {
+		if !strings.HasPrefix(kv, ParamEnvPrefix) {
+			env = append(env, kv)
+		}
+	}
+	for _, p := range task.Params {
+		// non-nil = projected; nil (opt-in false) or absent = leave unset
+		if v := params[p]; v != nil {
+			env = append(env, ParamEnvVar(p)+"="+*v)
+		}
+	}
+	if page != "" {
+		env = append(env, ParamEnvVar(ReservedPageParam)+"="+page)
+	}
+	return env
+}
+
 // RunTasks executes the named tasks declared in mdPath's frontmatter.
 // All names are expanded, every distinct leaf's block is resolved once, and
 // every required interpreter is verified on PATH before anything executes —
@@ -232,37 +329,40 @@ func RunTasks(mdPath string, names, args []string, timeout time.Duration, stdout
 	for _, o := range opts {
 		o(&cfg)
 	}
-	tasks, content, err := loadTasks(mdPath)
+
+	// Resolve the requested names to an ordered execution plan. Plain runs draw
+	// every leaf from mdPath itself; inherited runs may draw each from the
+	// nearest-ancestor blurb that defines it. cwd is the referencing file's
+	// toplevel — the vault root and default execution directory. page is the
+	// leaf's repo-relative path (MD_PARAM_PAGE), empty unless inheriting.
+	plan, cwd, page, err := resolvePlan(mdPath, names, cfg.inherit)
 	if err != nil {
 		return nil, "", err
 	}
-	leaves, err := ExpandNames(tasks, names)
-	if err != nil {
+	if err := checkPlanParams(plan, cfg.params); err != nil {
 		return nil, "", err
 	}
 
-	// Base cwd: the referencing file's toplevel — also the vault root for
-	// cross-file resolution. Loud failure before any resolution work.
-	cwd, err := GitToplevel(mdPath)
-	if err != nil {
-		return nil, "", err
-	}
-
+	// One resolver rooted at the referencing file's toplevel serves every
+	// source: leaf and blurbs share the vault, so cross-file refs resolve
+	// against one root.
 	res := &noteResolver{root: cwd, cache: map[string][]string{}}
-	blocks := make(map[string]Block, len(leaves))
-	cwds := make(map[string]string, len(leaves)) // leaf name → execution cwd
-	tops := map[string]string{mdPath: cwd}       // defining path → toplevel (memo)
+	blocks := make(map[string]Block, len(plan))
+	cwds := make(map[string]string, len(plan)) // resolve key → execution cwd
+	tops := map[string]string{}                // defining path → toplevel (memo)
 	onPath := make(map[string]bool)
-	for _, name := range leaves {
-		if _, done := blocks[name]; done {
+	for _, e := range plan {
+		key := e.key()
+		if _, done := blocks[key]; done {
 			continue
 		}
+		task := e.src.tasks[e.name]
 		// Parameter contract gates first — the cheapest resolution-time check,
 		// and the whole point is failing before any side effect.
-		if err := checkContract(tasks[name], args); err != nil {
+		if err := checkContract(task, args); err != nil {
 			return nil, "", err
 		}
-		b, definingPath, err := resolveTaskBlock(mdPath, content, tasks[name], res)
+		b, definingPath, err := resolveTaskBlock(e.src.mdPath, e.src.content, task, res)
 		if err != nil {
 			return nil, "", err
 		}
@@ -274,28 +374,29 @@ func RunTasks(mdPath string, names, args []string, timeout time.Duration, stdout
 		if !ok {
 			top, err = GitToplevel(definingPath)
 			if err != nil {
-				return nil, "", fmt.Errorf("task %s: %w", name, err)
+				return nil, "", fmt.Errorf("task %s: %w", e.name, err)
 			}
 			tops[definingPath] = top
 		}
 		interp, _, err := Interpreter(b.Lang)
 		if err != nil {
-			return nil, "", fmt.Errorf("task %s: %w", name, err)
+			return nil, "", fmt.Errorf("task %s: %w", e.name, err)
 		}
 		if !onPath[interp[0]] {
 			if _, err := exec.LookPath(interp[0]); err != nil {
-				return nil, "", fmt.Errorf("task %s needs %s — not found on PATH", name, interp[0])
+				return nil, "", fmt.Errorf("task %s needs %s — not found on PATH", e.name, interp[0])
 			}
 			onPath[interp[0]] = true
 		}
-		blocks[name] = b
-		cwds[name] = top
+		blocks[key] = b
+		cwds[key] = top
 	}
 
 	var results []TaskResult
-	for _, name := range leaves {
-		b := blocks[name]
-		taskCwd := cwds[name]
+	for _, e := range plan {
+		key := e.key()
+		b := blocks[key]
+		taskCwd := cwds[key]
 		// Tee this task's stderr into a bounded tail buffer: it still streams
 		// live (text mode) or into the capture buffer (JSON mode), and the tail
 		// lets us attach the failure detail to the result.
@@ -311,24 +412,24 @@ func RunTasks(mdPath string, names, args []string, timeout time.Duration, stdout
 			errW = io.MultiWriter(errW, capture)
 			startedAt = time.Now()
 		}
-		code, timedOut, err := ExecBlock(b, args, taskCwd, timeout, outW, errW)
+		code, timedOut, err := ExecBlock(b, args, taskEnv(e.src.tasks[e.name], cfg.params, page), taskCwd, timeout, outW, errW)
 		if err != nil {
-			return results, cwd, fmt.Errorf("task %s: %w", name, err)
+			return results, cwd, fmt.Errorf("task %s: %w", e.name, err)
 		}
-		res := TaskResult{Name: name, BlockID: b.ID, Lang: b.Lang, Cwd: taskCwd, ExitCode: code, TimedOut: timedOut}
+		r := TaskResult{Name: e.name, BlockID: b.ID, Lang: b.Lang, Cwd: taskCwd, ExitCode: code, TimedOut: timedOut}
 		if cfg.record {
-			res.Output = capture.String()
-			res.OutputTruncated = capture.truncated
-			res.BlockSHA = BlobSHA(b.Code)
-			res.StartedAt = startedAt
-			res.Duration = time.Since(startedAt)
+			r.Output = capture.String()
+			r.OutputTruncated = capture.truncated
+			r.BlockSHA = BlobSHA(b.Code)
+			r.StartedAt = startedAt
+			r.Duration = time.Since(startedAt)
 		}
 		if code != 0 {
-			res.Stderr = tail.tail()
-			results = append(results, res)
+			r.Stderr = tail.tail()
+			results = append(results, r)
 			break // fail-fast
 		}
-		results = append(results, res)
+		results = append(results, r)
 	}
 	return results, cwd, nil
 }
@@ -345,7 +446,7 @@ func ListTasks(mdPath string) ([]TaskInfo, error) {
 	infos := make([]TaskInfo, 0, len(tasks))
 	for _, name := range TaskNames(tasks) {
 		task := tasks[name]
-		info := TaskInfo{Name: name, Ref: task.Ref, Composition: task.Composition, Args: task.Args, Env: task.Env}
+		info := TaskInfo{Name: name, Ref: task.Ref, Composition: task.Composition, Args: task.Args, Env: task.Env, Params: task.Params}
 		if task.Ref != "" {
 			if b, _, err := resolveTaskBlock(mdPath, content, task, res); err != nil {
 				info.Error = err.Error()

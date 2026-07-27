@@ -47,27 +47,15 @@ func TestEmbeddedMatchesFilesystem(t *testing.T) {
 	}
 }
 
-// TestDriftGuard_FrontmatterMinima asserts the embedded frontmatter-minima
-// rule's property list matches internal/schema contractSchemas[1].frontmatter_minima.
-func TestDriftGuard_FrontmatterMinima(t *testing.T) {
-	// Get schema's frontmatter_minima required fields.
-	sch := schema.ContractV1()
-	rawMinima, ok := sch["frontmatter_minima"]
-	if !ok {
-		t.Fatal("schema missing frontmatter_minima")
-	}
-	minima, ok := rawMinima.([]map[string]any)
-	if !ok {
-		t.Fatalf("frontmatter_minima type: got %T", rawMinima)
-	}
-	var schemaFields []string
-	for _, m := range minima {
-		if f, ok := m["field"].(string); ok {
-			schemaFields = append(schemaFields, f)
-		}
-	}
-	sort.Strings(schemaFields)
+// materializedVersions are every contract version schema.Contract resolves —
+// the frontmatter minima and decision-queue fields are shared/inherited across
+// all of them, so the drift guard holds each one against the rule pack.
+var materializedVersions = []int{1, 2, 3}
 
+// TestDriftGuard_FrontmatterMinima asserts the embedded frontmatter-minima
+// rule's property list matches frontmatter_minima in every materialized
+// contract version (v2/v3 inherit it unchanged from v1).
+func TestDriftGuard_FrontmatterMinima(t *testing.T) {
 	// Get the embedded rule's property list.
 	rule := findEmbeddedRule(t, "frontmatter-minima")
 	rawProp := rule.Params["property"]
@@ -86,49 +74,130 @@ func TestDriftGuard_FrontmatterMinima(t *testing.T) {
 	}
 	sort.Strings(ruleFields)
 
-	if strings.Join(schemaFields, ",") != strings.Join(ruleFields, ",") {
-		t.Errorf("drift: schema frontmatter_minima fields=%v, rule property=%v", schemaFields, ruleFields)
+	for _, ver := range materializedVersions {
+		sch, ok := schema.Contract(ver)
+		if !ok {
+			t.Fatalf("contract version %d not materialized", ver)
+		}
+		rawMinima, ok := sch["frontmatter_minima"]
+		if !ok {
+			t.Fatalf("v%d: schema missing frontmatter_minima", ver)
+		}
+		minima, ok := rawMinima.([]map[string]any)
+		if !ok {
+			t.Fatalf("v%d: frontmatter_minima type: got %T", ver, rawMinima)
+		}
+		var schemaFields []string
+		for _, m := range minima {
+			if f, ok := m["field"].(string); ok {
+				schemaFields = append(schemaFields, f)
+			}
+		}
+		sort.Strings(schemaFields)
+
+		if strings.Join(schemaFields, ",") != strings.Join(ruleFields, ",") {
+			t.Errorf("drift: v%d frontmatter_minima fields=%v, rule property=%v", ver, schemaFields, ruleFields)
+		}
 	}
 }
 
 // TestDriftGuard_DecisionQueue asserts the embedded decision-page-schema
-// rule's required-fields match the schema's decision_queue.required_fields.
+// rule's required-fields match decision_queue.required_fields in every
+// materialized contract version (v2/v3 inherit it unchanged from v1).
 func TestDriftGuard_DecisionQueue(t *testing.T) {
-	sch := schema.ContractV1()
-	rawDQ, ok := sch["decision_queue"]
-	if !ok {
-		t.Fatal("schema missing decision_queue")
-	}
-	dq, ok := rawDQ.(map[string]any)
-	if !ok {
-		t.Fatalf("decision_queue type: %T", rawDQ)
-	}
-	rawFields, ok := dq["required_fields"]
-	if !ok {
-		t.Fatal("decision_queue missing required_fields")
-	}
-	schemaFields := toStringSlice(t, rawFields)
-	sort.Strings(schemaFields)
-
 	rule := findEmbeddedRule(t, "decision-page-schema")
 	ruleFields := toStringSlice(t, rule.Params["required-fields"])
 	sort.Strings(ruleFields)
 
-	if strings.Join(schemaFields, ",") != strings.Join(ruleFields, ",") {
-		t.Errorf("drift: schema decision_queue.required_fields=%v, rule required-fields=%v", schemaFields, ruleFields)
+	for _, ver := range materializedVersions {
+		sch, ok := schema.Contract(ver)
+		if !ok {
+			t.Fatalf("contract version %d not materialized", ver)
+		}
+		rawDQ, ok := sch["decision_queue"]
+		if !ok {
+			t.Fatalf("v%d: schema missing decision_queue", ver)
+		}
+		dq, ok := rawDQ.(map[string]any)
+		if !ok {
+			t.Fatalf("v%d: decision_queue type: %T", ver, rawDQ)
+		}
+		rawFields, ok := dq["required_fields"]
+		if !ok {
+			t.Fatalf("v%d: decision_queue missing required_fields", ver)
+		}
+		schemaFields := toStringSlice(t, rawFields)
+		sort.Strings(schemaFields)
+
+		if strings.Join(schemaFields, ",") != strings.Join(ruleFields, ",") {
+			t.Errorf("drift: v%d decision_queue.required_fields=%v, rule required-fields=%v", ver, schemaFields, ruleFields)
+		}
 	}
 }
 
-// TestDriftGuard_ContractVersion asserts the schema map's contract-version
-// matches contract version 1 (the only version we embed for).
+// TestDriftGuard_ContractVersion asserts every materialized version's
+// contract-version field equals its map key — a version pinned as N must
+// report itself as N through the merge.
 func TestDriftGuard_ContractVersion(t *testing.T) {
-	sch := schema.ContractV1()
-	cv, ok := sch["contract-version"]
-	if !ok {
-		t.Fatal("schema missing contract-version")
+	for _, ver := range materializedVersions {
+		sch, ok := schema.Contract(ver)
+		if !ok {
+			t.Fatalf("contract version %d not materialized", ver)
+		}
+		cv, ok := sch["contract-version"]
+		if !ok {
+			t.Fatalf("v%d: schema missing contract-version", ver)
+		}
+		if v, ok := cv.(int); !ok || v != ver {
+			t.Errorf("drift: schema key %d has contract-version=%v, expected %d", ver, cv, ver)
+		}
 	}
-	if v, ok := cv.(int); !ok || v != 1 {
-		t.Errorf("drift: schema contract-version=%v, expected 1", cv)
+}
+
+// TestDriftGuard_V3EffectsTier pins the v3 delta: the outbox content tier
+// inverted to the effects descriptor tier (decision effects-layer-inversion).
+// The outbox clause is gone, an effects clause with the closed kind set is
+// present, and the layout carries effects/ instead of outbox/.
+func TestDriftGuard_V3EffectsTier(t *testing.T) {
+	sch, ok := schema.Contract(3)
+	if !ok {
+		t.Fatal("contract version 3 not materialized")
+	}
+
+	if _, ok := sch["outbox"]; ok {
+		t.Error("v3: outbox clause must be retired")
+	}
+	rawEffects, ok := sch["effects"]
+	if !ok {
+		t.Fatal("v3: missing effects clause")
+	}
+	effects, ok := rawEffects.(map[string]any)
+	if !ok {
+		t.Fatalf("v3: effects type: %T", rawEffects)
+	}
+	kinds := toStringSlice(t, effects["kinds"])
+	sort.Strings(kinds)
+	want := []string{"agent", "document", "prompt", "site", "skill"}
+	if strings.Join(kinds, ",") != strings.Join(want, ",") {
+		t.Errorf("v3: effects.kinds=%v, want %v", kinds, want)
+	}
+
+	// Layout carries effects/, not outbox/.
+	layout, ok := sch["layout"].([]map[string]any)
+	if !ok {
+		t.Fatalf("v3: layout type: %T", sch["layout"])
+	}
+	dirs := make(map[string]bool)
+	for _, e := range layout {
+		if d, ok := e["dir"].(string); ok {
+			dirs[d] = true
+		}
+	}
+	if dirs["outbox"] {
+		t.Error("v3: layout still carries outbox/")
+	}
+	if !dirs["effects"] {
+		t.Error("v3: layout missing effects/")
 	}
 }
 

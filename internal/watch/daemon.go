@@ -78,7 +78,7 @@ func (d *Daemon) SetOnChangeRunner(r OnChangeRunner) {
 
 // NewDaemon creates a daemon. Call Run() to start the loop.
 func NewDaemon(w *Watcher, parsedHooks []hooks.Hook, output io.Writer) *Daemon {
-	return &Daemon{
+	d := &Daemon{
 		watcher: w,
 		hooks:   parsedHooks,
 		stats: &DaemonStats{
@@ -88,6 +88,14 @@ func NewDaemon(w *Watcher, parsedHooks []hooks.Hook, output io.Writer) *Daemon {
 		done:       make(chan struct{}),
 		lastRunEnd: make(map[string]time.Time),
 	}
+	// Register the Run goroutine's lifetime here, before any caller can launch
+	// `go d.Run()` and race Stop's wg.Wait(). Adding inside Run (the goroutine)
+	// violates the WaitGroup contract — a positive Add from zero must
+	// happen-before Wait — so a Stop() that beats the goroutine to its first
+	// line would Wait on a zero counter and both race and skip the wait. Mirrors
+	// the Watcher, which Adds before `go w.loop()`.
+	d.wg.Add(1)
+	return d
 }
 
 // Stats returns the daemon's stats tracker.
@@ -96,8 +104,9 @@ func (d *Daemon) Stats() *DaemonStats {
 }
 
 // Run starts processing events. Blocks until Stop() or watcher closes.
+// The wg lifetime is registered in NewDaemon (before any `go d.Run()`), so Run
+// only signals completion here.
 func (d *Daemon) Run() {
-	d.wg.Add(1)
 	defer d.wg.Done()
 
 	for {

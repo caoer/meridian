@@ -36,14 +36,16 @@ func Interpreter(lang string) (argv []string, ext string, err error) {
 }
 
 // ExecBlock materializes a fence block to a temp file and executes it as a
-// script: interpreter + file + args (argv). The process inherits the
-// environment; cwd is set by the caller. stdin is /dev/null — a task that
-// prompts for input fails or reads EOF instead of hanging an agent pipeline.
+// script: interpreter + file + args (argv). env is the child's full
+// environment (nil inherits the process env — RunTasks passes a scrubbed
+// env carrying MD_PARAM_* projections); cwd is set by the caller. stdin is
+// /dev/null — a task that prompts for input fails or reads EOF instead of
+// hanging an agent pipeline.
 // A positive timeout is a wall-clock deadline: at expiry the whole process
 // group is SIGKILLed (a wedged grandchild must not keep the pipes open) and
 // the block reports TimeoutExitCode with timedOut=true. Zero means no limit.
 // Returns the script's exit code.
-func ExecBlock(b Block, args []string, cwd string, timeout time.Duration, stdout, stderr io.Writer) (code int, timedOut bool, err error) {
+func ExecBlock(b Block, args []string, env []string, cwd string, timeout time.Duration, stdout, stderr io.Writer) (code int, timedOut bool, err error) {
 	if !b.Fence {
 		return 0, false, fmt.Errorf("block ^%s is not a fenced code block", b.ID)
 	}
@@ -76,6 +78,7 @@ func ExecBlock(b Block, args []string, cwd string, timeout time.Duration, stdout
 	cmdArgs = append(cmdArgs, args...)
 	cmd := exec.CommandContext(ctx, interp[0], cmdArgs...)
 	cmd.Dir = cwd
+	cmd.Env = env
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if timeout > 0 {

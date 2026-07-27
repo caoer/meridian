@@ -10,6 +10,7 @@ type Rule struct {
 	Severity Severity       // error/warn/info/off
 	On       OnFilter       // parsed file filter
 	Params   map[string]any // check-specific parameters
+	Required bool           // if true, an unregistered check is a tool failure (exit 2), not a skipped warning
 }
 
 // OnFilter holds parsed components of a rule's `on` field.

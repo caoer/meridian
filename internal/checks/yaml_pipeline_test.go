@@ -11,12 +11,14 @@ import (
 	"github.com/caoer/meridian/pkg/testkit"
 )
 
-func loadLocusRules(t *testing.T) []rules.Rule {
+// loadTestPack loads the fixture rule pack under testdata/rulepack — the
+// former locus wiki's rules, kept for their YAML variety (property, wikilink,
+// text, pattern blocks with excludes and pipelines).
+func loadTestPack(t *testing.T) []rules.Rule {
 	t.Helper()
 	_, thisFile, _, _ := runtime.Caller(0)
-	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
-	locusDir := filepath.Join(repoRoot, "rules", "locus")
-	loaded, _, err := rules.LoadDir(locusDir)
+	packDir := filepath.Join(filepath.Dir(thisFile), "testdata", "rulepack")
+	loaded, _, err := rules.LoadDir(packDir)
 	if err != nil {
 		t.Fatalf("LoadDir: %v", err)
 	}
@@ -45,7 +47,7 @@ func newTestEngine() *engine.Engine {
 // --- Param type verification: YAML → loader → params ---
 
 func TestYAMLPipeline_BrokenWikilink_Params(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "broken-wikilink")
 
 	if r.Check != "broken-wikilink" {
@@ -87,7 +89,7 @@ func TestYAMLPipeline_BrokenWikilink_Params(t *testing.T) {
 }
 
 func TestYAMLPipeline_Pattern_Params(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "filename-lowercase-dash")
 
 	if r.Check != "pattern" {
@@ -112,7 +114,7 @@ func TestYAMLPipeline_Pattern_Params(t *testing.T) {
 }
 
 func TestYAMLPipeline_BacktickedWikilink_Params(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "backticked-wikilink")
 
 	if r.Check != "backticked-wikilink" {
@@ -124,7 +126,7 @@ func TestYAMLPipeline_BacktickedWikilink_Params(t *testing.T) {
 }
 
 func TestYAMLPipeline_HeadingStructure_Params(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "heading-structure")
 
 	if r.Check != "heading-structure" {
@@ -136,7 +138,7 @@ func TestYAMLPipeline_HeadingStructure_Params(t *testing.T) {
 }
 
 func TestYAMLPipeline_Tags_PropertyParams(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "tags")
 
 	if r.Check != "property" {
@@ -184,7 +186,7 @@ func TestYAMLPipeline_Tags_PropertyParams(t *testing.T) {
 }
 
 func TestYAMLPipeline_Created_PropertyParams(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "created")
 
 	if r.Check != "property" {
@@ -212,7 +214,7 @@ func TestYAMLPipeline_Created_PropertyParams(t *testing.T) {
 }
 
 func TestYAMLPipeline_SkillFields_MultiProperty(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "skill-fields")
 
 	if r.Check != "property" {
@@ -235,7 +237,7 @@ func TestYAMLPipeline_SkillFields_MultiProperty(t *testing.T) {
 }
 
 func TestYAMLPipeline_DeployMethod_TextBlock(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "deploy-method")
 
 	if r.Check != "property" {
@@ -260,7 +262,7 @@ func TestYAMLPipeline_DeployMethod_TextBlock(t *testing.T) {
 }
 
 func TestYAMLPipeline_DeployTarget_WikilinkBlock(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "deploy-target")
 
 	if r.Check != "property" {
@@ -281,7 +283,7 @@ func TestYAMLPipeline_DeployTarget_WikilinkBlock(t *testing.T) {
 }
 
 func TestYAMLPipeline_DerivedFrom_WikilinkResolve(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "derived-from")
 
 	if r.Check != "property" {
@@ -316,7 +318,7 @@ func TestYAMLPipeline_DerivedFrom_WikilinkResolve(t *testing.T) {
 // --- End-to-end: YAML → loader → engine → check → findings ---
 
 func TestYAMLPipeline_BrokenWikilink_E2E(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "broken-wikilink")
 	e := newTestEngine()
 
@@ -342,7 +344,7 @@ func TestYAMLPipeline_BrokenWikilink_E2E(t *testing.T) {
 }
 
 func TestYAMLPipeline_BrokenWikilink_SkipPrefix_E2E(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "broken-wikilink")
 	e := newTestEngine()
 
@@ -361,7 +363,7 @@ func TestYAMLPipeline_BrokenWikilink_SkipPrefix_E2E(t *testing.T) {
 }
 
 func TestYAMLPipeline_Pattern_E2E(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "filename-lowercase-dash")
 	e := newTestEngine()
 
@@ -385,7 +387,7 @@ func TestYAMLPipeline_Pattern_E2E(t *testing.T) {
 }
 
 func TestYAMLPipeline_BacktickedWikilink_E2E(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "backticked-wikilink")
 	e := newTestEngine()
 
@@ -408,7 +410,7 @@ func TestYAMLPipeline_BacktickedWikilink_E2E(t *testing.T) {
 }
 
 func TestYAMLPipeline_HeadingStructure_E2E(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "heading-structure")
 	e := newTestEngine()
 
@@ -431,7 +433,7 @@ func TestYAMLPipeline_HeadingStructure_E2E(t *testing.T) {
 }
 
 func TestYAMLPipeline_Tags_MissingRequired_E2E(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "tags")
 	e := newTestEngine()
 
@@ -453,7 +455,7 @@ func TestYAMLPipeline_Tags_MissingRequired_E2E(t *testing.T) {
 }
 
 func TestYAMLPipeline_Tags_InvalidPrefix_E2E(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "tags")
 	e := newTestEngine()
 
@@ -477,7 +479,7 @@ func TestYAMLPipeline_Tags_InvalidPrefix_E2E(t *testing.T) {
 }
 
 func TestYAMLPipeline_Tags_ValidPrefix_E2E(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "tags")
 	e := newTestEngine()
 
@@ -497,7 +499,7 @@ func TestYAMLPipeline_Tags_ValidPrefix_E2E(t *testing.T) {
 }
 
 func TestYAMLPipeline_SkillFields_MissingRequired_E2E(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "skill-fields")
 	e := newTestEngine()
 
@@ -524,7 +526,7 @@ func TestYAMLPipeline_SkillFields_MissingRequired_E2E(t *testing.T) {
 }
 
 func TestYAMLPipeline_Created_MissingDate_E2E(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "created")
 	e := newTestEngine()
 
@@ -548,7 +550,7 @@ func TestYAMLPipeline_Created_MissingDate_E2E(t *testing.T) {
 // --- Regression: params must NOT be nested under a "params" key ---
 
 func TestYAMLPipeline_NoNestedParamsKey(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 
 	for _, r := range ruleList {
 		if _, hasNested := r.Params["params"]; hasNested {
@@ -560,7 +562,7 @@ func TestYAMLPipeline_NoNestedParamsKey(t *testing.T) {
 // --- Verify every check rule's check function is registered ---
 
 func TestYAMLPipeline_AllChecksRegistered(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 
 	for _, r := range ruleList {
 		if _, ok := checks.All[r.Check]; !ok {
@@ -570,7 +572,7 @@ func TestYAMLPipeline_AllChecksRegistered(t *testing.T) {
 }
 
 func TestYAMLPipeline_BrokenWikilink_ExcludesNotNotOn(t *testing.T) {
-	ruleList := loadLocusRules(t)
+	ruleList := loadTestPack(t)
 	r := findRule(t, ruleList, "broken-wikilink")
 
 	wantExcludes := []string{

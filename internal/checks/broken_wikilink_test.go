@@ -124,9 +124,9 @@ func TestBrokenWikilink_LineNumber(t *testing.T) {
 	if len(findings) != 1 {
 		t.Fatalf("want 1 finding, got %d", len(findings))
 	}
-	// BodyOffset 5 + lineIndex 2 + 1 = 8
-	if findings[0].Line != 8 {
-		t.Errorf("Line = %d, want 8", findings[0].Line)
+	// BodyOffset IS the first body line: 5 + lineIndex 2 = 7.
+	if findings[0].Line != 7 {
+		t.Errorf("Line = %d, want 7", findings[0].Line)
 	}
 }
 

@@ -319,6 +319,7 @@ func setupTempDir(t *testing.T, files map[string]string) string {
 }
 
 func TestCheckHandler_CacheStats_FirstRun(t *testing.T) {
+	hermeticCacheDir(t)
 	dir := setupTempDir(t, map[string]string{
 		"a.md": "---\ntitle: A\n---\nContent A",
 		"b.md": "---\ntitle: B\n---\nContent B",
@@ -384,6 +385,61 @@ func TestCheckHandler_CacheStats_ZeroFiles(t *testing.T) {
 	}
 	if resp.Stats.CacheHitRate != 0 {
 		t.Errorf("CacheHitRate: want 0 (no files), got %f", resp.Stats.CacheHitRate)
+	}
+}
+
+func TestCheckHandler_Strict(t *testing.T) {
+	hermeticCacheDir(t)
+	dir := setupTempDir(t, map[string]string{
+		"a.md": "---\ntitle: A\n---\nContent A",
+	})
+
+	eng := engine.New()
+	eng.RegisterCheck("always-fire", alwaysFireCheck)
+
+	rl := []rules.Rule{{
+		ID:       "warn-rule",
+		Check:    "always-fire",
+		Message:  "found: {{.File}}",
+		Severity: rules.SeverityWarn,
+		On:       rules.ParseOnFilter([]string{"**/*.md"}),
+		Params:   map[string]any{},
+	}}
+
+	cases := []struct {
+		name      string
+		cfgStrict bool
+		params    string
+		wantExit  int
+	}{
+		{"config strict promotes warn", true, "", 1},
+		{"config lax keeps warn passing", false, "", 0},
+		{"param override disables config strict", true, `{"strict": false}`, 0},
+		{"param override enables strict", false, `{"strict": true}`, 1},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{
+				Scan:   config.ScanConfig{Root: dir},
+				Strict: tc.cfgStrict,
+			}
+			handler := checkHandler(eng, rl, cfg, nil)
+			req := &cli.Request{Command: "check"}
+			if tc.params != "" {
+				req.Params = []byte(tc.params)
+			}
+			resp := handler(req)
+			if resp.Error != nil {
+				t.Fatalf("unexpected error: %+v", resp.Error)
+			}
+			if len(resp.Findings) != 1 {
+				t.Fatalf("findings = %d, want 1", len(resp.Findings))
+			}
+			if got := resp.ExitCode(); got != tc.wantExit {
+				t.Errorf("exit code = %d, want %d (strict=%v)", got, tc.wantExit, resp.Strict)
+			}
+		})
 	}
 }
 

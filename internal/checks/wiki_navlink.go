@@ -41,7 +41,7 @@ func wikiNavlinkCheck(doc *engine.Document, params map[string]any) []engine.RawF
 				continue // already inside a markdown link
 			}
 			out = append(out, engine.RawFinding{
-				Line: doc.BodyOffset + i + 1,
+				Line: doc.BodyOffset + i,
 				TemplateData: map[string]string{
 					"URI":  stripped[loc[0]:loc[1]],
 					"Kind": "bare-uri",
@@ -57,7 +57,7 @@ func wikiNavlinkCheck(doc *engine.Document, params map[string]any) []engine.RawF
 				}
 				if mapped[target] {
 					out = append(out, engine.RawFinding{
-						Line: doc.BodyOffset + i + 1,
+						Line: doc.BodyOffset + i,
 						TemplateData: map[string]string{
 							"URI":  "[[" + target + "]]",
 							"Kind": "cutover-repoint",
